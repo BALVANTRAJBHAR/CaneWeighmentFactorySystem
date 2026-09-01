@@ -77,6 +77,8 @@ public interface IPrintEngineService
 {
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildGrossSlipAsync(int purchaseId, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildTareSlipAsync(int purchaseId, string generatedByUserName);
+    Task<CaneFactory.Application.DTOs.PrintDocument> BuildLoanSlipAsync(int loanId, string generatedByUserName);
+    Task<CaneFactory.Application.DTOs.PrintDocument> BuildLoanRecoverySlipAsync(int loanRecoveryId, string generatedByUserName);
     CaneFactory.Application.DTOs.PrintDocument BuildTestDocument(string language, string generatedByUserName);
     (byte[] bytes, string contentType, string fileExtension) Render(CaneFactory.Application.DTOs.PrintDocument doc, string target, bool preview);
 }

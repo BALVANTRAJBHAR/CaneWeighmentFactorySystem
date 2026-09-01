@@ -66,7 +66,7 @@ public static class DbSeeder
         accountant.AddRange(Codes(new[] { "Payment" }, "View", "Create", "Pay", "Cancel", "Reverse", "Export", "Print"));
         accountant.AddRange(Codes(new[] { "CashEvidence" }, "View", "Create"));
         accountant.AddRange(Codes(new[] { "Report" }, "View", "Export", "Print"));
-        accountant.AddRange(new[] { "Purchase.View", "Grower.View", "Village.View", "Bank.View",
+        accountant.AddRange(new[] { "Purchase.View", "Grower.View", "Village.View", "Bank.View", "LoanType.View",
             "Dashboard.View", "Health.View", "UserGuide.View" });
 
         var op = new List<string>
@@ -168,6 +168,10 @@ public static class DbSeeder
         if (!await db.Items.AnyAsync())
             db.Items.AddRange(new[] { "Sugar", "Gud", "Bagasse", "Molasses" }
                 .Select(n => new Item { ItemName = n }));
+
+        if (!await db.LoanTypes.AnyAsync())
+            db.LoanTypes.AddRange(new[] { "Fertilizer Loan", "Seed Loan", "Equipment Loan", "Emergency Loan" }
+                .Select(n => new LoanTypeMaster { LoanTypeName = n }));
 
         if (!await db.PaymentModes.AnyAsync())
             db.PaymentModes.AddRange(

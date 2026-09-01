@@ -24,13 +24,13 @@ public static class Modules
     public static readonly string[] Masters =
     {
         "Zone", "Village", "Bank", "Grower", "Vehicle", "VarietyType", "Variety",
-        "Rate", "Item", "Party", "Season", "PaymentMode", "Company"
+        "Rate", "Item", "Party", "Season", "PaymentMode", "Company", "LoanType"
     };
 
     public static readonly string[] All =
     {
         "Zone", "Village", "Bank", "Grower", "Vehicle", "VarietyType", "Variety",
-        "Rate", "Item", "Party", "Season", "PaymentMode", "Company",
+        "Rate", "Item", "Party", "Season", "PaymentMode", "Company", "LoanType",
         "User", "Role", "Permission",
         "Purchase", "Weighment", "SalePurchase",
         "Loan", "LoanRecovery", "Payment", "CashEvidence",

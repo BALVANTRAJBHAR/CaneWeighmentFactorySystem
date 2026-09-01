@@ -41,6 +41,28 @@ public class PrintEngineService : IPrintEngineService
         return doc;
     }
 
+    public async Task<PrintDocument> BuildLoanSlipAsync(int loanId, string generatedByUserName)
+    {
+        var l = await LoadLoanAsync(loanId);
+        var doc = await BaseDocAsync(l.Season?.SeasonName, generatedByUserName);
+        doc.TitleHindi = "ऋण पर्ची";
+        doc.TitleEnglish = "Loan Issue Slip";
+        doc.QrValue = l.Id;
+        doc.Rows = LoanRows(l);
+        return doc;
+    }
+
+    public async Task<PrintDocument> BuildLoanRecoverySlipAsync(int loanRecoveryId, string generatedByUserName)
+    {
+        var r = await LoadLoanRecoveryAsync(loanRecoveryId);
+        var doc = await BaseDocAsync(r.Loan.Season?.SeasonName, generatedByUserName);
+        doc.TitleHindi = "ऋण वसूली पर्ची";
+        doc.TitleEnglish = "Loan Recovery Slip";
+        doc.QrValue = r.Id;
+        doc.Rows = LoanRecoveryRows(r);
+        return doc;
+    }
+
     public PrintDocument BuildTestDocument(string language, string generatedByUserName) => new()
     {
         Language = language,
@@ -77,6 +99,24 @@ public class PrintEngineService : IPrintEngineService
             .AsNoTracking().FirstOrDefaultAsync(x => x.Id == purchaseId);
         if (p == null) throw new KeyNotFoundException($"Purchase {purchaseId} not found.");
         return p;
+    }
+
+    private async Task<Loan> LoadLoanAsync(int loanId)
+    {
+        var l = await _db.Loans.Include(x => x.Grower).ThenInclude(g => g.Village)
+            .Include(x => x.LoanType).Include(x => x.Season)
+            .AsNoTracking().FirstOrDefaultAsync(x => x.Id == loanId);
+        if (l == null) throw new KeyNotFoundException($"Loan {loanId} not found.");
+        return l;
+    }
+
+    private async Task<LoanRecovery> LoadLoanRecoveryAsync(int loanRecoveryId)
+    {
+        var r = await _db.LoanRecoveries.Include(x => x.Loan).ThenInclude(l => l.Grower).ThenInclude(g => g.Village)
+            .Include(x => x.Loan.LoanType).Include(x => x.Loan.Season)
+            .AsNoTracking().FirstOrDefaultAsync(x => x.Id == loanRecoveryId);
+        if (r == null) throw new KeyNotFoundException($"Loan Recovery {loanRecoveryId} not found.");
+        return r;
     }
 
     private async Task<PrintDocument> BaseDocAsync(string? seasonName, string generatedByUserName)
@@ -123,5 +163,32 @@ public class PrintEngineService : IPrintEngineService
         new("टैक्स वजन (क्विंटल)", "Tax Weight (Qtl)", p.TaxWeightQuintal?.ToString("F2") ?? "-"),
         new("अंतिम वजन (क्विंटल)", "Final Weight (Qtl)", p.FinalWeightQuintal?.ToString("F2") ?? "-"),
         new("कुल राशि (₹)", "Purchase Amount (Rs)", p.PurchaseAmount?.ToString("F2") ?? "-"),
+    };
+
+    private static List<PrintRow> LoanRows(Loan l) => new()
+    {
+        new("ऋण क्रमांक", "Loan ID", l.Id.ToString()),
+        new("किसान कोड", "Grower Code", l.GrowerCode),
+        new("किसान का नाम", "Grower Name", l.Grower.GrowerName),
+        new("पिता का नाम", "Father's Name", l.Grower.FatherName),
+        new("गाँव", "Village", l.Grower.Village.VillageName),
+        new("ऋण प्रकार", "Loan Type", l.LoanType.LoanTypeName),
+        new("ऋण राशि (₹)", "Loan Amount (Rs)", l.LoanAmount.ToString("F2")),
+        new("ऋण तिथि", "Issue Date", l.IssueDate.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
+        new("जारीकर्ता", "Issued By", l.IssuedByUserName),
+        new("स्थिति", "Status", l.LoanStatus),
+        new("बकाया राशि (₹)", "Outstanding (Rs)", l.OutstandingAmount.ToString("F2")),
+    };
+
+    private static List<PrintRow> LoanRecoveryRows(LoanRecovery r) => new()
+    {
+        new("वसूली क्रमांक", "Recovery ID", r.Id.ToString()),
+        new("ऋण क्रमांक", "Loan ID", r.LoanId.ToString()),
+        new("किसान कोड", "Grower Code", r.GrowerCode),
+        new("किसान का नाम", "Grower Name", r.Loan.Grower.GrowerName),
+        new("वसूली राशि (₹)", "Recovery Amount (Rs)", r.RecoveryAmount.ToString("F2")),
+        new("वसूली तिथि", "Recovery Date", r.RecoveryDate.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
+        new("वसूली कर्ता", "Recovered By", r.RecoveredByUserName),
+        new("बकाया शेष (₹)", "Remaining Outstanding (Rs)", r.Loan.OutstandingAmount.ToString("F2")),
     };
 }

@@ -33,7 +33,7 @@ Plus 26 additional hard requirements (unified single weighment form, sequence nu
   EF-generated SQL Server schema.
 - `/app/CaneFactorySystem/docs` — 14 guides (setup, flutter builds, API, RS232, camera, printer,
   SMS, Razorpay, backup, security checklist, role matrix, sequences, ER diagram, test report).
-- Zip: `/app/CaneFactorySystem_Phase1-7.zip`.
+- Zip: `/app/CaneFactorySystem_Phase1-8.zip`.
 
 ## Dev/Test environment notes (container)
 - .NET 8 SDK at `/opt/dotnet` (reinstall if pod restarts: dotnet-install.sh --channel 8.0).
@@ -114,9 +114,55 @@ Plus 26 additional hard requirements (unified single weighment form, sequence nu
   `GET /api/audit` now honors `entity`/`entityId` query filters (previously ignored).
 - Repackaged deliverable: `/app/CaneFactorySystem_Phase1-7.zip`.
 
+## What's been implemented (2026-09 / session 4 — Phase 8: Loan & Recovery)
+- User-confirmed requirements: configurable `LoanTypeMaster`, loans INTEREST-FREE, manual recovery
+  only (auto-deduction is Phase 9), NO max loan amount, separate `Loan`/`LoanRecovery` tables,
+  continuous `LoanId`/`LRId` from 1 via `SequenceGenerator` (never EF auto-increment), reuse Phase 7
+  Print Engine for receipts.
+- New entities (`Domain/Entities/Loan.cs`): `LoanTypeMaster`, `Loan` (GrowerId/GrowerCode snapshot,
+  LoanAmount/RecoveredAmount/OutstandingAmount decimal(14,2), LoanStatus ACTIVE|CLOSED|CANCELLED,
+  PrintCount), `LoanRecovery` (LoanId FK, RecoveryAmount, RecoveryStatus ACTIVE|REVERSED, PrintCount).
+- `LoanType` added to `Permissions.Modules.Masters` + `Modules.All` - permission seeding (570→+15
+  codes) and RoleMatrix (Admin full master CRUD via Modules.Masters loop, Accountant `LoanType.View`)
+  needed ZERO other DbSeeder changes since Loan/LoanRecovery module codes were already reserved in
+  Modules.All from Phase 1 planning. 4 default LoanTypeMaster rows seeded (Fertilizer/Seed/Equipment/
+  Emergency Loan).
+- `LoanTypesController` (`/api/loan-types`) - standard `MasterControllerBase<LoanTypeMaster>` CRUD.
+- `LoanController` (`/api/loans`): `POST` issue (validates grower/loanType/amount>0/active season,
+  idempotencyKey), `GET` list/get (Farmer object-ownership scoped via `Grower.Mobile`), `GET
+  /api/loans/outstanding?growerCode=` (deliberately a QUERY param, not a path segment - GrowerCode
+  values like "101/1" contain a literal '/' that ASP.NET Core never decodes from a path segment;
+  this was caught and fixed during manual testing), `POST /{id}/cancel` (blocks if any recovery
+  already recorded - "reverse the recoveries first").
+- `LoanRecoveryController` (`/api/loan-recoveries`): `POST` record (RecoveryAmount validated to
+  NEVER exceed `Loan.OutstandingAmount` - 409 if it would; auto-transitions `LoanStatus`→CLOSED when
+  outstanding hits exactly 0), `GET` list/get (Farmer-scoped, added after testing agent flagged the
+  asymmetry vs `LoanController`), `POST /{id}/reverse` (restores outstanding, REOPENS a CLOSED loan
+  back to ACTIVE).
+- Print integration: `PrintEngineService.BuildLoanSlipAsync`/`BuildLoanRecoverySlipAsync` + new
+  `PrintController` actions `GET /api/print/loan/{id}` and `GET /api/print/loan-recovery/{id}`
+  (same final/preview + Print/Reprint audit-counter semantics as the Phase 7 purchase slip); reuses
+  `PrintConfig.LoanCopies` (already present in the entity from Phase 7 planning) for both documents.
+- EF Core migration `AddLoanRecoveryModule` generated (SQL Server target; container SQLite dev DB
+  uses `EnsureCreated()` so the migration file itself isn't exercised in-container).
+- Flutter (untestable in this container - no Flutter SDK): `screens/loans/loan_screens.dart`
+  (`LoanTypesScreen` via generic master CRUD, `LoanScreen` issue+register+cancel,
+  `LoanRecoveryScreen` record+register+reverse), wired into `app_shell.dart` nav (`Loans`/`Loan
+  Recovery`) and the Masters hub (`Loan Types` tab).
+- Testing agent iteration_4: **44/44 backend tests passed** (1 skipped, unrelated) - LoanType CRUD +
+  duplicate 409, issuance validation, continuous LoanId/LRId, idempotency, partial-recovery 2dp
+  rounding (33.33+33.33+33.34=100.00 exact), over-recovery 409, cancel-with-recovery 409, full
+  recovery auto-CLOSE, reverse auto-REOPEN, print PNG/PDF + audit counters, RBAC (Accountant full
+  access, Operator/SalePurchase 403, Farmer read-only + ownership-scoped), regression spot-check.
+  0 critical issues; 1 code-review gap (LoanRecoveryController missing Farmer scoping) fixed
+  same session and rebuilt (0 errors/warnings) - not yet re-run through the full automated suite,
+  but mirrors the already-tested `LoanController.ScopedQueryAsync` pattern exactly.
+- Repackaged deliverable: `/app/CaneFactorySystem_Phase1-8.zip`.
+
 ## Prioritized backlog (next phases per spec)
-- P0 Phase 8–9: Loan + Recovery, Payment + Advice (sequence from 1) + batch payments + cash evidence
-  + cancellation/reversal - reuse the Phase 7 Print Engine for slips (add BuildPaymentSlipAsync etc).
+- P0 Phase 9: Payment + Advice (sequence from 1) + batch payments + cash evidence + cancellation/
+  reversal - reuse the Phase 7 Print Engine for slips (add BuildPaymentSlipAsync etc); THIS is where
+  Loan auto-deduction from a Payment gets wired using `GET /api/loans/outstanding?growerCode=`.
 - P1 Phase 10: SMS send engine + RazorpayX payouts + webhook verification.
 - P1 Phase 11: Reports (hourly buckets, exports Excel/PDF) - reuse Print Engine for report printing.
 - P1 Phase 12: Farmer mobile/web portal views. SalePurchase weighment module + SalePurchase role screens.

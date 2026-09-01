@@ -11,6 +11,7 @@ import '../screens/dashboard/dashboard_screen.dart';
 import '../screens/developer/device_config_screen.dart';
 import '../screens/developer/settings_screens.dart';
 import '../screens/guide/user_guide_screen.dart';
+import '../screens/loans/loan_screens.dart';
 import '../screens/masters/grower_screen.dart';
 import '../screens/masters/master_screens.dart';
 import '../screens/search/grower_search_screen.dart';
@@ -46,6 +47,8 @@ class _AppShellState extends State<AppShell> {
     _NavItem('Growers', Icons.agriculture_outlined, 'Grower.View', () => const GrowerScreen()),
     _NavItem('Masters', Icons.folder_open_outlined, 'Zone.View', () => const MastersHubScreen()),
     _NavItem('Purchases', Icons.receipt_long_outlined, 'Purchase.View', () => const PurchasesScreen()),
+    _NavItem('Loans', Icons.savings_outlined, 'Loan.View', () => const LoanScreen()),
+    _NavItem('Loan Recovery', Icons.currency_rupee_outlined, 'LoanRecovery.View', () => const LoanRecoveryScreen()),
     _NavItem('Users & Roles', Icons.group_outlined, 'User.View', () => const UsersScreen()),
     _NavItem('Weighing Device', Icons.settings_input_component_outlined, 'Device.Configure', () => const DeviceConfigScreen()),
     _NavItem('Configuration', Icons.tune_outlined, 'WeightRule.Configure', () => const DeveloperSettingsScreen()),

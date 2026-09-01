@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/api_client.dart';
 import '../../widgets/master_crud.dart';
+import '../loans/loan_screens.dart';
 
 /// Hub with tabs for all master forms (each tab is the generic permission-aware CRUD screen).
 class MastersHubScreen extends StatelessWidget {
@@ -104,6 +105,7 @@ class MastersHubScreen extends StatelessWidget {
         ],
         columns: [ColumnSpec('id', 'ID'), ColumnSpec('modeCode', 'Code'), ColumnSpec('modeName', 'Name')],
       ),
+      'Loan Types': const LoanTypesScreen(),
     };
 
     return DefaultTabController(

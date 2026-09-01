@@ -33,6 +33,10 @@ public class AppDbContext : DbContext
     public DbSet<Purchase> Purchases => Set<Purchase>();
     public DbSet<PurchaseImage> PurchaseImages => Set<PurchaseImage>();
 
+    public DbSet<LoanTypeMaster> LoanTypes => Set<LoanTypeMaster>();
+    public DbSet<Loan> Loans => Set<Loan>();
+    public DbSet<LoanRecovery> LoanRecoveries => Set<LoanRecovery>();
+
     public DbSet<WeighingDevice> WeighingDevices => Set<WeighingDevice>();
     public DbSet<StringProfile> StringProfiles => Set<StringProfile>();
     public DbSet<DeviceConfigHistory> DeviceConfigHistories => Set<DeviceConfigHistory>();
@@ -137,6 +141,28 @@ public class AppDbContext : DbContext
             e.HasOne(x => x.Season).WithMany().HasForeignKey(x => x.SeasonId).OnDelete(DeleteBehavior.Restrict);
         });
         b.Entity<PurchaseImage>().HasIndex(x => x.PurchaseId);
+
+        b.Entity<LoanTypeMaster>().HasIndex(x => x.LoanTypeName).IsUnique();
+        b.Entity<Loan>(e =>
+        {
+            e.Property(x => x.Id).ValueGeneratedNever(); // continuous business serial (LoanId)
+            e.HasIndex(x => x.GrowerCode);
+            e.HasIndex(x => x.LoanStatus);
+            e.Property(x => x.LoanAmount).HasPrecision(14, 2);
+            e.Property(x => x.RecoveredAmount).HasPrecision(14, 2);
+            e.Property(x => x.OutstandingAmount).HasPrecision(14, 2);
+            e.HasOne(x => x.Grower).WithMany().HasForeignKey(x => x.GrowerId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.LoanType).WithMany().HasForeignKey(x => x.LoanTypeId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Season).WithMany().HasForeignKey(x => x.SeasonId).OnDelete(DeleteBehavior.Restrict);
+        });
+        b.Entity<LoanRecovery>(e =>
+        {
+            e.Property(x => x.Id).ValueGeneratedNever(); // continuous business serial (LRId)
+            e.HasIndex(x => x.LoanId);
+            e.HasIndex(x => x.GrowerCode);
+            e.Property(x => x.RecoveryAmount).HasPrecision(14, 2);
+            e.HasOne(x => x.Loan).WithMany().HasForeignKey(x => x.LoanId).OnDelete(DeleteBehavior.Restrict);
+        });
 
         b.Entity<WeightRuleConfig>(e =>
         {
