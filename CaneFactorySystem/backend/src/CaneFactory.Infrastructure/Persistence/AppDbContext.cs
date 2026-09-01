@@ -37,6 +37,10 @@ public class AppDbContext : DbContext
     public DbSet<Loan> Loans => Set<Loan>();
     public DbSet<LoanRecovery> LoanRecoveries => Set<LoanRecovery>();
 
+    public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<PaymentPurchase> PaymentPurchases => Set<PaymentPurchase>();
+    public DbSet<PaymentImage> PaymentImages => Set<PaymentImage>();
+
     public DbSet<WeighingDevice> WeighingDevices => Set<WeighingDevice>();
     public DbSet<StringProfile> StringProfiles => Set<StringProfile>();
     public DbSet<DeviceConfigHistory> DeviceConfigHistories => Set<DeviceConfigHistory>();
@@ -162,7 +166,31 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.GrowerCode);
             e.Property(x => x.RecoveryAmount).HasPrecision(14, 2);
             e.HasOne(x => x.Loan).WithMany().HasForeignKey(x => x.LoanId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Payment>().WithMany().HasForeignKey(x => x.PaymentId).OnDelete(DeleteBehavior.Restrict);
         });
+
+        b.Entity<Payment>(e =>
+        {
+            e.Property(x => x.Id).ValueGeneratedNever(); // continuous business serial (PaymentId)
+            e.HasIndex(x => x.GrowerCode);
+            e.HasIndex(x => x.AdviceNumber);
+            e.HasIndex(x => x.PaymentStatus);
+            e.Property(x => x.TotalPurchaseAmount).HasPrecision(14, 2);
+            e.Property(x => x.LoanDeductedAmount).HasPrecision(14, 2);
+            e.Property(x => x.NetPayableAmount).HasPrecision(14, 2);
+            e.HasOne(x => x.Grower).WithMany().HasForeignKey(x => x.GrowerId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.PaymentMode).WithMany().HasForeignKey(x => x.PaymentModeId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Season).WithMany().HasForeignKey(x => x.SeasonId).OnDelete(DeleteBehavior.Restrict);
+        });
+        b.Entity<PaymentPurchase>(e =>
+        {
+            e.HasIndex(x => x.PaymentId);
+            e.HasIndex(x => x.PurchaseId);
+            e.Property(x => x.PurchaseAmountAtPayment).HasPrecision(14, 2);
+            e.HasOne(x => x.Payment).WithMany().HasForeignKey(x => x.PaymentId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Purchase).WithMany().HasForeignKey(x => x.PurchaseId).OnDelete(DeleteBehavior.Restrict);
+        });
+        b.Entity<PaymentImage>().HasIndex(x => x.PaymentId);
 
         b.Entity<WeightRuleConfig>(e =>
         {

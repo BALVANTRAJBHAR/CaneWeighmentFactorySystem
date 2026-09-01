@@ -44,4 +44,9 @@ public class LoanRecovery : BaseEntity
     public string? Remarks { get; set; }
     public string RecoveryStatus { get; set; } = "ACTIVE"; // ACTIVE | REVERSED
     public int PrintCount { get; set; }
+
+    // Phase 9: set when this recovery was auto-created by a Payment's loan auto-deduction (null for
+    // a manually recorded recovery via LoanRecoveryController). Lets Payment.Cancel find and reverse
+    // exactly the recoveries it created.
+    public int? PaymentId { get; set; }
 }

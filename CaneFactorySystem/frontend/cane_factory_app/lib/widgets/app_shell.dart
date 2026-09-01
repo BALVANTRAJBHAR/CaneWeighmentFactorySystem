@@ -14,6 +14,7 @@ import '../screens/guide/user_guide_screen.dart';
 import '../screens/loans/loan_screens.dart';
 import '../screens/masters/grower_screen.dart';
 import '../screens/masters/master_screens.dart';
+import '../screens/payments/payment_screens.dart';
 import '../screens/search/grower_search_screen.dart';
 import '../screens/users/users_screen.dart';
 import '../screens/weighment/weighment_screen.dart';
@@ -47,6 +48,7 @@ class _AppShellState extends State<AppShell> {
     _NavItem('Growers', Icons.agriculture_outlined, 'Grower.View', () => const GrowerScreen()),
     _NavItem('Masters', Icons.folder_open_outlined, 'Zone.View', () => const MastersHubScreen()),
     _NavItem('Purchases', Icons.receipt_long_outlined, 'Purchase.View', () => const PurchasesScreen()),
+    _NavItem('Payments', Icons.payments_outlined, 'Payment.View', () => const PaymentScreen()),
     _NavItem('Loans', Icons.savings_outlined, 'Loan.View', () => const LoanScreen()),
     _NavItem('Loan Recovery', Icons.currency_rupee_outlined, 'LoanRecovery.View', () => const LoanRecoveryScreen()),
     _NavItem('Users & Roles', Icons.group_outlined, 'User.View', () => const UsersScreen()),

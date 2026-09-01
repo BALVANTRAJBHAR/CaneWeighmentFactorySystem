@@ -85,6 +85,57 @@ public class CameraCaptureService : ICameraCaptureService
         return results;
     }
 
+    /// <summary>Cash Evidence capture for a Payment (Phase 9) - same best-effort per-camera semantics
+    /// as the Purchase capture above, but writes to PaymentImages / a PaymentImages disk folder.</summary>
+    public async Task<List<CameraCaptureResult>> CaptureForPaymentAsync(int paymentId, int? capturedByUserId, CancellationToken ct = default)
+    {
+        var results = new List<CameraCaptureResult>();
+        if (!await SettingTrueAsync("CameraSystemEnabled") || !await SettingTrueAsync("ImageCaptureEnabled"))
+            return results;
+
+        var payment = await _db.Payments.Include(p => p.Season).AsNoTracking().FirstOrDefaultAsync(p => p.Id == paymentId, ct);
+        if (payment == null) return results;
+
+        var cameras = await _db.Cameras.AsNoTracking()
+            .Where(c => !c.IsDeleted && c.Status && c.CaptureEnabled).OrderBy(c => c.CameraNumber).ToListAsync(ct);
+
+        foreach (var cam in cameras)
+        {
+            var result = new CameraCaptureResult { CameraConfigId = cam.Id, CameraNumber = cam.CameraNumber };
+            try
+            {
+                var provider = ResolveProvider(cam.Protocol);
+                if (provider == null)
+                {
+                    result.Error = $"No capture provider registered for protocol '{cam.Protocol}'.";
+                    results.Add(result);
+                    continue;
+                }
+                var password = cam.PasswordEncrypted != null ? _protector.Unprotect(cam.PasswordEncrypted) : null;
+                var (ok, bytes, error) = await provider.CaptureAsync(cam, password, ct);
+                if (!ok || bytes == null)
+                {
+                    result.Error = error;
+                    results.Add(result);
+                    await _audit.LogAsync("ImageCaptureFailed", "CashEvidence", "Payment", paymentId.ToString(),
+                        newValue: new { cam.CameraNumber, error }, success: false, failureReason: error);
+                    continue;
+                }
+                var (imageId, imageName) = await SavePaymentImageAsync(bytes, payment, cam, capturedByUserId, ct);
+                result.Success = true;
+                result.ImageId = imageId;
+                result.ImageName = imageName;
+            }
+            catch (Exception ex)
+            {
+                result.Error = ex.Message;
+                _log.LogWarning(ex, "Camera capture failed for camera {CameraId} on payment {PaymentId}", cam.Id, paymentId);
+            }
+            results.Add(result);
+        }
+        return results;
+    }
+
     public async Task<CameraCaptureResult> CaptureSingleAsync(int cameraConfigId, CancellationToken ct = default)
     {
         var cam = await _db.Cameras.AsNoTracking().FirstOrDefaultAsync(c => c.Id == cameraConfigId && !c.IsDeleted, ct);
@@ -150,6 +201,46 @@ public class CameraCaptureService : ICameraCaptureService
         await _db.SaveChangesAsync(ct);
         await _audit.LogAsync("ImageCaptured", "Image", "PurchaseImage", image.Id.ToString(),
             newValue: new { purchase.Id, cam.CameraNumber, stageTag, fileName });
+        return (image.Id, fileName);
+    }
+
+    /// <summary>Layout: {Root}/{Season}/PaymentImages/YYYY/MM/DD/PAY-{id}/CASH-CAM{NN}-{seq}.jpg (never a DB BLOB).</summary>
+    private async Task<(int imageId, string imageName)> SavePaymentImageAsync(byte[] bytes, Payment payment,
+        CameraConfig cam, int? capturedByUserId, CancellationToken ct)
+    {
+        var root = _config["Storage:ImageRoot"];
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            var setting = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot", ct);
+            root = string.IsNullOrWhiteSpace(setting?.Value) ? Path.Combine(Path.GetTempPath(), "CanePaymentData") : setting!.Value;
+        }
+        var seasonFolder = SanitizeFolder(payment.Season?.SeasonName ?? "Default");
+        var now = DateTime.Now;
+        var folder = Path.Combine(root, seasonFolder, "PaymentImages", now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"PAY-{payment.Id}");
+        Directory.CreateDirectory(folder);
+
+        var existingCount = await _db.PaymentImages.CountAsync(i => i.PaymentId == payment.Id && i.CameraId == cam.Id, ct);
+        var seq = existingCount + 1;
+        var fileName = $"CASH-CAM{cam.CameraNumber:D2}-{seq:D2}.jpg";
+        var fullPath = Path.Combine(folder, fileName);
+        await File.WriteAllBytesAsync(fullPath, bytes, ct);
+        var hash = Convert.ToHexString(SHA256.HashData(bytes));
+
+        var image = new PaymentImage
+        {
+            PaymentId = payment.Id,
+            CameraId = cam.Id,
+            ImageName = fileName,
+            FilePath = fullPath,
+            FileHash = hash,
+            CapturedAt = DateTime.UtcNow,
+            CapturedBy = capturedByUserId,
+            Status = true
+        };
+        _db.PaymentImages.Add(image);
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ImageCaptured", "CashEvidence", "Payment", payment.Id.ToString(),
+            newValue: new { payment.Id, cam.CameraNumber, fileName });
         return (image.Id, fileName);
     }
 

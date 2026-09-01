@@ -140,6 +140,38 @@ public class PrintController : ControllerBase
         return File(bytes, contentType, $"LoanRecovery-{id}.{ext}");
     }
 
+    /// <summary>Renders the Payment slip (Phase 9). format=final increments Payment.PrintCount
+    /// and audits Print/Reprint.</summary>
+    [HttpGet("payment/{id:int}")]
+    public async Task<IActionResult> PaymentSlip(int id, [FromQuery] string? target, [FromQuery] string format = "final")
+    {
+        if (!_current.HasPermission("Payment.Print"))
+            return StatusCode(403, new { message = "You do not have 'Payment.Print' permission." });
+        if (format is not ("final" or "preview")) return BadRequest(new { message = "format must be final or preview." });
+
+        var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
+        var resolvedTarget = target ?? cfg?.PrinterType ?? "DotMatrix";
+        if (resolvedTarget is not ("A4" or "DotMatrix")) return BadRequest(new { message = "target must be A4 or DotMatrix." });
+
+        var payment = await _db.Payments.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
+        if (payment == null) return NotFound(new { message = $"Payment {id} not found." });
+
+        PrintDocument doc;
+        try { doc = await _engine.BuildPaymentSlipAsync(id, _current.Username ?? ""); }
+        catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
+
+        var (bytes, contentType, ext) = _engine.Render(doc, resolvedTarget, format == "preview");
+        if (format == "final")
+        {
+            var isReprint = payment.PrintCount > 0;
+            payment.PrintCount++;
+            await _db.SaveChangesAsync();
+            await _audit.LogAsync(isReprint ? "Reprint" : "Print", "Payment", "Payment", id.ToString(),
+                newValue: new { target = resolvedTarget, printCount = payment.PrintCount });
+        }
+        return File(bytes, contentType, $"Payment-{id}.{ext}");
+    }
+
     /// <summary>Developer print test with sample data - no purchase/audit side effects. Lets the
     /// Developer verify printer, paper type, language, Hindi glyph rendering, QR readability and
     /// alignment before relying on Auto Print in production.</summary>

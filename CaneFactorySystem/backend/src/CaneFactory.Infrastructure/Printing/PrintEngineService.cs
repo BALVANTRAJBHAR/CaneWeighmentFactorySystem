@@ -63,6 +63,19 @@ public class PrintEngineService : IPrintEngineService
         return doc;
     }
 
+    public async Task<PrintDocument> BuildPaymentSlipAsync(int paymentId, string generatedByUserName)
+    {
+        var p = await LoadPaymentAsync(paymentId);
+        var purchaseIds = await _db.PaymentPurchases.Where(pp => pp.PaymentId == paymentId)
+            .OrderBy(pp => pp.PurchaseId).Select(pp => pp.PurchaseId).ToListAsync();
+        var doc = await BaseDocAsync(p.Season?.SeasonName, generatedByUserName);
+        doc.TitleHindi = "भुगतान पर्ची";
+        doc.TitleEnglish = "Payment Slip";
+        doc.QrValue = p.Id;
+        doc.Rows = PaymentRows(p, purchaseIds);
+        return doc;
+    }
+
     public PrintDocument BuildTestDocument(string language, string generatedByUserName) => new()
     {
         Language = language,
@@ -117,6 +130,15 @@ public class PrintEngineService : IPrintEngineService
             .AsNoTracking().FirstOrDefaultAsync(x => x.Id == loanRecoveryId);
         if (r == null) throw new KeyNotFoundException($"Loan Recovery {loanRecoveryId} not found.");
         return r;
+    }
+
+    private async Task<Payment> LoadPaymentAsync(int paymentId)
+    {
+        var p = await _db.Payments.Include(x => x.Grower).ThenInclude(g => g.Village)
+            .Include(x => x.PaymentMode).Include(x => x.Season)
+            .AsNoTracking().FirstOrDefaultAsync(x => x.Id == paymentId);
+        if (p == null) throw new KeyNotFoundException($"Payment {paymentId} not found.");
+        return p;
     }
 
     private async Task<PrintDocument> BaseDocAsync(string? seasonName, string generatedByUserName)
@@ -190,5 +212,22 @@ public class PrintEngineService : IPrintEngineService
         new("वसूली तिथि", "Recovery Date", r.RecoveryDate.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
         new("वसूली कर्ता", "Recovered By", r.RecoveredByUserName),
         new("बकाया शेष (₹)", "Remaining Outstanding (Rs)", r.Loan.OutstandingAmount.ToString("F2")),
+    };
+
+    private static List<PrintRow> PaymentRows(Payment p, List<int> purchaseIds) => new()
+    {
+        new("भुगतान क्रमांक", "Payment ID", p.Id.ToString()),
+        new("अग्रिम क्रमांक", "Advice Number", p.AdviceNumber.ToString()),
+        new("किसान कोड", "Grower Code", p.GrowerCode),
+        new("किसान का नाम", "Grower Name", p.Grower.GrowerName),
+        new("गाँव", "Village", p.Grower.Village.VillageName),
+        new("क्रय क्रमांक", "Purchase IDs", purchaseIds.Count == 0 ? "-" : string.Join(", ", purchaseIds)),
+        new("कुल क्रय राशि (₹)", "Total Purchase Amount (Rs)", p.TotalPurchaseAmount.ToString("F2")),
+        new("ऋण कटौती (₹)", "Loan Deducted (Rs)", p.LoanDeductedAmount.ToString("F2")),
+        new("शुद्ध देय राशि (₹)", "Net Payable (Rs)", p.NetPayableAmount.ToString("F2")),
+        new("भुगतान माध्यम", "Payment Mode", p.PaymentMode.ModeName),
+        new("संदर्भ क्रमांक", "Transaction Ref", p.TransactionRefNumber ?? "-"),
+        new("भुगतान तिथि", "Payment Date", p.PaymentDate.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
+        new("भुगतान कर्ता", "Paid By", p.PaidByUserName),
     };
 }

@@ -33,7 +33,7 @@ Plus 26 additional hard requirements (unified single weighment form, sequence nu
   EF-generated SQL Server schema.
 - `/app/CaneFactorySystem/docs` — 14 guides (setup, flutter builds, API, RS232, camera, printer,
   SMS, Razorpay, backup, security checklist, role matrix, sequences, ER diagram, test report).
-- Zip: `/app/CaneFactorySystem_Phase1-8.zip`.
+- Zip: `/app/CaneFactorySystem_Phase1-9.zip`.
 
 ## Dev/Test environment notes (container)
 - .NET 8 SDK at `/opt/dotnet` (reinstall if pod restarts: dotnet-install.sh --channel 8.0).
@@ -159,11 +159,52 @@ Plus 26 additional hard requirements (unified single weighment form, sequence nu
   but mirrors the already-tested `LoanController.ScopedQueryAsync` pattern exactly.
 - Repackaged deliverable: `/app/CaneFactorySystem_Phase1-8.zip`.
 
+## What's been implemented (2026-09 / session 5 — Phase 9: Payment & Advice)
+- User-confirmed requirements: 3 Advice-batch selection modes (SINGLE purchase / DATE_RANGE /
+  FARMER-wise all-pending), FULLY AUTOMATIC loan auto-deduction (FIFO oldest-loan-first, capped at
+  payable amount, no user override), payment modes ONLY Cash/Bank/Mobile UPI (Razorpay/Online
+  explicitly excluded - removed from seed, no gateway code anywhere), Cash Evidence photo capture
+  for CASH mode only (reuses Phase 6 camera pipeline), Cancel = full reversal (never hard-delete,
+  restores Purchases to payable + reverses LoanRecovery + reopens CLOSED loans), re-payment after
+  cancel always gets a brand-new Advice Number.
+- New entities (`Domain/Entities/Payment.cs`): `Payment` (AdviceNumber + PaymentId both continuous
+  business serials from `SequenceGenerator`, TotalPurchaseAmount/LoanDeductedAmount/NetPayableAmount
+  decimal(14,2), PaymentStatus COMPLETED|CANCELLED), `PaymentPurchase` (join row, snapshots amount
+  at payment time), `PaymentImage` (Cash Evidence, mirrors PurchaseImage). Added `LoanRecovery.
+  PaymentId` (nullable FK) so Payment.Cancel can find and reverse exactly the recoveries it created.
+- `PaymentController` (`/api/payments`): `GET /eligible-purchases` (read-only preview before
+  committing - shows exactly what a POST with the same criteria would produce), `POST` issue (FIFO
+  loan-deduction loop, idempotencyKey, autoPrint via `PrintConfig.PaymentCopies`, captureQueued only
+  for CASH), `GET` list/get (Farmer object-ownership scoped via `Grower.Mobile`, purchaseIds[] on
+  Get), `POST /{id}/cancel` (full reversal), `GET/POST /{id}/images` + `/capture` (Cash Evidence,
+  gated by the pre-existing `CashEvidence.*` permissions).
+- Payment modes seed reduced to exactly CASH/BANK/MOBILE_UPI (ONLINE/Razorpay row removed from
+  `DbSeeder`) - PaymentModeMaster stays a fully generic/configurable master so a real gateway could
+  be added later as a normal mode row without touching controller code.
+- Camera (`CameraCaptureService.CaptureForPaymentAsync`/`SavePaymentImageAsync`) and Print
+  (`PrintEngineService.BuildPaymentSlipAsync` + `PrintController.PaymentSlip`) both extended using
+  the exact same patterns as Phase 6/7, just targeting Payment instead of Purchase.
+- Zero RBAC/DbSeeder changes needed beyond the PaymentModes seed fix - Payment/CashEvidence module
+  permissions were already fully reserved and assigned to Accountant/Admin/Farmer roles during
+  Phase 8 planning.
+- EF migration `AddPaymentModule` generated (SQL Server target; SQLite dev DB uses `EnsureCreated`).
+- Flutter (untestable in this container): `screens/payments/payment_screens.dart` (`PaymentScreen`
+  with SINGLE/DATE_RANGE/FARMER segmented selector, live eligible-purchases + loan-deduction
+  preview, payment mode dropdown, Payment Register with Cancel), wired into `app_shell.dart` nav.
+- Testing agent iteration_5: **38/38 backend pytest tests passed**, 0 bugs found. Verified: all 3
+  selection modes, loan-deduction math (no-loan / capped-at-payable / multi-loan FIFO / exact-close),
+  cancel-then-repay gets a new Advice Number with fresh deduction, idempotency 409, captureQueued
+  true only for CASH, print PNG/PDF + print/reprint counter, RBAC (Accountant Create OK, Admin
+  403 on Create/Cancel, Operator/SalePurchase 403 on everything, Farmer ownership-scoped 404 not
+  403), PaymentModes seed has no ONLINE/Razorpay row. Non-blocking code-review notes only
+  (controller size ~408 LOC, typed DTO preferred over `Dictionary<string,string>` for Cancel body,
+  in-memory idempotency cache needs Redis at scale - consistent with the Phase 8 pattern already
+  in place, deferred).
+- Repackaged deliverable: `/app/CaneFactorySystem_Phase1-9.zip`.
+
 ## Prioritized backlog (next phases per spec)
-- P0 Phase 9: Payment + Advice (sequence from 1) + batch payments + cash evidence + cancellation/
-  reversal - reuse the Phase 7 Print Engine for slips (add BuildPaymentSlipAsync etc); THIS is where
-  Loan auto-deduction from a Payment gets wired using `GET /api/loans/outstanding?growerCode=`.
-- P1 Phase 10: SMS send engine + RazorpayX payouts + webhook verification.
+- P1 Phase 10: SMS send engine (generic HTTP provider) - wire into the `smsQueued:false` placeholder
+  already returned by Weighment/Loan/Payment responses; RazorpayX explicitly OUT per Phase 9 scope.
 - P1 Phase 11: Reports (hourly buckets, exports Excel/PDF) - reuse Print Engine for report printing.
 - P1 Phase 12: Farmer mobile/web portal views. SalePurchase weighment module + SalePurchase role screens.
 - P2 Phase 13–14: hardening, dependency scanning, backups automation, tests, production packaging.

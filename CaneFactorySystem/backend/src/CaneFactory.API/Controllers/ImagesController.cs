@@ -28,4 +28,18 @@ public class ImagesController : ControllerBase
         var bytes = await System.IO.File.ReadAllBytesAsync(img.FilePath);
         return File(bytes, "image/jpeg", img.ImageName);
     }
+
+    /// <summary>Serves Cash Evidence photos captured for a Payment (Phase 9).</summary>
+    [HttpGet("payment/{id:int}/file")]
+    public async Task<IActionResult> PaymentFile(int id)
+    {
+        if (!_current.HasPermission("CashEvidence.View"))
+            return StatusCode(403, new { message = "You do not have 'CashEvidence.View' permission." });
+        var img = await _db.PaymentImages.AsNoTracking().FirstOrDefaultAsync(i => i.Id == id && i.Status);
+        if (img == null) return NotFound(new { message = "Image record not found." });
+        if (!System.IO.File.Exists(img.FilePath))
+            return NotFound(new { message = "Image metadata exists but the file is missing on disk." });
+        var bytes = await System.IO.File.ReadAllBytesAsync(img.FilePath);
+        return File(bytes, "image/jpeg", img.ImageName);
+    }
 }

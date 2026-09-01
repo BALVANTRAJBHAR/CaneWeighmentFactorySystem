@@ -177,8 +177,7 @@ public static class DbSeeder
             db.PaymentModes.AddRange(
                 new PaymentModeMaster { ModeCode = "CASH", ModeName = "Cash" },
                 new PaymentModeMaster { ModeCode = "BANK", ModeName = "Bank" },
-                new PaymentModeMaster { ModeCode = "MOBILE_UPI", ModeName = "Mobile UPI" },
-                new PaymentModeMaster { ModeCode = "ONLINE", ModeName = "Online (Razorpay)" });
+                new PaymentModeMaster { ModeCode = "MOBILE_UPI", ModeName = "Mobile UPI" });
 
         if (!await db.Seasons.AnyAsync())
             db.Seasons.Add(new Season { SeasonName = "2026-27", StartDate = new DateTime(2026, 10, 1), IsActive = true });
