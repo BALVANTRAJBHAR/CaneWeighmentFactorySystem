@@ -160,6 +160,18 @@ public class ConfigController : ControllerBase
         }
     }
 
+    /// <summary>Live snapshot preview (Phase 6) - captures one real frame right now via the configured
+    /// protocol (RTSP/ONVIF/ISAPI) and streams it back; never persisted as a purchase evidence image.</summary>
+    [HasPermission("Camera.Configure")]
+    [HttpGet("cameras/{id:int}/snapshot")]
+    public async Task<IActionResult> Snapshot(int id, [FromServices] ICameraCaptureService capture, CancellationToken ct)
+    {
+        var result = await capture.CaptureSingleAsync(id, ct);
+        if (!result.Success || result.ImageBytes == null)
+            return Conflict(new { message = result.Error ?? "Snapshot capture failed." });
+        return File(result.ImageBytes, "image/jpeg");
+    }
+
     // ---------------------------------------------------------------- PRINT
     [HasPermission("Print.View")]
     [HttpGet("print")]

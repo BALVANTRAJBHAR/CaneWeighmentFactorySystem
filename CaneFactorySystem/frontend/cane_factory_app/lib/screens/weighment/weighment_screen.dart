@@ -1,5 +1,7 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
@@ -44,6 +46,10 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   List _cameras = [];
   bool _saving = false;
 
+  // Phase 6: evidence images captured (async, in the background) for the last saved purchase
+  int? _lastCapturedPurchaseId;
+  List _capturedImages = [];
+
   @override
   void initState() {
     super.initState();
@@ -85,6 +91,19 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   Future<void> _loadVarieties(int typeId) async {
     final res = await ApiClient.instance.dio.get('/api/varieties/by-type/$typeId');
     if (res.statusCode == 200 && mounted) setState(() => _varieties = res.data);
+  }
+
+  /// Camera capture runs in the background on the server after Gross/Tare save;
+  /// wait briefly then fetch the metadata list so thumbnails appear automatically.
+  Future<void> _loadCapturedImages(int purchaseId) async {
+    _lastCapturedPurchaseId = purchaseId;
+    await Future.delayed(const Duration(seconds: 2));
+    try {
+      final res = await ApiClient.instance.dio.get('/api/purchases/$purchaseId/images');
+      if (res.statusCode == 200 && mounted && _lastCapturedPurchaseId == purchaseId) {
+        setState(() => _capturedImages = res.data);
+      }
+    } catch (_) {}
   }
 
   Future<void> _lookupGrower() async {
@@ -148,13 +167,16 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     if (res.statusCode == 200) {
       _toast(res.data['message']);
       _sound.onWeighmentSaved();
+      final purchaseId = res.data['purchaseId'] as int;
       // reset new-entry fields; keep configuration selections for fast operation
       setState(() {
         _grower = null;
         _growerCode.clear();
         _vehicleNumber.clear();
+        _capturedImages = [];
       });
       _loadPending();
+      _loadCapturedImages(purchaseId);
     } else {
       _toast(ApiClient.errorMessage(res), error: true);
     }
@@ -173,11 +195,14 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     if (res.statusCode == 200) {
       _toast('${res.data['message']} Purchase ID: ${res.data['purchaseId']}');
       _sound.onWeighmentSaved();
+      final purchaseId = _selectedPurchase!['purchaseId'] as int;
       setState(() {
         _selectedPurchase = null;
         _purchaseIdCtl.clear();
+        _capturedImages = [];
       });
       _loadPending();
+      _loadCapturedImages(purchaseId);
     } else {
       _toast(ApiClient.errorMessage(res), error: true);
     }
@@ -488,6 +513,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           const Text('Live Cameras', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
           const SizedBox(height: 6),
           Expanded(
+            flex: 3,
             child: ListView(children: [
               for (final c in _cameras)
                 Container(
@@ -511,9 +537,55 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 ),
             ]),
           ),
+          if (_capturedImages.isNotEmpty) ...[
+            const Divider(height: 12),
+            const Text('Captured Evidence', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+            const SizedBox(height: 4),
+            Expanded(
+              flex: 2,
+              child: GridView.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 4, mainAxisSpacing: 4),
+                itemCount: _capturedImages.length,
+                itemBuilder: (ctx, i) => _evidenceThumb(_capturedImages[i]),
+              ),
+            ),
+          ],
         ]),
       ),
     );
+  }
+
+  Widget _evidenceThumb(Map img) {
+    return FutureBuilder<List<int>?>(
+      future: _fetchImageBytes(img['id']),
+      builder: (ctx, snap) {
+        return Container(
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), color: Colors.black87),
+          clipBehavior: Clip.antiAlias,
+          child: Stack(fit: StackFit.expand, children: [
+            if (snap.hasData && snap.data != null)
+              Image.memory(Uint8List.fromList(snap.data!), fit: BoxFit.cover)
+            else
+              const Center(child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))),
+            Positioned(
+              left: 3,
+              bottom: 2,
+              child: Text('${img['captureStage']}', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
+            ),
+          ]),
+        );
+      },
+    );
+  }
+
+  Future<List<int>?> _fetchImageBytes(int imageId) async {
+    try {
+      final res = await ApiClient.instance.dio
+          .get('/api/images/$imageId/file', options: Options(responseType: ResponseType.bytes));
+      return res.statusCode == 200 ? (res.data as List<int>) : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   Widget _pendingGrid() {

@@ -1,4 +1,7 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import '../../core/api_client.dart';
 
 /// Developer Configuration hub: Weight Rules, Sound/TTS, Cameras, Print, SMS, Razorpay, Company.
@@ -280,10 +283,47 @@ class _CamerasTabState extends State<_CamerasTab> {
               final res = await ApiClient.instance.dio.post('/api/config/cameras/${cam['id']}/test');
               if (context.mounted) showResult(context, res);
             }, child: const Text('Test')),
+            TextButton(onPressed: () => _snapshot(cam['id']), child: const Text('Snapshot')),
             TextButton(onPressed: () => _edit(Map<String, dynamic>.from(cam)), child: const Text('Edit')),
           ]),
         )),
     ]);
+  }
+
+  /// Live capture preview (Phase 6) - one real snapshot right now via RTSP/ONVIF/ISAPI (or the
+  /// SIMULATOR provider when Camera:SimulatorMode=true), never saved as purchase evidence.
+  Future<void> _snapshot(int cameraId) async {
+    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
+    try {
+      final res = await ApiClient.instance.dio.get('/api/config/cameras/$cameraId/snapshot',
+          options: Options(responseType: ResponseType.bytes, validateStatus: (s) => s != null && s < 500));
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        await showDialog(context: context, builder: (ctx) => Dialog(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Image.memory(Uint8List.fromList(res.data as List<int>), width: 420),
+              const SizedBox(height: 8),
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+            ]),
+          ),
+        ));
+      } else {
+        var message = 'Snapshot capture failed.';
+        try {
+          final decoded = jsonDecode(utf8.decode(res.data as List<int>)) as Map;
+          if (decoded['message'] != null) message = decoded['message'].toString();
+        } catch (_) {}
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+        }
+      }
+    } catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Snapshot failed: $e')));
+    }
   }
 }
 

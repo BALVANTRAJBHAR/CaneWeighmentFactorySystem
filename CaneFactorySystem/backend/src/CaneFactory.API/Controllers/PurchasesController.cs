@@ -23,6 +23,10 @@ public class PurchasesController : ControllerBase
         _current.HasPermission($"Purchase.{action}") ? null
             : StatusCode(403, new { message = $"You do not have 'Purchase.{action}' permission." });
 
+    private IActionResult? DenyImage(string action) =>
+        _current.HasPermission($"Image.{action}") ? null
+            : StatusCode(403, new { message = $"You do not have 'Image.{action}' permission." });
+
     private bool IsFarmerOnly =>
         (_current.Role ?? "").Split(',').All(r => r is "Farmer" or "") && (_current.Role ?? "") != "";
 
@@ -126,5 +130,41 @@ public class PurchasesController : ControllerBase
         await _audit.LogAsync("Cancel", "Purchase", "Purchase", id.ToString(), oldValue: old,
             newValue: new { Status = "CANCELLED", Reason = reason });
         return Ok(new { message = $"Purchase {id} cancelled. Reason recorded in audit log." });
+    }
+
+    // -------------------------------------------------------------- CAMERA EVIDENCE IMAGES (Phase 6)
+    /// <summary>List Gross/Tare evidence images captured for this purchase (metadata only - never a DB BLOB).</summary>
+    [HttpGet("{id:int}/images")]
+    public async Task<IActionResult> Images(int id)
+    {
+        if (DenyImage("View") is { } d) return d;
+        if (!await _db.Purchases.AnyAsync(p => p.Id == id && !p.IsDeleted))
+            return NotFound(new { message = "Purchase not found." });
+        var images = await _db.PurchaseImages.Where(i => i.PurchaseId == id && i.Status)
+            .OrderBy(i => i.CaptureStage).ThenBy(i => i.ImageName)
+            .Select(i => new { i.Id, i.CameraId, i.CaptureStage, i.ImageName, i.FileHash, i.CapturedAt, i.CapturedBy })
+            .ToListAsync();
+        return Ok(images);
+    }
+
+    /// <summary>Manual (re-)capture trigger, e.g. after an auto-capture failure or before saving Gross/Tare.</summary>
+    [HttpPost("{id:int}/images/capture")]
+    public async Task<IActionResult> CaptureImages(int id, [FromBody] Dictionary<string, string> body,
+        [FromServices] ICameraCaptureService capture, CancellationToken ct)
+    {
+        if (DenyImage("Create") is { } d) return d;
+        var stage = (body.GetValueOrDefault("stage") ?? "GROSS").Trim().ToUpperInvariant();
+        if (stage is not ("GROSS" or "TARE")) return BadRequest(new { message = "Stage must be GROSS or TARE." });
+        if (!await _db.Purchases.AnyAsync(p => p.Id == id && !p.IsDeleted))
+            return NotFound(new { message = "Purchase not found." });
+        var results = await capture.CaptureForPurchaseAsync(id, stage, _current.UserId, ct);
+        var okCount = results.Count(r => r.Success);
+        return Ok(new
+        {
+            message = results.Count == 0
+                ? "Camera capture is disabled system-wide, or no cameras are enabled for capture."
+                : $"Captured {okCount} of {results.Count} camera(s) for {stage}.",
+            results
+        });
     }
 }

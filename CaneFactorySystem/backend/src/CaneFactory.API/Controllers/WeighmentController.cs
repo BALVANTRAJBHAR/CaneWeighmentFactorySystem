@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CaneFactory.API.Controllers;
 
@@ -24,16 +25,31 @@ public class WeighmentController : ControllerBase
     private readonly ICurrentUser _current;
     private readonly ISequenceGenerator _seq;
     private readonly IMemoryCache _cache;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     public WeighmentController(AppDbContext db, IAuditService audit, ICurrentUser current,
-        ISequenceGenerator seq, IMemoryCache cache)
+        ISequenceGenerator seq, IMemoryCache cache, IServiceScopeFactory scopeFactory)
     {
-        _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache;
+        _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache; _scopeFactory = scopeFactory;
     }
 
     private IActionResult? Deny(string action) =>
         _current.HasPermission($"Weighment.{action}") ? null
             : StatusCode(403, new { message = $"You do not have 'Weighment.{action}' permission." });
+
+    /// <summary>Fire-and-forget capture on a fresh DI scope - never blocks or fails the weighment response.
+    /// Per-camera failures are already audited inside ICameraCaptureService.</summary>
+    private void QueueCapture(int purchaseId, string stage)
+    {
+        var userId = _current.UserId;
+        _ = Task.Run(async () =>
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var svc = scope.ServiceProvider.GetRequiredService<ICameraCaptureService>();
+            try { await svc.CaptureForPurchaseAsync(purchaseId, stage, userId); }
+            catch { /* best-effort */ }
+        });
+    }
 
     // -------------------------------------------------------------- PENDING GROSS GRID
     [HttpGet("pending-tare")]
@@ -143,6 +159,7 @@ public class WeighmentController : ControllerBase
 
         await _audit.LogAsync("GrossWeighment", "Weighment", "Purchase", purchaseId.ToString(),
             newValue: new { purchase.GrowerCode, purchase.GrossWeightQuintal, purchase.VehicleNumber, purchase.Rate });
+        QueueCapture(purchaseId, "GROSS");
         return Ok(new
         {
             message = $"Gross weighment completed successfully. Purchase ID: {purchaseId}. Gross Weight: {grossQuintal:F2} Quintal.",
@@ -150,7 +167,8 @@ public class WeighmentController : ControllerBase
             grossWeightQuintal = grossQuintal,
             rate = rate.Rate,
             soundEvent = "WEIGHMENT_COMPLETED",
-            autoPrint = await AutoPrintAsync("Gross")
+            autoPrint = await AutoPrintAsync("Gross"),
+            captureQueued = true
         });
     }
 
@@ -196,6 +214,7 @@ public class WeighmentController : ControllerBase
 
         await _audit.LogAsync("TareWeighment", "Weighment", "Purchase", p.Id.ToString(),
             newValue: new { p.TareWeightQuintal, p.NetWeightQuintal, p.FinalWeightQuintal, p.PurchaseAmount });
+        QueueCapture(p.Id, "TARE");
         return Ok(new
         {
             message = $"Tare completed successfully. Final Weight: {final:F2} Quintal.",
@@ -208,6 +227,7 @@ public class WeighmentController : ControllerBase
             purchaseAmount = amount,
             soundEvent = "WEIGHMENT_COMPLETED",
             autoPrint = await AutoPrintAsync("Tare"),
+            captureQueued = true,
             smsQueued = false // SMS gateway integration activates in Phase 10
         });
     }

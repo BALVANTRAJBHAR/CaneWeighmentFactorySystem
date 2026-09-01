@@ -7,6 +7,7 @@ using CaneFactory.Application.Interfaces;
 using CaneFactory.Infrastructure.Persistence;
 using CaneFactory.Infrastructure.Services;
 using CaneFactory.Infrastructure.Weighing;
+using CaneFactory.Infrastructure.Camera;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -25,6 +26,8 @@ MapEnv("CANE_ENCRYPTION_KEY", "Security:EncryptionKey");
 MapEnv("CANE_CONNECTION_STRING", "ConnectionStrings:Default");
 MapEnv("CANE_DB_PROVIDER", "Database:Provider");
 MapEnv("CANE_SEED_DEV_PASSWORD", "Seed:DeveloperPassword");
+MapEnv("CANE_IMAGE_STORAGE_ROOT", "Storage:ImageRoot");
+MapEnv("CANE_CAMERA_SIMULATOR", "Camera:SimulatorMode");
 
 // ---- Database (SQL Server 2019 Express in production; SQLite fallback for dev containers) ----
 var provider = builder.Configuration["Database:Provider"] ?? "SqlServer";
@@ -47,6 +50,13 @@ builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddSingleton<ILiveWeightBroadcaster, SignalRWeightBroadcaster>();
 builder.Services.AddSingleton<WeighingService>();
 builder.Services.AddScoped<UserStateService>();
+
+// ---- Camera capture (Phase 6): vendor-abstracted providers + orchestration service ----
+builder.Services.AddSingleton<ICameraCaptureProvider, IsapiCaptureProvider>();
+builder.Services.AddSingleton<ICameraCaptureProvider, OnvifCaptureProvider>();
+builder.Services.AddSingleton<ICameraCaptureProvider, RtspCaptureProvider>();
+builder.Services.AddSingleton<ICameraCaptureProvider, SimulatorCaptureProvider>();
+builder.Services.AddScoped<ICameraCaptureService, CameraCaptureService>();
 
 // ---- AuthN: JWT bearer, short-lived access tokens ----
 var jwtSecret = builder.Configuration["Jwt:Secret"]

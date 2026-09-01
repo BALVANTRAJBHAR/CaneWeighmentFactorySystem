@@ -46,3 +46,18 @@ public interface ILiveWeightBroadcaster
 {
     Task BroadcastAsync(LiveWeightDto dto);
 }
+
+/// <summary>Vendor-abstracted single-shot snapshot capture for one protocol (RTSP/ONVIF/ISAPI/SIMULATOR).</summary>
+public interface ICameraCaptureProvider
+{
+    string Protocol { get; }
+    Task<(bool success, byte[]? jpegBytes, string? error)> CaptureAsync(
+        CaneFactory.Domain.Entities.CameraConfig camera, string? plainPassword, CancellationToken ct);
+}
+
+/// <summary>Orchestrates capture across all enabled cameras and persists PurchaseImage metadata + files on disk.</summary>
+public interface ICameraCaptureService
+{
+    Task<List<CameraCaptureResult>> CaptureForPurchaseAsync(int purchaseId, string stage, int? capturedByUserId, CancellationToken ct = default);
+    Task<CameraCaptureResult> CaptureSingleAsync(int cameraConfigId, CancellationToken ct = default);
+}
