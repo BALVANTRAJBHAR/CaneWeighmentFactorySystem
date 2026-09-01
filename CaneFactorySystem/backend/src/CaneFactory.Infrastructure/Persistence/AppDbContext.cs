@@ -1,0 +1,155 @@
+using CaneFactory.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace CaneFactory.Infrastructure.Persistence;
+
+public class AppDbContext : DbContext
+{
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+    public DbSet<User> Users => Set<User>();
+    public DbSet<Role> Roles => Set<Role>();
+    public DbSet<Permission> Permissions => Set<Permission>();
+    public DbSet<UserRole> UserRoles => Set<UserRole>();
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<UserOtp> UserOtps => Set<UserOtp>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+
+    public DbSet<Zone> Zones => Set<Zone>();
+    public DbSet<Village> Villages => Set<Village>();
+    public DbSet<Bank> Banks => Set<Bank>();
+    public DbSet<Grower> Growers => Set<Grower>();
+    public DbSet<VehicleType> VehicleTypes => Set<VehicleType>();
+    public DbSet<VarietyType> VarietyTypes => Set<VarietyType>();
+    public DbSet<Variety> Varieties => Set<Variety>();
+    public DbSet<RateMaster> Rates => Set<RateMaster>();
+    public DbSet<Item> Items => Set<Item>();
+    public DbSet<Party> Parties => Set<Party>();
+    public DbSet<Season> Seasons => Set<Season>();
+    public DbSet<PaymentModeMaster> PaymentModes => Set<PaymentModeMaster>();
+    public DbSet<CompanyConfig> CompanyConfigs => Set<CompanyConfig>();
+
+    public DbSet<Purchase> Purchases => Set<Purchase>();
+    public DbSet<PurchaseImage> PurchaseImages => Set<PurchaseImage>();
+
+    public DbSet<WeighingDevice> WeighingDevices => Set<WeighingDevice>();
+    public DbSet<StringProfile> StringProfiles => Set<StringProfile>();
+    public DbSet<DeviceConfigHistory> DeviceConfigHistories => Set<DeviceConfigHistory>();
+    public DbSet<WeightRuleConfig> WeightRules => Set<WeightRuleConfig>();
+    public DbSet<SoundConfig> SoundConfigs => Set<SoundConfig>();
+    public DbSet<SoundMessage> SoundMessages => Set<SoundMessage>();
+    public DbSet<CameraConfig> Cameras => Set<CameraConfig>();
+    public DbSet<PrintConfig> PrintConfigs => Set<PrintConfig>();
+    public DbSet<SmsConfig> SmsConfigs => Set<SmsConfig>();
+    public DbSet<SmsTemplate> SmsTemplates => Set<SmsTemplate>();
+    public DbSet<RazorpayConfig> RazorpayConfigs => Set<RazorpayConfig>();
+    public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+    public DbSet<NumberSequence> NumberSequences => Set<NumberSequence>();
+
+    protected override void OnModelCreating(ModelBuilder b)
+    {
+        base.OnModelCreating(b);
+
+        b.Entity<User>(e =>
+        {
+            e.HasIndex(x => x.Username).IsUnique();
+            e.Property(x => x.Username).HasMaxLength(50);
+            e.Property(x => x.FullName).HasMaxLength(100);
+            e.Property(x => x.Mobile).HasMaxLength(10);
+            e.Property(x => x.Email).HasMaxLength(100);
+        });
+        b.Entity<Role>().HasIndex(x => x.Name).IsUnique();
+        b.Entity<Permission>().HasIndex(x => x.Code).IsUnique();
+        b.Entity<UserRole>().HasKey(x => new { x.UserId, x.RoleId });
+        b.Entity<RolePermission>().HasKey(x => new { x.RoleId, x.PermissionId });
+        b.Entity<RefreshToken>().HasIndex(x => x.TokenHash);
+        b.Entity<RefreshToken>().HasIndex(x => x.UserId);
+        b.Entity<AuditLog>().HasIndex(x => x.Timestamp);
+        b.Entity<AuditLog>().HasIndex(x => new { x.Module, x.Action });
+
+        b.Entity<Zone>(e =>
+        {
+            e.Property(x => x.Id).ValueGeneratedNever(); // business serial via NumberSequence
+            e.HasIndex(x => x.ZoneName).IsUnique();
+            e.Property(x => x.ZoneName).HasMaxLength(100);
+            e.Property(x => x.ZoneCode).HasMaxLength(20);
+        });
+        b.Entity<Village>(e =>
+        {
+            e.Property(x => x.Id).ValueGeneratedNever(); // starts at 101 via NumberSequence
+            e.HasIndex(x => new { x.ZoneId, x.VillageName }).IsUnique();
+            e.Property(x => x.VillageName).HasMaxLength(100);
+            e.Property(x => x.Mobile).HasMaxLength(10);
+        });
+        b.Entity<Bank>(e =>
+        {
+            e.HasIndex(x => new { x.BankName, x.BranchName }).IsUnique();
+            e.HasIndex(x => x.IFSC);
+            e.Property(x => x.IFSC).HasMaxLength(11);
+        });
+        b.Entity<Grower>(e =>
+        {
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.HasIndex(x => new { x.VillageId, x.GrowerSequence }).IsUnique();
+            e.HasIndex(x => x.GrowerCode).IsUnique();
+            e.HasIndex(x => x.AadhaarHash).IsUnique().HasFilter(null);
+            e.HasIndex(x => x.Mobile);
+            e.Property(x => x.GrowerCode).HasMaxLength(20);
+            e.Property(x => x.Mobile).HasMaxLength(10);
+            e.HasOne(x => x.Bank).WithMany().HasForeignKey(x => x.BankId).OnDelete(DeleteBehavior.Restrict);
+        });
+        b.Entity<VehicleType>().HasIndex(x => x.VehicleTypeName).IsUnique();
+        b.Entity<VarietyType>().HasIndex(x => x.VarietyTypeName).IsUnique();
+        b.Entity<Variety>().HasIndex(x => new { x.VarietyTypeId, x.VarietyName }).IsUnique();
+        b.Entity<RateMaster>(e =>
+        {
+            e.Property(x => x.Rate).HasPrecision(12, 2);
+            e.HasIndex(x => new { x.VarietyTypeId, x.EffectiveFrom });
+        });
+        b.Entity<Item>().HasIndex(x => x.ItemName).IsUnique();
+        b.Entity<Party>(e =>
+        {
+            e.HasIndex(x => x.PartyName);
+            e.HasIndex(x => x.Mobile);
+            e.Property(x => x.Mobile).HasMaxLength(10);
+        });
+        b.Entity<PaymentModeMaster>().HasIndex(x => x.ModeCode).IsUnique();
+
+        b.Entity<Purchase>(e =>
+        {
+            e.Property(x => x.Id).ValueGeneratedNever(); // continuous business serial
+            e.HasIndex(x => x.GrowerCode);
+            e.HasIndex(x => x.VillageId);
+            e.HasIndex(x => x.AdviceNumber);
+            e.HasIndex(x => x.PaymentStatus);
+            e.HasIndex(x => x.GrossTareStatus);
+            e.HasIndex(x => x.GrossDateTime);
+            e.HasIndex(x => x.LockStatus);
+            foreach (var p in new[] { "ScaleReadingGrossKg", "GrossWeightQuintal", "ScaleReadingTareKg", "TareWeightQuintal",
+                "NetWeightQuintal", "CuttingPercent", "CuttingWeightQuintal", "TaxPercent", "TaxWeightQuintal",
+                "FinalWeightQuintal", "Rate" })
+                e.Property(p).HasPrecision(12, 2);
+            e.Property(x => x.PurchaseAmount).HasPrecision(14, 2);
+            e.HasOne(x => x.Grower).WithMany().HasForeignKey(x => x.GrowerId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.VehicleType).WithMany().HasForeignKey(x => x.VehicleTypeId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Variety).WithMany().HasForeignKey(x => x.VarietyId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Season).WithMany().HasForeignKey(x => x.SeasonId).OnDelete(DeleteBehavior.Restrict);
+        });
+        b.Entity<PurchaseImage>().HasIndex(x => x.PurchaseId);
+
+        b.Entity<WeightRuleConfig>(e =>
+        {
+            e.Property(x => x.MinimumWeightQuintal).HasPrecision(12, 2);
+            e.Property(x => x.DefaultCuttingPercent).HasPrecision(5, 2);
+            e.Property(x => x.DefaultTaxPercent).HasPrecision(5, 2);
+        });
+        b.Entity<SoundConfig>().Property(x => x.SpeechRate).HasPrecision(4, 2);
+        b.Entity<SystemSetting>().HasIndex(x => x.Key).IsUnique();
+        b.Entity<NumberSequence>().HasKey(x => x.Name);
+        b.Entity<NumberSequence>().Property(x => x.Name).HasMaxLength(64);
+        b.Entity<WeighingDevice>()
+            .HasOne(x => x.ActiveStringProfile).WithMany().HasForeignKey(x => x.ActiveStringProfileId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+}

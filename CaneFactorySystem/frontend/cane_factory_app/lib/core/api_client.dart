@@ -1,0 +1,90 @@
+import 'package:dio/dio.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+/// Central API client. Base URL comes from --dart-define=API_BASE_URL (never hard-coded secrets).
+/// Handles bearer tokens, automatic refresh-token rotation and 401 recovery.
+class ApiClient {
+  ApiClient._();
+  static final ApiClient instance = ApiClient._();
+
+  static const String baseUrl =
+      String.fromEnvironment('API_BASE_URL', defaultValue: 'http://localhost:5000');
+
+  final _storage = const FlutterSecureStorage();
+  late final Dio dio = _build();
+  void Function()? onSessionExpired;
+
+  Dio _build() {
+    final d = Dio(BaseOptions(
+      baseUrl: baseUrl,
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 20),
+      validateStatus: (s) => s != null && s < 500,
+    ));
+    d.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) async {
+        final token = await _storage.read(key: 'access_token');
+        if (token != null) options.headers['Authorization'] = 'Bearer $token';
+        handler.next(options);
+      },
+      onResponse: (response, handler) async {
+        if (response.statusCode == 401 &&
+            !(response.requestOptions.extra['retried'] == true) &&
+            !response.requestOptions.path.contains('/auth/')) {
+          final ok = await _tryRefresh();
+          if (ok) {
+            final opts = response.requestOptions..extra['retried'] = true;
+            final token = await _storage.read(key: 'access_token');
+            opts.headers['Authorization'] = 'Bearer $token';
+            try {
+              final retry = await dio.fetch(opts);
+              return handler.resolve(retry);
+            } catch (_) {}
+          } else {
+            onSessionExpired?.call();
+          }
+        }
+        handler.next(response);
+      },
+    ));
+    return d;
+  }
+
+  Future<bool> _tryRefresh() async {
+    final rt = await _storage.read(key: 'refresh_token');
+    if (rt == null) return false;
+    try {
+      final res = await Dio(BaseOptions(baseUrl: baseUrl)).post('/api/auth/refresh',
+          data: {'refreshToken': rt}, options: Options(validateStatus: (s) => s != null && s < 500));
+      if (res.statusCode == 200) {
+        await saveTokens(res.data['accessToken'], res.data['refreshToken']);
+        return true;
+      }
+    } catch (_) {}
+    await clearTokens();
+    return false;
+  }
+
+  Future<void> saveTokens(String access, String refresh) async {
+    await _storage.write(key: 'access_token', value: access);
+    await _storage.write(key: 'refresh_token', value: refresh);
+  }
+
+  Future<String?> get accessToken => _storage.read(key: 'access_token');
+  Future<String?> get refreshToken => _storage.read(key: 'refresh_token');
+
+  Future<void> clearTokens() async {
+    await _storage.delete(key: 'access_token');
+    await _storage.delete(key: 'refresh_token');
+  }
+
+  static String errorMessage(Response? res, [String fallback = 'Something went wrong. Please try again.']) {
+    final data = res?.data;
+    if (data is Map && data['message'] != null) return data['message'].toString();
+    if (data is Map && data['errors'] is Map) {
+      final errs = (data['errors'] as Map).values.expand((v) => v is List ? v : [v]);
+      return errs.join(' ');
+    }
+    return fallback;
+  }
+}

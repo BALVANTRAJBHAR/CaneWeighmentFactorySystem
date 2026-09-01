@@ -1,0 +1,349 @@
+using CaneFactory.API.Auth;
+using CaneFactory.Application.Interfaces;
+using CaneFactory.Domain.Entities;
+using CaneFactory.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace CaneFactory.API.Controllers;
+
+/// <summary>Developer configuration: weight rules, sound/TTS, cameras, print, SMS, Razorpay, company, system settings.
+/// All secrets are AES-256-GCM encrypted at rest and NEVER returned to any client.</summary>
+[ApiController]
+[Route("api/config")]
+public class ConfigController : ControllerBase
+{
+    private readonly AppDbContext _db;
+    private readonly IAuditService _audit;
+    private readonly ICurrentUser _current;
+    private readonly ISecretProtector _protector;
+
+    public ConfigController(AppDbContext db, IAuditService audit, ICurrentUser current, ISecretProtector protector)
+    {
+        _db = db; _audit = audit; _current = current; _protector = protector;
+    }
+
+    // ---------------------------------------------------------------- WEIGHT RULES
+    [HasPermission("WeightRule.View")]
+    [HttpGet("weight-rules")]
+    public async Task<IActionResult> GetWeightRules() =>
+        Ok(await _db.WeightRules.FirstOrDefaultAsync(r => !r.IsDeleted));
+
+    [HasPermission("WeightRule.Configure")]
+    [HttpPut("weight-rules")]
+    public async Task<IActionResult> UpdateWeightRules([FromBody] WeightRuleConfig src)
+    {
+        if (src.MinimumWeightQuintal < 0) return BadRequest(new { message = "Minimum weight cannot be negative." });
+        if (src.DefaultCuttingPercent is < 0 or > 100 || src.DefaultTaxPercent is < 0 or > 100)
+            return BadRequest(new { message = "Cutting/Tax % must be between 0 and 100." });
+        var r = await _db.WeightRules.FirstAsync(x => !x.IsDeleted);
+        var old = new { r.MinimumWeightQuintal, r.Enabled, r.ApplyToGross, r.ApplyToTare, r.DefaultCuttingPercent, r.DefaultTaxPercent };
+        r.MinimumWeightQuintal = Math.Round(src.MinimumWeightQuintal, 2);
+        r.Enabled = src.Enabled;
+        r.ApplyToCanePurchase = src.ApplyToCanePurchase;
+        r.ApplyToSalePurchase = src.ApplyToSalePurchase;
+        r.ApplyToGross = src.ApplyToGross;
+        r.ApplyToTare = src.ApplyToTare;
+        r.DefaultCuttingPercent = Math.Round(src.DefaultCuttingPercent, 2);
+        r.DefaultTaxPercent = Math.Round(src.DefaultTaxPercent, 2);
+        r.UpdatedAt = DateTime.UtcNow;
+        r.UpdatedBy = _current.UserId;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("SystemSettingChange", "WeightRule", "WeightRuleConfig", r.Id.ToString(), oldValue: old, newValue: src);
+        return Ok(new { message = $"Weight rules saved. Minimum weight: {r.MinimumWeightQuintal:F2} Quintal." });
+    }
+
+    // ---------------------------------------------------------------- SOUND / TTS
+    [HasPermission("Sound.View")]
+    [HttpGet("sound")]
+    public async Task<IActionResult> GetSound() => Ok(new
+    {
+        config = await _db.SoundConfigs.FirstOrDefaultAsync(s => !s.IsDeleted),
+        messages = await _db.SoundMessages.Where(m => !m.IsDeleted).ToListAsync()
+    });
+
+    [HasPermission("Sound.Configure")]
+    [HttpPut("sound")]
+    public async Task<IActionResult> UpdateSound([FromBody] SoundConfig src)
+    {
+        var validModes = new[] { "OFF", "ONCE", "TWICE", "CONTINUOUS" };
+        if (!validModes.Contains(src.RepeatMode)) return BadRequest(new { message = "RepeatMode must be OFF/ONCE/TWICE/CONTINUOUS." });
+        if (src.RepeatIntervalSeconds < 1) return BadRequest(new { message = "Repeat interval must be at least 1 second." });
+        var s = await _db.SoundConfigs.FirstAsync(x => !x.IsDeleted);
+        var old = new { s.SoundEnabled, s.Language, s.VoiceVolume, s.SpeechRate, s.RepeatIntervalSeconds, s.RepeatMode };
+        s.SoundEnabled = src.SoundEnabled;
+        s.Language = src.Language;
+        s.VoiceVolume = Math.Clamp(src.VoiceVolume, 0, 100);
+        s.SpeechRate = src.SpeechRate;
+        s.RepeatIntervalSeconds = src.RepeatIntervalSeconds;
+        s.RepeatMode = src.RepeatMode;
+        s.UpdatedAt = DateTime.UtcNow;
+        s.UpdatedBy = _current.UserId;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("SystemSettingChange", "Sound", "SoundConfig", s.Id.ToString(), oldValue: old, newValue: src);
+        return Ok(new { message = "Sound configuration saved successfully." });
+    }
+
+    [HasPermission("Sound.Configure")]
+    [HttpPut("sound/messages/{id:int}")]
+    public async Task<IActionResult> UpdateSoundMessage(int id, [FromBody] SoundMessage src)
+    {
+        var m = await _db.SoundMessages.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
+        if (m == null) return NotFound(new { message = "Sound message not found." });
+        var old = new { m.MessageText, m.Enabled };
+        m.MessageText = src.MessageText;
+        m.Enabled = src.Enabled;
+        m.UpdatedAt = DateTime.UtcNow;
+        m.UpdatedBy = _current.UserId;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("SystemSettingChange", "Sound", "SoundMessage", id.ToString(), oldValue: old, newValue: src);
+        return Ok(new { message = $"Sound message for '{m.EventCode}' ({m.LanguageCode}) updated." });
+    }
+
+    // ---------------------------------------------------------------- CAMERAS (1-6, vendor-abstracted)
+    [HasPermission("Camera.View")]
+    [HttpGet("cameras")]
+    public async Task<IActionResult> GetCameras() =>
+        Ok(await _db.Cameras.Where(c => !c.IsDeleted).OrderBy(c => c.CameraNumber)
+            .Select(c => new
+            {
+                c.Id, c.CameraNumber, c.Vendor, c.Model, c.Protocol, c.IpAddress, c.Port, c.Username,
+                HasPassword = c.PasswordEncrypted != null, // password itself is never returned
+                c.Channel, c.StreamType, c.RtspUrl, c.Resolution, c.Fps,
+                c.CaptureEnabled, c.LiveViewEnabled, c.RetentionDays, c.Status
+            }).ToListAsync());
+
+    [HasPermission("Camera.Configure")]
+    [HttpPost("cameras")]
+    public async Task<IActionResult> SaveCamera([FromBody] CameraSaveRequest req)
+    {
+        if (req.CameraNumber is < 1 or > 6) return BadRequest(new { message = "Camera number must be between 1 and 6." });
+        var validVendors = new[] { "Hikvision", "CPPlus", "Dahua", "Uniview", "GenericONVIF", "GenericRTSP" };
+        if (!validVendors.Contains(req.Vendor)) return BadRequest(new { message = $"Vendor must be one of: {string.Join(", ", validVendors)}" });
+
+        var cam = await _db.Cameras.FirstOrDefaultAsync(c => c.CameraNumber == req.CameraNumber && !c.IsDeleted);
+        var isNew = cam == null;
+        cam ??= new CameraConfig { CameraNumber = req.CameraNumber, CreatedBy = _current.UserId };
+        cam.Vendor = req.Vendor; cam.Model = req.Model; cam.Protocol = req.Protocol;
+        cam.IpAddress = req.IpAddress; cam.Port = req.Port; cam.Username = req.Username;
+        if (!string.IsNullOrEmpty(req.Password)) cam.PasswordEncrypted = _protector.Protect(req.Password);
+        cam.Channel = req.Channel; cam.StreamType = req.StreamType; cam.RtspUrl = req.RtspUrl;
+        cam.Resolution = req.Resolution; cam.Fps = req.Fps;
+        cam.CaptureEnabled = req.CaptureEnabled; cam.LiveViewEnabled = req.LiveViewEnabled;
+        cam.RetentionDays = req.RetentionDays; cam.Status = req.Status;
+        if (isNew) _db.Cameras.Add(cam);
+        else { cam.UpdatedAt = DateTime.UtcNow; cam.UpdatedBy = _current.UserId; }
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("CameraConfiguration", "Camera", "CameraConfig", cam.Id.ToString(),
+            newValue: new { cam.CameraNumber, cam.Vendor, cam.IpAddress, cam.Protocol });
+        return Ok(new { message = $"Camera {cam.CameraNumber:D2} ({cam.Vendor}) saved successfully.", id = cam.Id });
+    }
+
+    /// <summary>Basic reachability test (TCP connect). Full ONVIF/ISAPI/RTSP capture activates in Phase 6.</summary>
+    [HasPermission("Camera.Configure")]
+    [HttpPost("cameras/{id:int}/test")]
+    public async Task<IActionResult> TestCamera(int id)
+    {
+        var cam = await _db.Cameras.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id && !c.IsDeleted);
+        if (cam == null) return NotFound(new { message = "Camera not found." });
+        try
+        {
+            using var client = new System.Net.Sockets.TcpClient();
+            var task = client.ConnectAsync(cam.IpAddress, cam.Port);
+            if (await Task.WhenAny(task, Task.Delay(3000)) != task || !client.Connected)
+                return Conflict(new { message = $"Camera {cam.CameraNumber:D2} NOT reachable at {cam.IpAddress}:{cam.Port}." });
+            return Ok(new { message = $"Camera {cam.CameraNumber:D2} reachable at {cam.IpAddress}:{cam.Port}." });
+        }
+        catch (Exception ex)
+        {
+            return Conflict(new { message = $"Camera test failed: {ex.Message}" });
+        }
+    }
+
+    // ---------------------------------------------------------------- PRINT
+    [HasPermission("Print.View")]
+    [HttpGet("print")]
+    public async Task<IActionResult> GetPrint() => Ok(await _db.PrintConfigs.FirstOrDefaultAsync(p => !p.IsDeleted));
+
+    [HasPermission("Print.Configure")]
+    [HttpPut("print")]
+    public async Task<IActionResult> UpdatePrint([FromBody] PrintConfig src)
+    {
+        var p = await _db.PrintConfigs.FirstAsync(x => !x.IsDeleted);
+        var old = new { p.PrinterType, p.PrinterName, p.AutoPrint, p.GrossCopies, p.TareCopies };
+        p.PrinterType = src.PrinterType; p.PrinterName = src.PrinterName; p.PaperType = src.PaperType;
+        p.AutoPrint = src.AutoPrint;
+        p.GrossCopies = Math.Clamp(src.GrossCopies, 0, 5);
+        p.TareCopies = Math.Clamp(src.TareCopies, 0, 5);
+        p.PaymentCopies = Math.Clamp(src.PaymentCopies, 0, 5);
+        p.LoanCopies = Math.Clamp(src.LoanCopies, 0, 5);
+        p.SalePurchaseCopies = Math.Clamp(src.SalePurchaseCopies, 0, 5);
+        p.Language = src.Language;
+        p.UpdatedAt = DateTime.UtcNow;
+        p.UpdatedBy = _current.UserId;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("PrintConfiguration", "Print", "PrintConfig", p.Id.ToString(), oldValue: old, newValue: src);
+        return Ok(new { message = "Print configuration saved successfully." });
+    }
+
+    // ---------------------------------------------------------------- SMS (generic DLT-compatible HTTP provider)
+    [HasPermission("Sms.View")]
+    [HttpGet("sms")]
+    public async Task<IActionResult> GetSms()
+    {
+        var s = await _db.SmsConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
+        var templates = await _db.SmsTemplates.Where(t => !t.IsDeleted).ToListAsync();
+        return Ok(new
+        {
+            config = s == null ? null : new
+            {
+                s.Id, s.ProviderName, s.ApiBaseUrl, s.HttpMethod,
+                HasApiKey = s.ApiKeyEncrypted != null, HasApiSecret = s.ApiSecretEncrypted != null,
+                s.AuthorizationHeader, s.SenderId, s.EntityId, s.Enabled
+            },
+            templates
+        });
+    }
+
+    [HasPermission("Sms.Configure")]
+    [HttpPut("sms")]
+    public async Task<IActionResult> UpdateSms([FromBody] SmsSaveRequest req)
+    {
+        var s = await _db.SmsConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
+        var isNew = s == null;
+        s ??= new SmsConfig { CreatedBy = _current.UserId };
+        s.ProviderName = req.ProviderName; s.ApiBaseUrl = req.ApiBaseUrl; s.HttpMethod = req.HttpMethod;
+        if (!string.IsNullOrEmpty(req.ApiKey)) s.ApiKeyEncrypted = _protector.Protect(req.ApiKey);
+        if (!string.IsNullOrEmpty(req.ApiSecret)) s.ApiSecretEncrypted = _protector.Protect(req.ApiSecret);
+        s.AuthorizationHeader = req.AuthorizationHeader; s.SenderId = req.SenderId;
+        s.EntityId = req.EntityId; s.Enabled = req.Enabled;
+        if (isNew) _db.SmsConfigs.Add(s);
+        else { s.UpdatedAt = DateTime.UtcNow; s.UpdatedBy = _current.UserId; }
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("SystemSettingChange", "Sms", "SmsConfig", s.Id.ToString(),
+            newValue: new { s.ProviderName, s.ApiBaseUrl, s.Enabled }); // secrets never audited in plaintext
+        return Ok(new { message = $"SMS configuration for provider '{s.ProviderName}' saved. Credentials stored encrypted." });
+    }
+
+    // ---------------------------------------------------------------- RAZORPAY
+    [HasPermission("Razorpay.View")]
+    [HttpGet("razorpay")]
+    public async Task<IActionResult> GetRazorpay()
+    {
+        var r = await _db.RazorpayConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
+        return Ok(r == null ? null : new
+        {
+            r.Id, r.Enabled, r.Mode, r.AccountNumber,
+            HasKeyId = r.KeyIdEncrypted != null, HasKeySecret = r.KeySecretEncrypted != null,
+            HasWebhookSecret = r.WebhookSecretEncrypted != null
+        });
+    }
+
+    [HasPermission("Razorpay.Configure")]
+    [HttpPut("razorpay")]
+    public async Task<IActionResult> UpdateRazorpay([FromBody] RazorpaySaveRequest req)
+    {
+        if (req.Mode is not ("Test" or "Live")) return BadRequest(new { message = "Mode must be Test or Live." });
+        var r = await _db.RazorpayConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
+        var isNew = r == null;
+        r ??= new RazorpayConfig { CreatedBy = _current.UserId };
+        r.Enabled = req.Enabled; r.Mode = req.Mode; r.AccountNumber = req.AccountNumber;
+        if (!string.IsNullOrEmpty(req.KeyId)) r.KeyIdEncrypted = _protector.Protect(req.KeyId);
+        if (!string.IsNullOrEmpty(req.KeySecret)) r.KeySecretEncrypted = _protector.Protect(req.KeySecret);
+        if (!string.IsNullOrEmpty(req.WebhookSecret)) r.WebhookSecretEncrypted = _protector.Protect(req.WebhookSecret);
+        if (isNew) _db.RazorpayConfigs.Add(r);
+        else { r.UpdatedAt = DateTime.UtcNow; r.UpdatedBy = _current.UserId; }
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("RazorpayEvent", "Razorpay", "RazorpayConfig", r.Id.ToString(),
+            newValue: new { r.Enabled, r.Mode });
+        return Ok(new { message = $"Razorpay configuration saved ({r.Mode} mode). Secrets stored encrypted server-side only." });
+    }
+
+    // ---------------------------------------------------------------- COMPANY
+    [HasPermission("Company.View")]
+    [HttpGet("company")]
+    public async Task<IActionResult> GetCompany() => Ok(await _db.CompanyConfigs.FirstOrDefaultAsync(c => !c.IsDeleted));
+
+    [HasPermission("Company.Configure")]
+    [HttpPut("company")]
+    public async Task<IActionResult> UpdateCompany([FromBody] CompanyConfig src)
+    {
+        if (string.IsNullOrWhiteSpace(src.CompanyName)) return BadRequest(new { message = "Company Name is required." });
+        var c = await _db.CompanyConfigs.FirstAsync(x => !x.IsDeleted);
+        var old = new { c.CompanyName, c.Address, c.DefaultLanguage, c.ThemeColor };
+        c.CompanyName = src.CompanyName.Trim();
+        c.Address = src.Address;
+        c.LogoPath = src.LogoPath;
+        c.DefaultLanguage = src.DefaultLanguage;
+        c.ThemeColor = src.ThemeColor;
+        c.UpdatedAt = DateTime.UtcNow;
+        c.UpdatedBy = _current.UserId;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("SystemSettingChange", "Company", "CompanyConfig", c.Id.ToString(), oldValue: old, newValue: src);
+        return Ok(new { message = $"Company '{c.CompanyName}' configuration saved successfully." });
+    }
+
+    // ---------------------------------------------------------------- SYSTEM SETTINGS
+    [HasPermission("SystemSetting.View")]
+    [HttpGet("settings")]
+    public async Task<IActionResult> GetSettings() => Ok(await _db.SystemSettings.OrderBy(s => s.Key).ToListAsync());
+
+    [HasPermission("SystemSetting.Configure")]
+    [HttpPut("settings/{key}")]
+    public async Task<IActionResult> UpdateSetting(string key, [FromBody] Dictionary<string, string> body)
+    {
+        var s = await _db.SystemSettings.FirstOrDefaultAsync(x => x.Key == key);
+        if (s == null) return NotFound(new { message = $"Setting '{key}' not found." });
+        var old = s.Value;
+        s.Value = body.GetValueOrDefault("value") ?? s.Value;
+        s.UpdatedAt = DateTime.UtcNow;
+        s.UpdatedBy = _current.UserId;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("SystemSettingChange", "SystemSetting", "SystemSetting", key, oldValue: old, newValue: s.Value);
+        return Ok(new { message = $"Setting '{key}' updated successfully." });
+    }
+}
+
+public class CameraSaveRequest
+{
+    public int CameraNumber { get; set; }
+    public string Vendor { get; set; } = "Hikvision";
+    public string? Model { get; set; }
+    public string Protocol { get; set; } = "RTSP";
+    public string IpAddress { get; set; } = string.Empty;
+    public int Port { get; set; } = 554;
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+    public int Channel { get; set; } = 1;
+    public string StreamType { get; set; } = "Main";
+    public string? RtspUrl { get; set; }
+    public string? Resolution { get; set; }
+    public int? Fps { get; set; }
+    public bool CaptureEnabled { get; set; } = true;
+    public bool LiveViewEnabled { get; set; } = true;
+    public int RetentionDays { get; set; } = 365;
+    public bool Status { get; set; } = true;
+}
+
+public class SmsSaveRequest
+{
+    public string ProviderName { get; set; } = string.Empty;
+    public string ApiBaseUrl { get; set; } = string.Empty;
+    public string HttpMethod { get; set; } = "POST";
+    public string? ApiKey { get; set; }
+    public string? ApiSecret { get; set; }
+    public string? AuthorizationHeader { get; set; }
+    public string? SenderId { get; set; }
+    public string? EntityId { get; set; }
+    public bool Enabled { get; set; }
+}
+
+public class RazorpaySaveRequest
+{
+    public bool Enabled { get; set; }
+    public string Mode { get; set; } = "Test";
+    public string? KeyId { get; set; }
+    public string? KeySecret { get; set; }
+    public string? WebhookSecret { get; set; }
+    public string? AccountNumber { get; set; }
+}
