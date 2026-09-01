@@ -33,7 +33,7 @@ Plus 26 additional hard requirements (unified single weighment form, sequence nu
   EF-generated SQL Server schema.
 - `/app/CaneFactorySystem/docs` — 14 guides (setup, flutter builds, API, RS232, camera, printer,
   SMS, Razorpay, backup, security checklist, role matrix, sequences, ER diagram, test report).
-- Zip: `/app/CaneFactorySystem_Phase1-9.zip`.
+- Zip: `/app/CaneFactorySystem_Phase1-10.zip`.
 
 ## Dev/Test environment notes (container)
 - .NET 8 SDK at `/opt/dotnet` (reinstall if pod restarts: dotnet-install.sh --channel 8.0).
@@ -202,9 +202,56 @@ Plus 26 additional hard requirements (unified single weighment form, sequence nu
   in place, deferred).
 - Repackaged deliverable: `/app/CaneFactorySystem_Phase1-9.zip`.
 
+## What's been implemented (2026-09 / session 6 — Phase 10: SMS Notifications)
+- User-confirmed requirements: generic/configurable HTTP SMS provider (NO hard-coded MSG91/Twilio/
+  Fast2SMS), only 2 events (Tare/Final Weighment Completed + Payment Completed - explicitly NOT
+  Loan), Hindi default/English switchable, encrypted credentials never exposed to any client, fully
+  async/non-blocking (queue-only insert on the request thread, real HTTP delivery via a separate
+  background poller), controlled retry (exponential backoff, max 5 attempts), idempotent on
+  (EventCode, ReferenceId), full SMS log/queue with masked mobile numbers, all config changes/sends
+  audited. Razorpay/Online explicitly stayed OUT of scope (dormant `RazorpayConfig` entity untouched).
+- Extended pre-scaffolded `SmsConfig`/`SmsTemplate` entities (`Configs.cs`) with `Language`,
+  `RequestContentType`, `RequestBodyTemplate`, `ResponseSuccessPath`, `ResponseSuccessValue` (config)
+  and `Language` (per-template hi/en). Added new `SmsLog` entity (Status QUEUED|PROCESSING|SENT|
+  FAILED|RETRY_PENDING, AttemptCount, NextAttemptAt, unique index on EventCode+ReferenceId).
+- `GenericHttpSmsProvider` (`Infrastructure/Sms/`): builds the HTTP request purely from SmsConfig's
+  URL/method/header/body templates with `{Mobile} {Message} {ApiKey} {ApiSecret} {SenderId}
+  {EntityId}` placeholder substitution, parses the response via a configurable dotted JSON field
+  path - works with ANY vendor's HTTP API without code changes.
+- `SmsService.QueueAsync` - a single fast idempotent DB insert, zero network calls, wrapped in
+  try/catch at every call site so SMS can never roll back a Weighment/Payment.
+- `SmsQueueProcessor` (`BackgroundService`, registered in `Program.cs`, polls every 15s) - the ONLY
+  place that ever makes a real network call for SMS; exponential backoff retry (3^attempt minutes),
+  FAILED permanently after 5 attempts.
+- `ConfigController` extended: `GetSms`/`UpdateSms` (booleans only for secrets, never plaintext),
+  `SaveSmsTemplate` (upsert by EventCode+Language, validates against the 2 allowed events),
+  `TestSmsConnection` (TCP reachability probe, no message sent), `TestSendSms` (one real send,
+  bypasses the queue, never echoes the provider's raw response).
+- New `SmsLogController` (`/api/sms-logs` list + `/retry`) - mobile numbers masked via `SmsMask`
+  helper at the projection layer.
+- `WeighmentController.Tare` and `PaymentController.Issue` now call `_sms.QueueAsync(...)` with
+  real placeholder values, replacing the `smsQueued:false` Phase-9 placeholder.
+- Required a mid-session environment fix: pod restart wiped `/opt/dotnet` and the `dotnet-ef` tool
+  (reinstalled both) and the `CaneFactory.Infrastructure` project needed the
+  `Microsoft.Extensions.Hosting.Abstractions` NuGet package added for `BackgroundService`.
+- EF migration `AddSmsModule` generated. Flutter: extended `_SmsTab` (Developer Dashboard) with
+  Language/RequestBodyTemplate/ResponseSuccessPath fields, Test Connection/Test Send buttons,
+  template editor; added a new `_SmsLogsTab` (8th tab) with status filter + manual retry.
+- Testing agent iteration_6: **13/13 executed backend tests passed**, 0 bugs. Verified end-to-end
+  against a real local mock HTTP server: config save/encryption round-trip, template validation,
+  test-connection/test-send, queue→SENT for both Tare and Payment with correct placeholder
+  substitution and mobile masking, Enabled=false skip, failure→RETRY_PENDING→manual-retry→SENT,
+  non-blocking guarantee (200 OK even with an unreachable SMS provider), Loan module confirmed to
+  have zero SMS coupling. 2 tests skipped (pre-existing, unrelated environment quirks: mobile is
+  mandatory at Grower creation so the "no mobile" path can't be hit via API; non-Developer test-user
+  login-after-password-change quirk noted in earlier iterations too) - not Phase 10 bugs.
+- Repackaged deliverable: `/app/CaneFactorySystem_Phase1-10.zip`.
+
 ## Prioritized backlog (next phases per spec)
-- P1 Phase 10: SMS send engine (generic HTTP provider) - wire into the `smsQueued:false` placeholder
-  already returned by Weighment/Loan/Payment responses; RazorpayX explicitly OUT per Phase 9 scope.
+- P2 Phase 11: Reports + Hourly Reports.
+- P2 Phase 12: Farmer Mobile/Web views in Flutter.
+- P2 Phase 13: Security hardening + backup + health monitoring.
+- P2 Phase 14: Final testing & production packaging.
 - P1 Phase 11: Reports (hourly buckets, exports Excel/PDF) - reuse Print Engine for report printing.
 - P1 Phase 12: Farmer mobile/web portal views. SalePurchase weighment module + SalePurchase role screens.
 - P2 Phase 13–14: hardening, dependency scanning, backups automation, tests, production packaging.

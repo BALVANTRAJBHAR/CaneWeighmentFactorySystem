@@ -84,3 +84,22 @@ public interface IPrintEngineService
     CaneFactory.Application.DTOs.PrintDocument BuildTestDocument(string language, string generatedByUserName);
     (byte[] bytes, string contentType, string fileExtension) Render(CaneFactory.Application.DTOs.PrintDocument doc, string target, bool preview);
 }
+
+/// <summary>Generic HTTP SMS gateway client (Phase 10) - never tied to one named provider. Builds the
+/// request purely from SmsConfig's URL/method/header/body templates so ANY HTTP-based SMS panel can
+/// be plugged in without touching this code.</summary>
+public interface ISmsProviderClient
+{
+    Task<(bool success, string? providerResponse, string? error)> SendAsync(
+        CaneFactory.Domain.Entities.SmsConfig cfg, string? apiKey, string? apiSecret,
+        string mobileNumber, string message, CancellationToken ct = default);
+}
+
+/// <summary>Queues an SMS event for a Grower - a fast, idempotent DB insert only (no network call),
+/// so a temporary provider outage can never roll back or block the Weighment/Payment transaction that
+/// triggered it. Actual delivery happens out-of-band via the SmsQueueProcessor background service.</summary>
+public interface ISmsService
+{
+    Task<bool> QueueAsync(string eventCode, int growerId, string mobileNumber, string referenceId,
+        Dictionary<string, string> placeholders);
+}

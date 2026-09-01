@@ -49,14 +49,42 @@ public class SmsConfig : BaseEntity
     public string? SenderId { get; set; }
     public string? EntityId { get; set; }
     public bool Enabled { get; set; }
+
+    // Generic HTTP request/response mapping (no provider hard-coded - works with any HTTP SMS gateway)
+    public string Language { get; set; } = "hi"; // hi = default, switchable to en
+    public string RequestContentType { get; set; } = "application/json";
+    public string? RequestBodyTemplate { get; set; } // placeholders: {Mobile} {Message} {ApiKey} {ApiSecret} {SenderId} {EntityId}
+    public string? ResponseSuccessPath { get; set; } // dotted JSON field path, e.g. "status"; empty = any 2xx is success
+    public string? ResponseSuccessValue { get; set; } // expected value at ResponseSuccessPath, e.g. "success"
 }
 
 public class SmsTemplate : BaseEntity
 {
-    public string EventCode { get; set; } = string.Empty;
+    public string EventCode { get; set; } = string.Empty; // TARE_COMPLETED | PAYMENT_COMPLETED
+    public string Language { get; set; } = "hi"; // hi | en
     public string? DltTemplateId { get; set; }
     public string MessageTemplate { get; set; } = string.Empty;
     public bool Enabled { get; set; } = true;
+}
+
+/// <summary>SMS delivery queue/log (Phase 10) - one row per event. Never a BaseEntity: this is an
+/// internal operational log, not a user-facing business record. Idempotent on (EventCode, ReferenceId)
+/// so a retried Weighment/Payment transaction never sends a duplicate SMS.</summary>
+public class SmsLog
+{
+    public int Id { get; set; }
+    public string EventCode { get; set; } = string.Empty;
+    public int GrowerId { get; set; }
+    public string MobileNumber { get; set; } = string.Empty; // full number stored; masked only in API responses
+    public string ReferenceId { get; set; } = string.Empty; // e.g. PUR-105, PAY-12 - idempotency key
+    public int? TemplateId { get; set; }
+    public string MessageText { get; set; } = string.Empty;
+    public string Status { get; set; } = "QUEUED"; // QUEUED | PROCESSING | SENT | FAILED | RETRY_PENDING
+    public int AttemptCount { get; set; }
+    public DateTime? NextAttemptAt { get; set; }
+    public DateTime? SentAt { get; set; }
+    public string? FailureReason { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class RazorpayConfig : BaseEntity

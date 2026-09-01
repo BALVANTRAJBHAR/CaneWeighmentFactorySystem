@@ -26,11 +26,12 @@ public class WeighmentController : ControllerBase
     private readonly ISequenceGenerator _seq;
     private readonly IMemoryCache _cache;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ISmsService _sms;
 
     public WeighmentController(AppDbContext db, IAuditService audit, ICurrentUser current,
-        ISequenceGenerator seq, IMemoryCache cache, IServiceScopeFactory scopeFactory)
+        ISequenceGenerator seq, IMemoryCache cache, IServiceScopeFactory scopeFactory, ISmsService sms)
     {
-        _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache; _scopeFactory = scopeFactory;
+        _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache; _scopeFactory = scopeFactory; _sms = sms;
     }
 
     private IActionResult? Deny(string action) =>
@@ -215,6 +216,21 @@ public class WeighmentController : ControllerBase
         await _audit.LogAsync("TareWeighment", "Weighment", "Purchase", p.Id.ToString(),
             newValue: new { p.TareWeightQuintal, p.NetWeightQuintal, p.FinalWeightQuintal, p.PurchaseAmount });
         QueueCapture(p.Id, "TARE");
+
+        var smsQueued = false;
+        try
+        {
+            smsQueued = await _sms.QueueAsync("TARE_COMPLETED", p.GrowerId, p.Grower.Mobile, $"PUR-{p.Id}", new Dictionary<string, string>
+            {
+                ["GrowerName"] = p.Grower.GrowerName,
+                ["GrowerCode"] = p.GrowerCode,
+                ["VehicleNumber"] = p.VehicleNumber,
+                ["FinalWeight"] = final.ToString("F2"),
+                ["PurchaseAmount"] = amount.ToString("F2")
+            });
+        }
+        catch { /* SMS is a notification only - never affects a successful weighment */ }
+
         return Ok(new
         {
             message = $"Tare completed successfully. Final Weight: {final:F2} Quintal.",
@@ -228,7 +244,7 @@ public class WeighmentController : ControllerBase
             soundEvent = "WEIGHMENT_COMPLETED",
             autoPrint = await AutoPrintAsync("Tare", p.Id),
             captureQueued = true,
-            smsQueued = false // SMS gateway integration activates in Phase 10
+            smsQueued
         });
     }
 

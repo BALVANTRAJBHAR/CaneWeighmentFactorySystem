@@ -30,11 +30,12 @@ public class PaymentController : ControllerBase
     private readonly ISequenceGenerator _seq;
     private readonly IMemoryCache _cache;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ISmsService _sms;
 
     public PaymentController(AppDbContext db, IAuditService audit, ICurrentUser current,
-        ISequenceGenerator seq, IMemoryCache cache, IServiceScopeFactory scopeFactory)
+        ISequenceGenerator seq, IMemoryCache cache, IServiceScopeFactory scopeFactory, ISmsService sms)
     {
-        _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache; _scopeFactory = scopeFactory;
+        _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache; _scopeFactory = scopeFactory; _sms = sms;
     }
 
     private IActionResult? Deny(string action) =>
@@ -286,6 +287,22 @@ public class PaymentController : ControllerBase
         var isCash = paymentMode.ModeCode == "CASH";
         if (isCash) QueueCapture(paymentId);
 
+        var smsQueued = false;
+        try
+        {
+            smsQueued = await _sms.QueueAsync("PAYMENT_COMPLETED", grower.Id, grower.Mobile, $"PAY-{paymentId}", new Dictionary<string, string>
+            {
+                ["GrowerName"] = grower.GrowerName,
+                ["GrowerCode"] = grower.GrowerCode,
+                ["AdviceNumber"] = adviceNumber.ToString(),
+                ["TotalPurchaseAmount"] = totalPurchaseAmount.ToString("F2"),
+                ["LoanDeducted"] = totalDeducted.ToString("F2"),
+                ["NetPayable"] = netPayable.ToString("F2"),
+                ["PaymentMode"] = paymentMode.ModeName
+            });
+        }
+        catch { /* SMS is a notification only - never affects a successful payment */ }
+
         return Ok(new
         {
             message = $"Payment completed. Payment ID: {paymentId}. Advice Number: {adviceNumber}. Net Payable: Rs {netPayable:F2}.",
@@ -297,7 +314,7 @@ public class PaymentController : ControllerBase
             purchaseCount = eligible.Count,
             autoPrint = await AutoPrintAsync(paymentId),
             captureQueued = isCash,
-            smsQueued = false // SMS gateway integration activates in Phase 10
+            smsQueued
         });
     }
 

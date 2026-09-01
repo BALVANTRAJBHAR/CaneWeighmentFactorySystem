@@ -257,6 +257,20 @@ public static class DbSeeder
 
         if (!await db.PrintConfigs.AnyAsync())
             db.PrintConfigs.Add(new PrintConfig { PrinterName = "TVS MSP 270 Classic Plus" });
+
+        if (!await db.SmsConfigs.AnyAsync())
+        {
+            db.SmsConfigs.Add(new SmsConfig { Enabled = false, Language = "hi", HttpMethod = "POST", RequestContentType = "application/json" });
+            db.SmsTemplates.AddRange(
+                new SmsTemplate { EventCode = "TARE_COMPLETED", Language = "hi",
+                    MessageTemplate = "प्रिय {GrowerName}, आपकी गन्ना तौल पूर्ण हुई। वाहन: {VehicleNumber}, अंतिम वजन: {FinalWeight} क्विंटल, राशि: Rs {PurchaseAmount}. धन्यवाद।" },
+                new SmsTemplate { EventCode = "TARE_COMPLETED", Language = "en",
+                    MessageTemplate = "Dear {GrowerName}, your cane weighment is complete. Vehicle: {VehicleNumber}, Final Weight: {FinalWeight} Qtl, Amount: Rs {PurchaseAmount}. Thank you." },
+                new SmsTemplate { EventCode = "PAYMENT_COMPLETED", Language = "hi",
+                    MessageTemplate = "प्रिय {GrowerName}, आपका भुगतान पूर्ण हुआ। अग्रिम क्रमांक: {AdviceNumber}, कुल राशि: Rs {TotalPurchaseAmount}, ऋण कटौती: Rs {LoanDeducted}, शुद्ध देय: Rs {NetPayable} ({PaymentMode})." },
+                new SmsTemplate { EventCode = "PAYMENT_COMPLETED", Language = "en",
+                    MessageTemplate = "Dear {GrowerName}, your payment is complete. Advice No: {AdviceNumber}, Total: Rs {TotalPurchaseAmount}, Loan Deducted: Rs {LoanDeducted}, Net Payable: Rs {NetPayable} ({PaymentMode})." });
+        }
         await db.SaveChangesAsync();
     }
 

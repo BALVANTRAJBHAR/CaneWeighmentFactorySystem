@@ -12,7 +12,7 @@ class DeveloperSettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 7,
+      length: 8,
       child: Column(children: [
         Material(
           color: Theme.of(context).colorScheme.surface,
@@ -22,6 +22,7 @@ class DeveloperSettingsScreen extends StatelessWidget {
             Tab(text: 'Cameras'),
             Tab(text: 'Print'),
             Tab(text: 'SMS'),
+            Tab(text: 'SMS Logs'),
             Tab(text: 'Razorpay'),
             Tab(text: 'Company'),
           ]),
@@ -33,6 +34,7 @@ class DeveloperSettingsScreen extends StatelessWidget {
             _CamerasTab(),
             _PrintTab(),
             _SmsTab(),
+            _SmsLogsTab(),
             _RazorpayTab(),
             _CompanyTab(),
           ]),
@@ -464,63 +466,275 @@ class _SmsTab extends StatefulWidget {
 }
 
 class _SmsTabState extends State<_SmsTab> {
-  final c = {for (final k in ['providerName', 'apiBaseUrl', 'apiKey', 'apiSecret', 'authorizationHeader', 'senderId', 'entityId']) k: TextEditingController()};
+  final c = {
+    for (final k in [
+      'providerName', 'apiBaseUrl', 'apiKey', 'apiSecret', 'authorizationHeader', 'senderId', 'entityId',
+      'requestBodyTemplate', 'responseSuccessPath', 'responseSuccessValue', 'testMobile', 'testMessage'
+    ])
+      k: TextEditingController()
+  };
   String method = 'POST';
+  String requestContentType = 'application/json';
+  String language = 'hi';
   bool enabled = false;
   String? info;
+  List templates = [];
+  bool testing = false;
 
   @override
   void initState() {
     super.initState();
-    ApiClient.instance.dio.get('/api/config/sms').then((res) {
-      if (res.statusCode == 200 && res.data['config'] != null && mounted) {
-        final v = res.data['config'];
-        setState(() {
-          c['providerName']!.text = v['providerName'] ?? '';
-          c['apiBaseUrl']!.text = v['apiBaseUrl'] ?? '';
-          c['authorizationHeader']!.text = v['authorizationHeader'] ?? '';
-          c['senderId']!.text = v['senderId'] ?? '';
-          c['entityId']!.text = v['entityId'] ?? '';
-          method = v['httpMethod'] ?? 'POST';
-          enabled = v['enabled'] == true;
-          info = 'API Key: ${v['hasApiKey'] == true ? 'set (encrypted)' : 'not set'} • API Secret: ${v['hasApiSecret'] == true ? 'set (encrypted)' : 'not set'}';
-        });
+    _load();
+  }
+
+  Future<void> _load() async {
+    final res = await ApiClient.instance.dio.get('/api/config/sms');
+    if (res.statusCode != 200 || !mounted) return;
+    final v = res.data['config'];
+    setState(() {
+      templates = res.data['templates'] ?? [];
+      if (v != null) {
+        c['providerName']!.text = v['providerName'] ?? '';
+        c['apiBaseUrl']!.text = v['apiBaseUrl'] ?? '';
+        c['authorizationHeader']!.text = v['authorizationHeader'] ?? '';
+        c['senderId']!.text = v['senderId'] ?? '';
+        c['entityId']!.text = v['entityId'] ?? '';
+        c['requestBodyTemplate']!.text = v['requestBodyTemplate'] ?? '';
+        c['responseSuccessPath']!.text = v['responseSuccessPath'] ?? '';
+        c['responseSuccessValue']!.text = v['responseSuccessValue'] ?? '';
+        method = v['httpMethod'] ?? 'POST';
+        requestContentType = v['requestContentType'] ?? 'application/json';
+        language = v['language'] ?? 'hi';
+        enabled = v['enabled'] == true;
+        info = 'API Key: ${v['hasApiKey'] == true ? 'set (encrypted)' : 'not set'} • API Secret: ${v['hasApiSecret'] == true ? 'set (encrypted)' : 'not set'}';
       }
     });
+  }
+
+  Future<void> _save() async {
+    final res = await ApiClient.instance.dio.put('/api/config/sms', data: {
+      'providerName': c['providerName']!.text, 'apiBaseUrl': c['apiBaseUrl']!.text, 'httpMethod': method,
+      'apiKey': c['apiKey']!.text.isEmpty ? null : c['apiKey']!.text,
+      'apiSecret': c['apiSecret']!.text.isEmpty ? null : c['apiSecret']!.text,
+      'authorizationHeader': c['authorizationHeader']!.text, 'senderId': c['senderId']!.text,
+      'entityId': c['entityId']!.text, 'enabled': enabled, 'language': language,
+      'requestContentType': requestContentType, 'requestBodyTemplate': c['requestBodyTemplate']!.text,
+      'responseSuccessPath': c['responseSuccessPath']!.text, 'responseSuccessValue': c['responseSuccessValue']!.text,
+    });
+    if (context.mounted) showResult(context, res);
+    _load();
+  }
+
+  Future<void> _testConnection() async {
+    setState(() => testing = true);
+    final res = await ApiClient.instance.dio.post('/api/config/sms/test-connection');
+    setState(() => testing = false);
+    if (context.mounted) showResult(context, res);
+  }
+
+  Future<void> _testSend() async {
+    if (c['testMobile']!.text.trim().isEmpty) return;
+    setState(() => testing = true);
+    final res = await ApiClient.instance.dio.post('/api/config/sms/test-send', data: {
+      'mobileNumber': c['testMobile']!.text.trim(),
+      'message': c['testMessage']!.text.trim().isEmpty ? null : c['testMessage']!.text.trim(),
+    });
+    setState(() => testing = false);
+    if (!context.mounted) return;
+    final ok = res.statusCode == 200 && res.data['success'] == true;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(res.statusCode == 200 ? res.data['message'] : ApiClient.errorMessage(res)),
+        backgroundColor: ok ? const Color(0xFF2E7D32) : Theme.of(context).colorScheme.error));
+  }
+
+  Future<void> _editTemplate(Map t) async {
+    final ctl = TextEditingController(text: t['messageTemplate'] ?? '');
+    final dltCtl = TextEditingController(text: t['dltTemplateId'] ?? '');
+    bool enabledT = t['enabled'] == true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setD) => AlertDialog(
+        title: Text('${t['eventCode']} (${t['language']})'),
+        content: SizedBox(
+          width: 480,
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Placeholders: {GrowerName} {GrowerCode} {VehicleNumber} {FinalWeight} {PurchaseAmount} '
+                '{AdviceNumber} {TotalPurchaseAmount} {LoanDeducted} {NetPayable} {PaymentMode}',
+                style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic)),
+            const SizedBox(height: 8),
+            TextField(controller: ctl, maxLines: 4, decoration: const InputDecoration(labelText: 'Message Template')),
+            const SizedBox(height: 8),
+            TextField(controller: dltCtl, decoration: const InputDecoration(labelText: 'DLT Template ID (optional)')),
+            SwitchListTile(title: const Text('Enabled'), value: enabledT, onChanged: (v) => setD(() => enabledT = v)),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+        ],
+      )),
+    );
+    if (ok != true) return;
+    final res = await ApiClient.instance.dio.post('/api/config/sms/templates', data: {
+      'eventCode': t['eventCode'], 'language': t['language'], 'messageTemplate': ctl.text,
+      'dltTemplateId': dltCtl.text.trim().isEmpty ? null : dltCtl.text.trim(), 'enabled': enabledT,
+    });
+    if (context.mounted) showResult(context, res);
+    _load();
   }
 
   @override
   Widget build(BuildContext context) {
     return ListView(padding: const EdgeInsets.all(16), children: [
-      const Text('Generic DLT-compatible HTTP SMS provider. Secrets are encrypted server-side and never sent to any client.',
+      const Text('Generic HTTP SMS provider - works with ANY vendor by configuring the request/response '
+          'templates below. No provider is hard-coded. Secrets are encrypted server-side and never sent to any client.',
           style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
       if (info != null) Padding(padding: const EdgeInsets.only(top: 4), child: Text(info!, style: const TextStyle(fontSize: 12))),
       const SizedBox(height: 10),
       Wrap(spacing: 14, runSpacing: 14, children: [
-        SizedBox(width: 240, child: TextField(controller: c['providerName'], decoration: const InputDecoration(labelText: 'Provider Name', hintText: 'Example: MSG91 / Fast2SMS / custom'))),
-        SizedBox(width: 340, child: TextField(controller: c['apiBaseUrl'], decoration: const InputDecoration(labelText: 'API Base URL', hintText: 'https://api.provider.com/send'))),
+        SizedBox(width: 240, child: TextField(controller: c['providerName'], decoration: const InputDecoration(labelText: 'Provider Name', hintText: 'Example: your local SMS panel name'))),
+        SizedBox(width: 340, child: TextField(controller: c['apiBaseUrl'], decoration: const InputDecoration(labelText: 'API Base URL', hintText: 'https://api.provider.com/send?key={ApiKey}&to={Mobile}&msg={Message}'))),
         SizedBox(width: 140, child: DropdownButtonFormField<String>(value: method,
             decoration: const InputDecoration(labelText: 'HTTP Method'),
             items: const [DropdownMenuItem(value: 'POST', child: Text('POST')), DropdownMenuItem(value: 'GET', child: Text('GET'))],
             onChanged: (v) => setState(() => method = v!))),
+        SizedBox(width: 140, child: DropdownButtonFormField<String>(value: language,
+            decoration: const InputDecoration(labelText: 'Language'),
+            items: const [DropdownMenuItem(value: 'hi', child: Text('Hindi (default)')), DropdownMenuItem(value: 'en', child: Text('English'))],
+            onChanged: (v) => setState(() => language = v!))),
         SizedBox(width: 240, child: TextField(controller: c['apiKey'], obscureText: true, decoration: const InputDecoration(labelText: 'API Key', hintText: 'Leave blank to keep existing'))),
         SizedBox(width: 240, child: TextField(controller: c['apiSecret'], obscureText: true, decoration: const InputDecoration(labelText: 'API Secret', hintText: 'Leave blank to keep existing'))),
-        SizedBox(width: 240, child: TextField(controller: c['authorizationHeader'], decoration: const InputDecoration(labelText: 'Authorization Header', hintText: 'Example: Bearer / authkey'))),
+        SizedBox(width: 240, child: TextField(controller: c['authorizationHeader'], decoration: const InputDecoration(labelText: 'Authorization Header', hintText: 'Example: Bearer {ApiKey}'))),
         SizedBox(width: 180, child: TextField(controller: c['senderId'], decoration: const InputDecoration(labelText: 'Sender ID', hintText: 'Example: FCTORY'))),
         SizedBox(width: 240, child: TextField(controller: c['entityId'], decoration: const InputDecoration(labelText: 'DLT Entity ID', hintText: 'Where required'))),
+        SizedBox(width: 200, child: TextField(controller: TextEditingController(text: requestContentType),
+            decoration: const InputDecoration(labelText: 'Request Content-Type'),
+            onChanged: (v) => requestContentType = v)),
+      ]),
+      const SizedBox(height: 10),
+      TextField(controller: c['requestBodyTemplate'], maxLines: 3,
+          decoration: const InputDecoration(labelText: 'Request Body Template (POST only)',
+              hintText: '{"to":"{Mobile}","text":"{Message}","sender":"{SenderId}","key":"{ApiKey}"}')),
+      const SizedBox(height: 10),
+      Wrap(spacing: 14, runSpacing: 14, children: [
+        SizedBox(width: 240, child: TextField(controller: c['responseSuccessPath'], decoration: const InputDecoration(labelText: 'Response Success JSON Field', hintText: 'Example: status'))),
+        SizedBox(width: 240, child: TextField(controller: c['responseSuccessValue'], decoration: const InputDecoration(labelText: 'Expected Success Value', hintText: 'Example: success'))),
       ]),
       SwitchListTile(title: const Text('SMS Enabled'), value: enabled, onChanged: (v) => setState(() => enabled = v)),
-      FilledButton(onPressed: () async {
-        final res = await ApiClient.instance.dio.put('/api/config/sms', data: {
-          'providerName': c['providerName']!.text, 'apiBaseUrl': c['apiBaseUrl']!.text, 'httpMethod': method,
-          'apiKey': c['apiKey']!.text.isEmpty ? null : c['apiKey']!.text,
-          'apiSecret': c['apiSecret']!.text.isEmpty ? null : c['apiSecret']!.text,
-          'authorizationHeader': c['authorizationHeader']!.text, 'senderId': c['senderId']!.text,
-          'entityId': c['entityId']!.text, 'enabled': enabled,
-        });
-        if (context.mounted) showResult(context, res);
-      }, child: const Text('Save SMS Configuration')),
+      Wrap(spacing: 10, children: [
+        FilledButton(onPressed: _save, child: const Text('Save SMS Configuration')),
+        OutlinedButton(onPressed: testing ? null : _testConnection, child: const Text('Test Connection')),
+      ]),
+      const Divider(height: 32),
+      Text('Test Send SMS', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+      const SizedBox(height: 8),
+      Wrap(spacing: 14, runSpacing: 14, children: [
+        SizedBox(width: 200, child: TextField(controller: c['testMobile'], decoration: const InputDecoration(labelText: 'Mobile Number'))),
+        SizedBox(width: 300, child: TextField(controller: c['testMessage'], decoration: const InputDecoration(labelText: 'Message (optional)'))),
+        FilledButton.tonal(onPressed: testing ? null : _testSend, child: Text(testing ? 'Sending...' : 'Send Test SMS')),
+      ]),
+      const Divider(height: 32),
+      Text('Message Templates', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+      const SizedBox(height: 8),
+      for (final t in templates)
+        Card(
+          child: ListTile(
+            title: Text('${t['eventCode']} (${t['language']})'),
+            subtitle: Text(t['messageTemplate'] ?? '', maxLines: 2, overflow: TextOverflow.ellipsis),
+            trailing: Wrap(spacing: 6, children: [
+              Chip(label: Text(t['enabled'] == true ? 'ON' : 'OFF', style: const TextStyle(fontSize: 10, color: Colors.white)),
+                  backgroundColor: t['enabled'] == true ? const Color(0xFF2E7D32) : Colors.grey, visualDensity: VisualDensity.compact),
+              IconButton(icon: const Icon(Icons.edit_outlined, size: 18), onPressed: () => _editTemplate(t)),
+            ]),
+          ),
+        ),
     ]);
+  }
+}
+
+class _SmsLogsTab extends StatefulWidget {
+  const _SmsLogsTab();
+  @override
+  State<_SmsLogsTab> createState() => _SmsLogsTabState();
+}
+
+class _SmsLogsTabState extends State<_SmsLogsTab> {
+  List items = [];
+  bool loading = true;
+  String? statusFilter;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => loading = true);
+    final res = await ApiClient.instance.dio.get('/api/sms-logs',
+        queryParameters: statusFilter == null ? {} : {'status': statusFilter});
+    if (res.statusCode == 200 && mounted) setState(() => items = res.data['items']);
+    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _retry(int id) async {
+    final res = await ApiClient.instance.dio.post('/api/sms-logs/$id/retry');
+    if (context.mounted) showResult(context, res);
+    _load();
+  }
+
+  Color _statusColor(String s) => switch (s) {
+        'SENT' => const Color(0xFF2E7D32),
+        'FAILED' => Colors.red,
+        'RETRY_PENDING' => Colors.orange,
+        _ => Colors.blueGrey,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Wrap(spacing: 10, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          const Text('Filter:'),
+          for (final s in [null, 'QUEUED', 'PROCESSING', 'SENT', 'RETRY_PENDING', 'FAILED'])
+            ChoiceChip(
+              label: Text(s ?? 'ALL'),
+              selected: statusFilter == s,
+              onSelected: (_) {
+                setState(() => statusFilter = s);
+                _load();
+              },
+            ),
+          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
+        ]),
+        const SizedBox(height: 8),
+        Expanded(
+          child: loading
+              ? const Center(child: CircularProgressIndicator())
+              : ListView.builder(
+                  itemCount: items.length,
+                  itemBuilder: (ctx, i) {
+                    final l = items[i];
+                    return Card(
+                      child: ListTile(
+                        title: Text('#${l['id']} ${l['eventCode']} → ${l['mobileMasked']}'),
+                        subtitle: Text('${l['messageText']}\nRef: ${l['referenceId']}  •  Attempts: ${l['attemptCount']}'
+                            '${l['failureReason'] != null ? '  •  Error: ${l['failureReason']}' : ''}'),
+                        isThreeLine: true,
+                        trailing: Wrap(spacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                          Chip(label: Text(l['status'], style: const TextStyle(fontSize: 10, color: Colors.white)),
+                              backgroundColor: _statusColor(l['status']), visualDensity: VisualDensity.compact),
+                          if (l['status'] == 'FAILED' || l['status'] == 'RETRY_PENDING')
+                            IconButton(icon: const Icon(Icons.refresh, size: 18), tooltip: 'Retry now', onPressed: () => _retry(l['id'])),
+                        ]),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ]),
+    );
   }
 }
 

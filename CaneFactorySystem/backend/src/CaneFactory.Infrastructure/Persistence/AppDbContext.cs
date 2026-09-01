@@ -51,6 +51,7 @@ public class AppDbContext : DbContext
     public DbSet<PrintConfig> PrintConfigs => Set<PrintConfig>();
     public DbSet<SmsConfig> SmsConfigs => Set<SmsConfig>();
     public DbSet<SmsTemplate> SmsTemplates => Set<SmsTemplate>();
+    public DbSet<SmsLog> SmsLogs => Set<SmsLog>();
     public DbSet<RazorpayConfig> RazorpayConfigs => Set<RazorpayConfig>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<NumberSequence> NumberSequences => Set<NumberSequence>();
@@ -191,6 +192,14 @@ public class AppDbContext : DbContext
             e.HasOne(x => x.Purchase).WithMany().HasForeignKey(x => x.PurchaseId).OnDelete(DeleteBehavior.Restrict);
         });
         b.Entity<PaymentImage>().HasIndex(x => x.PaymentId);
+
+        b.Entity<SmsTemplate>().HasIndex(x => new { x.EventCode, x.Language }).IsUnique();
+        b.Entity<SmsLog>(e =>
+        {
+            e.HasIndex(x => new { x.EventCode, x.ReferenceId }).IsUnique();
+            e.HasIndex(x => x.Status);
+            e.HasIndex(x => x.GrowerId);
+        });
 
         b.Entity<WeightRuleConfig>(e =>
         {

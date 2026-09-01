@@ -9,6 +9,7 @@ using CaneFactory.Infrastructure.Services;
 using CaneFactory.Infrastructure.Weighing;
 using CaneFactory.Infrastructure.Camera;
 using CaneFactory.Infrastructure.Printing;
+using CaneFactory.Infrastructure.Sms;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -66,6 +67,11 @@ builder.Services.AddScoped<IPrintEngineService, PrintEngineService>();
 QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneDevanagari", File.OpenRead(PrintFonts.PathFor("NotoSansDevanagari-Regular.ttf")));
 QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneDevanagari", File.OpenRead(PrintFonts.PathFor("NotoSansDevanagari-Bold.ttf")));
+
+// ---- SMS (Phase 10): generic HTTP provider, queue-only enqueue service, background delivery poller ----
+builder.Services.AddHttpClient<ISmsProviderClient, GenericHttpSmsProvider>();
+builder.Services.AddScoped<ISmsService, SmsService>();
+builder.Services.AddHostedService<SmsQueueProcessor>();
 QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneLatin", File.OpenRead(PrintFonts.PathFor("Tinos-Regular.ttf")));
 QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneLatin", File.OpenRead(PrintFonts.PathFor("Tinos-Bold.ttf")));
 

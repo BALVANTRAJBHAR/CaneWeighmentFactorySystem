@@ -198,20 +198,21 @@ public class ConfigController : ControllerBase
         return Ok(new { message = "Print configuration saved successfully." });
     }
 
-    // ---------------------------------------------------------------- SMS (generic DLT-compatible HTTP provider)
+    // ---------------------------------------------------------------- SMS (generic HTTP provider - Phase 10)
     [HasPermission("Sms.View")]
     [HttpGet("sms")]
     public async Task<IActionResult> GetSms()
     {
         var s = await _db.SmsConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
-        var templates = await _db.SmsTemplates.Where(t => !t.IsDeleted).ToListAsync();
+        var templates = await _db.SmsTemplates.Where(t => !t.IsDeleted).OrderBy(t => t.EventCode).ThenBy(t => t.Language).ToListAsync();
         return Ok(new
         {
             config = s == null ? null : new
             {
                 s.Id, s.ProviderName, s.ApiBaseUrl, s.HttpMethod,
                 HasApiKey = s.ApiKeyEncrypted != null, HasApiSecret = s.ApiSecretEncrypted != null,
-                s.AuthorizationHeader, s.SenderId, s.EntityId, s.Enabled
+                s.AuthorizationHeader, s.SenderId, s.EntityId, s.Enabled,
+                s.Language, s.RequestContentType, s.RequestBodyTemplate, s.ResponseSuccessPath, s.ResponseSuccessValue
             },
             templates
         });
@@ -229,12 +230,92 @@ public class ConfigController : ControllerBase
         if (!string.IsNullOrEmpty(req.ApiSecret)) s.ApiSecretEncrypted = _protector.Protect(req.ApiSecret);
         s.AuthorizationHeader = req.AuthorizationHeader; s.SenderId = req.SenderId;
         s.EntityId = req.EntityId; s.Enabled = req.Enabled;
+        if (req.Language is "hi" or "en") s.Language = req.Language;
+        s.RequestContentType = string.IsNullOrWhiteSpace(req.RequestContentType) ? "application/json" : req.RequestContentType;
+        s.RequestBodyTemplate = req.RequestBodyTemplate;
+        s.ResponseSuccessPath = req.ResponseSuccessPath;
+        s.ResponseSuccessValue = req.ResponseSuccessValue;
         if (isNew) _db.SmsConfigs.Add(s);
         else { s.UpdatedAt = DateTime.UtcNow; s.UpdatedBy = _current.UserId; }
         await _db.SaveChangesAsync();
         await _audit.LogAsync("SystemSettingChange", "Sms", "SmsConfig", s.Id.ToString(),
-            newValue: new { s.ProviderName, s.ApiBaseUrl, s.Enabled }); // secrets never audited in plaintext
+            newValue: new { s.ProviderName, s.ApiBaseUrl, s.Enabled, s.Language }); // secrets never audited in plaintext
         return Ok(new { message = $"SMS configuration for provider '{s.ProviderName}' saved. Credentials stored encrypted." });
+    }
+
+    /// <summary>Create or update the message template for one EventCode+Language combination.
+    /// EventCode must be TARE_COMPLETED or PAYMENT_COMPLETED (the only two SMS events in Phase 10).</summary>
+    [HasPermission("Sms.Configure")]
+    [HttpPost("sms/templates")]
+    public async Task<IActionResult> SaveSmsTemplate([FromBody] SmsTemplateSaveRequest req)
+    {
+        var validEvents = new[] { "TARE_COMPLETED", "PAYMENT_COMPLETED" };
+        if (!validEvents.Contains(req.EventCode))
+            return BadRequest(new { message = $"eventCode must be one of: {string.Join(", ", validEvents)}" });
+        if (req.Language is not ("hi" or "en"))
+            return BadRequest(new { message = "language must be 'hi' or 'en'." });
+        if (string.IsNullOrWhiteSpace(req.MessageTemplate))
+            return BadRequest(new { message = "Message Template is required." });
+
+        var t = await _db.SmsTemplates.FirstOrDefaultAsync(x => x.EventCode == req.EventCode && x.Language == req.Language && !x.IsDeleted);
+        var isNew = t == null;
+        t ??= new SmsTemplate { EventCode = req.EventCode, Language = req.Language, CreatedBy = _current.UserId };
+        t.MessageTemplate = req.MessageTemplate;
+        t.DltTemplateId = req.DltTemplateId;
+        t.Enabled = req.Enabled;
+        if (isNew) _db.SmsTemplates.Add(t);
+        else { t.UpdatedAt = DateTime.UtcNow; t.UpdatedBy = _current.UserId; }
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("SystemSettingChange", "Sms", "SmsTemplate", t.Id.ToString(),
+            newValue: new { t.EventCode, t.Language, t.Enabled });
+        return Ok(new { message = $"SMS template for {req.EventCode} ({req.Language}) saved.", id = t.Id });
+    }
+
+    /// <summary>Lightweight TCP reachability probe against the configured API Base URL - does NOT send
+    /// an actual SMS. Never leaks credentials.</summary>
+    [HasPermission("Sms.Configure")]
+    [HttpPost("sms/test-connection")]
+    public async Task<IActionResult> TestSmsConnection()
+    {
+        var cfg = await _db.SmsConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
+        if (cfg == null || string.IsNullOrWhiteSpace(cfg.ApiBaseUrl))
+            return BadRequest(new { message = "Configure the SMS provider API Base URL first." });
+        try
+        {
+            var uri = new Uri(cfg.ApiBaseUrl.Split('{')[0].TrimEnd('?', '&'));
+            var port = uri.Port > 0 ? uri.Port : (uri.Scheme == "https" ? 443 : 80);
+            using var tcp = new System.Net.Sockets.TcpClient();
+            var connectTask = tcp.ConnectAsync(uri.Host, port);
+            if (await Task.WhenAny(connectTask, Task.Delay(4000)) != connectTask || !tcp.Connected)
+                return Conflict(new { message = $"SMS provider host '{uri.Host}' is NOT reachable." });
+            return Ok(new { message = $"SMS provider host '{uri.Host}:{port}' is reachable." });
+        }
+        catch (Exception ex)
+        {
+            return Conflict(new { message = $"Could not test connection: {ex.Message}" });
+        }
+    }
+
+    /// <summary>Sends ONE real test SMS through the configured generic HTTP provider. Never returns
+    /// the raw provider response (may echo back credentials/DLT IDs) - only success/failure + message.</summary>
+    [HasPermission("Sms.Configure")]
+    [HttpPost("sms/test-send")]
+    public async Task<IActionResult> TestSendSms([FromBody] SmsTestSendRequest req, [FromServices] ISmsProviderClient provider, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.MobileNumber)) return BadRequest(new { message = "Mobile Number is required." });
+        var cfg = await _db.SmsConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
+        if (cfg == null || !cfg.Enabled) return Conflict(new { message = "SMS is not configured/enabled. Save and enable the SMS configuration first." });
+
+        var apiKey = cfg.ApiKeyEncrypted != null ? _protector.Unprotect(cfg.ApiKeyEncrypted) : null;
+        var apiSecret = cfg.ApiSecretEncrypted != null ? _protector.Unprotect(cfg.ApiSecretEncrypted) : null;
+        var message = string.IsNullOrWhiteSpace(req.Message) ? "This is a test SMS from CaneFactory System." : req.Message;
+        var mobile = req.MobileNumber.Trim();
+        var (success, _, error) = await provider.SendAsync(cfg, apiKey, apiSecret, mobile, message, ct);
+
+        await _audit.LogAsync(success ? "SmsSent" : "SmsFailed", "Sms", "SmsConfig", cfg.Id.ToString(),
+            newValue: new { EventCode = "TEST", MaskedMobile = CaneFactory.Application.Common.SmsMask.Number(mobile) },
+            success: success, failureReason: success ? null : error);
+        return Ok(new { success, message = success ? "Test SMS sent successfully." : $"Test SMS failed: {error}" });
     }
 
     // ---------------------------------------------------------------- RAZORPAY
@@ -348,6 +429,26 @@ public class SmsSaveRequest
     public string? SenderId { get; set; }
     public string? EntityId { get; set; }
     public bool Enabled { get; set; }
+    public string Language { get; set; } = "hi";
+    public string? RequestContentType { get; set; }
+    public string? RequestBodyTemplate { get; set; }
+    public string? ResponseSuccessPath { get; set; }
+    public string? ResponseSuccessValue { get; set; }
+}
+
+public class SmsTemplateSaveRequest
+{
+    public string EventCode { get; set; } = string.Empty;
+    public string Language { get; set; } = "hi";
+    public string MessageTemplate { get; set; } = string.Empty;
+    public string? DltTemplateId { get; set; }
+    public bool Enabled { get; set; } = true;
+}
+
+public class SmsTestSendRequest
+{
+    public string MobileNumber { get; set; } = string.Empty;
+    public string? Message { get; set; }
 }
 
 public class RazorpaySaveRequest
