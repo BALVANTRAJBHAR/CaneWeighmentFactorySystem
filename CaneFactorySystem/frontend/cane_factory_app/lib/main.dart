@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:printing_ffi/printing_ffi.dart';
 import 'core/app_theme.dart';
 import 'providers/auth_provider.dart';
 import 'providers/live_weight_provider.dart';
@@ -10,6 +12,10 @@ import 'widgets/app_shell.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Phase 7: printing_ffi is the only PDFium-based plugin in this app - must init once on Windows.
+  if (Platform.isWindows) {
+    PrintingFfi.instance.initPdfium();
+  }
   runApp(MultiProvider(
     providers: [
       ChangeNotifierProvider(create: (_) => ThemeProvider()),

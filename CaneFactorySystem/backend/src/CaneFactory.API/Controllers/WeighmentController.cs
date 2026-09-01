@@ -167,7 +167,7 @@ public class WeighmentController : ControllerBase
             grossWeightQuintal = grossQuintal,
             rate = rate.Rate,
             soundEvent = "WEIGHMENT_COMPLETED",
-            autoPrint = await AutoPrintAsync("Gross"),
+            autoPrint = await AutoPrintAsync("Gross", purchaseId),
             captureQueued = true
         });
     }
@@ -226,7 +226,7 @@ public class WeighmentController : ControllerBase
             finalWeightQuintal = final,
             purchaseAmount = amount,
             soundEvent = "WEIGHMENT_COMPLETED",
-            autoPrint = await AutoPrintAsync("Tare"),
+            autoPrint = await AutoPrintAsync("Tare", p.Id),
             captureQueued = true,
             smsQueued = false // SMS gateway integration activates in Phase 10
         });
@@ -254,16 +254,19 @@ public class WeighmentController : ControllerBase
             : null;
     }
 
-    private async Task<object?> AutoPrintAsync(string stage)
+    private async Task<object?> AutoPrintAsync(string stage, int purchaseId)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
         if (cfg == null || !cfg.AutoPrint) return null;
+        var copies = stage == "Gross" ? cfg.GrossCopies : cfg.TareCopies;
+        if (copies <= 0) return null;
         return new
         {
             printerType = cfg.PrinterType,
             printerName = cfg.PrinterName,
-            copies = stage == "Gross" ? cfg.GrossCopies : cfg.TareCopies,
-            language = cfg.Language
+            copies,
+            language = cfg.Language,
+            documentUrl = $"/api/print/purchase/{purchaseId}?stage={stage.ToUpperInvariant()}&format=final"
         };
     }
 

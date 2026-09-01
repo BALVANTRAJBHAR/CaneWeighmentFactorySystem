@@ -62,7 +62,8 @@ public class PurchasesController : ControllerBase
                 p.TareWeightQuintal, p.TareDateTime, p.TareByUserName,
                 p.NetWeightQuintal, p.CuttingPercent, p.CuttingWeightQuintal,
                 p.TaxPercent, p.TaxWeightQuintal, p.FinalWeightQuintal,
-                p.Rate, p.PurchaseAmount, p.GrossTareStatus, p.PaymentStatus, p.LockStatus, p.AdviceNumber
+                p.Rate, p.PurchaseAmount, p.GrossTareStatus, p.PaymentStatus, p.LockStatus, p.AdviceNumber,
+                p.GrossPrintCount, p.TarePrintCount
             }).ToListAsync();
         return Ok(new { items, totalCount = total, page, pageSize });
     }
@@ -82,7 +83,7 @@ public class PurchasesController : ControllerBase
             p.NetWeightQuintal, p.CuttingPercent, p.CuttingWeightQuintal,
             p.TaxPercent, p.TaxWeightQuintal, p.FinalWeightQuintal,
             p.Rate, p.PurchaseAmount, p.GrossTareStatus, p.PaymentStatus, p.LockStatus,
-            p.AdviceNumber, SeasonName = p.Season.SeasonName
+            p.AdviceNumber, SeasonName = p.Season.SeasonName, p.GrossPrintCount, p.TarePrintCount
         }).FirstOrDefaultAsync();
         // 404 (not 403) for out-of-scope IDs: does not leak other farmers' record existence
         return p == null ? NotFound(new { message = "Purchase not found." }) : Ok(p);

@@ -44,6 +44,10 @@ public class Purchase : BaseEntity
     public int? AdviceNumber { get; set; }
     public int SeasonId { get; set; }
     public Season Season { get; set; } = null!;
+
+    // Phase 7: print/reprint audit counters (0 = never printed; >0 subsequent prints are audited as Reprint)
+    public int GrossPrintCount { get; set; }
+    public int TarePrintCount { get; set; }
 }
 
 public class PurchaseImage

@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
+import '../../core/print_service.dart';
 import '../../core/sound_controller.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/live_weight_provider.dart';
@@ -49,6 +50,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   // Phase 6: evidence images captured (async, in the background) for the last saved purchase
   int? _lastCapturedPurchaseId;
   List _capturedImages = [];
+  String? _lastPrintStage; // Phase 7: GROSS|TARE for the manual Reprint button
 
   @override
   void initState() {
@@ -86,6 +88,37 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       final res = await ApiClient.instance.dio.get('/api/weighment/pending-tare');
       if (res.statusCode == 200 && mounted) setState(() => _pending = res.data);
     } catch (_) {}
+  }
+
+  /// Auto Print (Phase 7): server tells us whether to print and the ready-made document URL;
+  /// failures never affect the already-completed save - just a clear toast + manual Reprint option.
+  Future<void> _autoPrint(dynamic autoPrint) async {
+    if (autoPrint == null) return;
+    final outcome = await PrintService.printDocument(
+      documentUrl: autoPrint['documentUrl'],
+      printerType: autoPrint['printerType'] ?? 'DotMatrix',
+      printerName: autoPrint['printerName'] ?? '',
+      copies: autoPrint['copies'] ?? 1,
+    );
+    if (mounted) _toast(outcome.message, error: !outcome.success);
+  }
+
+  /// Manual (re)print for the last saved purchase - authorized users can reprint if Auto Print
+  /// failed or a physical copy was damaged; every call is audited server-side (Print/Reprint).
+  Future<void> _manualPrint(String stage) async {
+    if (_lastCapturedPurchaseId == null) return;
+    final cfgRes = await ApiClient.instance.dio.get('/api/config/print');
+    if (cfgRes.statusCode != 200) {
+      _toast('Could not load print configuration.', error: true);
+      return;
+    }
+    final cfg = cfgRes.data;
+    final outcome = await PrintService.printDocument(
+      documentUrl: '/api/print/purchase/$_lastCapturedPurchaseId?stage=$stage&format=final',
+      printerType: cfg['printerType'] ?? 'DotMatrix',
+      printerName: cfg['printerName'] ?? '',
+    );
+    if (mounted) _toast(outcome.message, error: !outcome.success);
   }
 
   Future<void> _loadVarieties(int typeId) async {
@@ -174,9 +207,11 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         _growerCode.clear();
         _vehicleNumber.clear();
         _capturedImages = [];
+        _lastPrintStage = 'GROSS';
       });
       _loadPending();
       _loadCapturedImages(purchaseId);
+      _autoPrint(res.data['autoPrint']);
     } else {
       _toast(ApiClient.errorMessage(res), error: true);
     }
@@ -200,9 +235,11 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         _selectedPurchase = null;
         _purchaseIdCtl.clear();
         _capturedImages = [];
+        _lastPrintStage = 'TARE';
       });
       _loadPending();
       _loadCapturedImages(purchaseId);
+      _autoPrint(res.data['autoPrint']);
     } else {
       _toast(ApiClient.errorMessage(res), error: true);
     }
@@ -539,7 +576,14 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           ),
           if (_capturedImages.isNotEmpty) ...[
             const Divider(height: 12),
-            const Text('Captured Evidence', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+            Row(children: [
+              const Expanded(child: Text('Captured Evidence', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12))),
+              TextButton.icon(
+                onPressed: () => _manualPrint(_lastPrintStage ?? 'GROSS'),
+                icon: const Icon(Icons.print, size: 16),
+                label: const Text('Reprint', style: TextStyle(fontSize: 12)),
+              ),
+            ]),
             const SizedBox(height: 4),
             Expanded(
               flex: 2,

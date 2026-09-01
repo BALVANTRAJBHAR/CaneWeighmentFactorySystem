@@ -8,6 +8,7 @@ using CaneFactory.Infrastructure.Persistence;
 using CaneFactory.Infrastructure.Services;
 using CaneFactory.Infrastructure.Weighing;
 using CaneFactory.Infrastructure.Camera;
+using CaneFactory.Infrastructure.Printing;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -57,6 +58,16 @@ builder.Services.AddSingleton<ICameraCaptureProvider, OnvifCaptureProvider>();
 builder.Services.AddSingleton<ICameraCaptureProvider, RtspCaptureProvider>();
 builder.Services.AddSingleton<ICameraCaptureProvider, SimulatorCaptureProvider>();
 builder.Services.AddScoped<ICameraCaptureService, CameraCaptureService>();
+
+// ---- Print engine (Phase 7): centralized A4/DotMatrix renderers + orchestration service ----
+builder.Services.AddSingleton<IPrintRenderer, A4PdfRenderer>();
+builder.Services.AddSingleton<IPrintRenderer, DotMatrixEscPRenderer>();
+builder.Services.AddScoped<IPrintEngineService, PrintEngineService>();
+QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
+QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneDevanagari", File.OpenRead(PrintFonts.PathFor("NotoSansDevanagari-Regular.ttf")));
+QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneDevanagari", File.OpenRead(PrintFonts.PathFor("NotoSansDevanagari-Bold.ttf")));
+QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneLatin", File.OpenRead(PrintFonts.PathFor("Tinos-Regular.ttf")));
+QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneLatin", File.OpenRead(PrintFonts.PathFor("Tinos-Bold.ttf")));
 
 // ---- AuthN: JWT bearer, short-lived access tokens ----
 var jwtSecret = builder.Configuration["Jwt:Secret"]

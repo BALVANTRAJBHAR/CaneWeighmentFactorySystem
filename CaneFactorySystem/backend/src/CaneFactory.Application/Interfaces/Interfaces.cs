@@ -61,3 +61,22 @@ public interface ICameraCaptureService
     Task<List<CameraCaptureResult>> CaptureForPurchaseAsync(int purchaseId, string stage, int? capturedByUserId, CancellationToken ct = default);
     Task<CameraCaptureResult> CaptureSingleAsync(int cameraConfigId, CancellationToken ct = default);
 }
+
+/// <summary>One renderer per printer target ("A4" | "DotMatrix"). RenderPreview must be visually
+/// equivalent to RenderFinal (WYSIWYG) so the Flutter print-preview screen never lies to the user.</summary>
+public interface IPrintRenderer
+{
+    string TargetType { get; }
+    (byte[] bytes, string contentType, string fileExtension) RenderFinal(CaneFactory.Application.DTOs.PrintDocument doc);
+    (byte[] bytes, string contentType, string fileExtension) RenderPreview(CaneFactory.Application.DTOs.PrintDocument doc);
+}
+
+/// <summary>Builds PrintDocuments from transaction data and dispatches to the configured renderer.
+/// Single centralized engine reused by every future print-producing module.</summary>
+public interface IPrintEngineService
+{
+    Task<CaneFactory.Application.DTOs.PrintDocument> BuildGrossSlipAsync(int purchaseId, string generatedByUserName);
+    Task<CaneFactory.Application.DTOs.PrintDocument> BuildTareSlipAsync(int purchaseId, string generatedByUserName);
+    CaneFactory.Application.DTOs.PrintDocument BuildTestDocument(string language, string generatedByUserName);
+    (byte[] bytes, string contentType, string fileExtension) Render(CaneFactory.Application.DTOs.PrintDocument doc, string target, bool preview);
+}

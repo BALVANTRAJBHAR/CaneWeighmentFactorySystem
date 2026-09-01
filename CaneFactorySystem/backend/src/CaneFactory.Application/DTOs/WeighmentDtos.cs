@@ -48,6 +48,8 @@ public class PurchaseDto
     public string GrossTareStatus { get; set; } = string.Empty;
     public string PaymentStatus { get; set; } = string.Empty;
     public string LockStatus { get; set; } = string.Empty;
+    public int GrossPrintCount { get; set; }
+    public int TarePrintCount { get; set; }
 }
 
 public class GrowerLookupDto

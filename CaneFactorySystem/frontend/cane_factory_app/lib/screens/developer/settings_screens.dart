@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import '../../core/api_client.dart';
+import '../../core/print_service.dart';
 
 /// Developer Configuration hub: Weight Rules, Sound/TTS, Cameras, Print, SMS, Razorpay, Company.
 class DeveloperSettingsScreen extends StatelessWidget {
@@ -335,6 +336,8 @@ class _PrintTab extends StatefulWidget {
 
 class _PrintTabState extends State<_PrintTab> {
   Map<String, dynamic>? v;
+  String _testTarget = 'DotMatrix';
+  String _testLanguage = 'hi';
 
   @override
   void initState() {
@@ -374,7 +377,83 @@ class _PrintTabState extends State<_PrintTab> {
         final res = await ApiClient.instance.dio.put('/api/config/print', data: v);
         if (context.mounted) showResult(context, res);
       }, child: const Text('Save Print Configuration')),
+      const Divider(height: 32),
+      const Text('Print Test', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+      const Text('Verify printer, paper, Hindi glyph rendering, QR readability and alignment before enabling Auto Print.',
+          style: TextStyle(fontSize: 11, color: Colors.grey)),
+      const SizedBox(height: 10),
+      Wrap(spacing: 14, runSpacing: 14, children: [
+        SizedBox(width: 200, child: DropdownButtonFormField<String>(value: _testTarget,
+            decoration: const InputDecoration(labelText: 'Test Target'),
+            items: const [DropdownMenuItem(value: 'DotMatrix', child: Text('Dot Matrix')), DropdownMenuItem(value: 'A4', child: Text('A4'))],
+            onChanged: (x) => setState(() => _testTarget = x!))),
+        SizedBox(width: 180, child: DropdownButtonFormField<String>(value: _testLanguage,
+            decoration: const InputDecoration(labelText: 'Test Language'),
+            items: const [DropdownMenuItem(value: 'hi', child: Text('Hindi')), DropdownMenuItem(value: 'en', child: Text('English'))],
+            onChanged: (x) => setState(() => _testLanguage = x!))),
+      ]),
+      const SizedBox(height: 10),
+      Wrap(spacing: 10, children: [
+        OutlinedButton.icon(onPressed: _previewTest, icon: const Icon(Icons.visibility), label: const Text('Preview')),
+        FilledButton.icon(onPressed: _printTest, icon: const Icon(Icons.print), label: const Text('Print Test Page')),
+      ]),
     ]);
+  }
+
+  Future<void> _previewTest() async {
+    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
+    try {
+      final res = await ApiClient.instance.dio.get(
+          '/api/print/test?target=$_testTarget&language=$_testLanguage&format=preview',
+          options: Options(responseType: ResponseType.bytes, validateStatus: (s) => s != null && s < 500));
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (!mounted) return;
+      if (res.statusCode != 200) {
+        _showError(res.data);
+        return;
+      }
+      final bytes = Uint8List.fromList(res.data as List<int>);
+      if (_testTarget == 'DotMatrix') {
+        await showDialog(context: context, builder: (ctx) => Dialog(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Image.memory(bytes, width: 480),
+              const SizedBox(height: 8),
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+            ]),
+          ),
+        ));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('A4 preview generated (PDF). Use "Print Test Page" to send it to the printer.')));
+      }
+    } catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Preview failed: $e')));
+    }
+  }
+
+  Future<void> _printTest() async {
+    final printerName = v?['printerName'] ?? '';
+    final outcome = await PrintService.printDocument(
+      documentUrl: '/api/print/test?target=$_testTarget&language=$_testLanguage&format=final',
+      printerType: _testTarget,
+      printerName: printerName,
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(outcome.message), backgroundColor: outcome.success ? Colors.green : Colors.red));
+    }
+  }
+
+  void _showError(List<int> bytes) {
+    var message = 'Preview failed.';
+    try {
+      final decoded = jsonDecode(utf8.decode(bytes)) as Map;
+      if (decoded['message'] != null) message = decoded['message'].toString();
+    } catch (_) {}
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 }
 

@@ -18,13 +18,16 @@ public class AuditController : ControllerBase
     [HasPermission("Audit.View")]
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] string? module, [FromQuery] string? action,
-        [FromQuery] string? username, [FromQuery] DateTime? from, [FromQuery] DateTime? to,
+        [FromQuery] string? username, [FromQuery] string? entity, [FromQuery] string? entityId,
+        [FromQuery] DateTime? from, [FromQuery] DateTime? to,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 100)
     {
         var q = _db.AuditLogs.AsNoTracking().AsQueryable();
         if (!string.IsNullOrWhiteSpace(module)) q = q.Where(a => a.Module == module);
         if (!string.IsNullOrWhiteSpace(action)) q = q.Where(a => a.Action == action);
         if (!string.IsNullOrWhiteSpace(username)) q = q.Where(a => a.Username == username);
+        if (!string.IsNullOrWhiteSpace(entity)) q = q.Where(a => a.Entity == entity);
+        if (!string.IsNullOrWhiteSpace(entityId)) q = q.Where(a => a.EntityId == entityId);
         if (from.HasValue) q = q.Where(a => a.Timestamp >= from);
         if (to.HasValue) q = q.Where(a => a.Timestamp <= to);
         var total = await q.CountAsync();

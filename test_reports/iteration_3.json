@@ -1,0 +1,38 @@
+{
+  "summary": "Phase 7 (centralized Printing Engine) backend test suite - 21/21 passed against ASP.NET Core API on http://localhost:8001 (fresh SQLite dev DB, CANE_CAMERA_SIMULATOR=true). Verified: (1) GET /api/print/purchase/{id}?stage=GROSS&target=DotMatrix&format=final returns HTTP 200, Content-Type application/octet-stream, bytes start with ESC @ (0x1B 0x40) and contain ESC * (0x1B 0x2A) bit-image commands - real ESC/P output. (2) target=A4&format=final returns HTTP 200, Content-Type application/pdf, magic %PDF, non-trivial size. (3) format=preview for DotMatrix returns a valid PNG (89 50 4E 47); for A4 returns the same PDF bytes as final (WYSIWYG, size delta within tolerance). (4) Reprint audit works via action=Print on the first final call and action=Reprint on the second call for the same Purchase entity; format=preview never adds an audit entry. (5) stage=TARE on a GROSS_DONE purchase returns HTTP 409 with a clear 'Tare slip is only available after Tare has been saved.' message; after Tare is saved it returns a valid PDF (>800 bytes, larger than the gross slip). (6) Invalid inputs: stage=FOO -> 400, target=FOO -> 400, format=FOO -> 400, purchase id 999999 -> 404. (7) RBAC: Operator (opuser2, role id 5 - has Weighment.Print but not Print.Configure) succeeds on GET /print/purchase/{id} (200 PDF) but is 403 on GET /print/test; Developer succeeds on both. (8) GET /api/print/test?target=DotMatrix&language=hi&format=preview returns PNG; target=A4&language=en&format=final returns PDF; neither adds any Print/Reprint audit entry against any Purchase. (9) Auto Print wiring: POST /api/weighment/gross and /api/weighment/tare responses include an autoPrint object with printerType, printerName, copies, language, documentUrl; documentUrl is a relative path of shape /api/print/purchase/{id}?stage=GROSS|TARE&format=final and returns 200 when GETed with the same auth token. (10) Regression spot-checks: login + forced-password-change gate still works; gross+tare math still computes correctly (gross=50, tare=10, net=40, purchaseAmount>0); Phase 6 camera capture still returns image rows on the same purchase. No Phase 7 production issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/purchases/{id}", "issue": "PurchaseDto does not expose the new GrossPrintCount/TarePrintCount fields even though they exist on the Purchase entity (added by migration AddPurchasePrintCounts). Consumers who want to show 'Reprint x3' badges on the weighment list must currently GET /api/audit and count Print/Reprint rows client-side, which is far more expensive. Recommend adding grossPrintCount/tarePrintCount to PurchaseDto."},
+      {"endpoint": "GET /api/audit", "issue": "The endpoint appears to ignore the entityType/entity/entityId query parameters (returns unrelated Login rows first) - tests had to fetch take=200 and filter client-side. Not a Phase 7 regression, but worth fixing as more auditable actions land (Print, Reprint, ImageCaptured...)."}
+    ]
+  },
+  "frontend_issues": {},
+  "test_report_links": [
+    "/app/backend/tests/test_phase7_printing.py",
+    "/app/backend/tests/_bootstrap_phase7.py",
+    "/app/test_reports/pytest/phase7_results.xml"
+  ],
+  "action_items": [
+    "Expose grossPrintCount/tarePrintCount on PurchaseDto so Flutter can badge Reprint state without a separate audit round-trip.",
+    "Make /api/audit honor entity/entityId filters (currently returns all rows regardless of these params)."
+  ],
+  "critical_code_review_comments": [
+    "PrintController.PurchaseSlip does the permission check manually (StatusCode(403,...)) instead of using [HasPermission(\"Weighment.Print\")] like Test() does. Both codepaths are equivalent today, but the inconsistency invites drift (e.g. one path forgetting to log auth-denied). Consider a single [HasPermission] attribute + [HttpGet] on the action for symmetry with /api/print/test.",
+    "PrintController.PurchaseSlip increments the counter and writes the audit AFTER Render() succeeds but BEFORE File(...) is streamed - correct semantically (bytes were built), but note that a network cancellation during the file stream would still leave the counter incremented. Given Auto Print is fire-and-forget on the client side this is probably desired (attempted-print is auditable), but should be documented.",
+    "A4PdfRenderer.RenderPreview==RenderFinal (same PDF bytes) is elegant for WYSIWYG, but the test currently only guarantees 'same content-type + within 5%' - if timestamps are baked into the PDF at render time (metadata /CreationDate), consecutive calls will differ by a handful of bytes anyway. Not a bug; just worth noting for a future 'exact byte equality' assertion if the PDF is made timestamp-free.",
+    "DotMatrixEscPRenderer emits ESC @ init + ESC * bit-image bands, but the response Content-Disposition filename uses .escp / no extension per Render()'s ext - verify that Flutter's printing_ffi treats the byte stream as raw regardless of the filename, otherwise Windows spooler may attempt to interpret it. Untestable here, but flag for Flutter QA.",
+    "AutoPrintAsync (WeighmentController) builds documentUrl using a hard-coded relative path shape (/api/print/purchase/{id}?stage=...&format=final). If the API is later hosted behind a sub-path (e.g. /cane-api/...), Flutter's base URL join will still work because it's relative - good; but if any client naively string-prepends 'http://host' + documentUrl (with no leading slash normalization), it'll break. Consider returning both absolute and relative URLs, or making the base URL configurable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase7_printing.py",
+    "/app/backend/tests/_bootstrap_phase7.py"
+  ],
+  "success_rate": {"backend": "100% (21/21 Phase 7 tests)", "frontend": "N/A (Flutter, out of scope)"},
+  "test_credentials": "developer / DevSecure@2026 (password-changed from Dev@2026Temp on first run). opuser2 / OpSecure@2026 (Operator role, has Weighment.Print but NOT Print.Configure - exactly what the RBAC test needs).",
+  "seed_data_creation": "Fresh DB. Bootstrapped via /app/backend/tests/_bootstrap_phase7.py: Zone 1 (Zone A), Village 101 (Village A), Grower 1 (101/1 Ramesh Kumar), Rate 350.00 for VarietyType 1 effective 2026-01-01, Cameras 1 & 2 (both captureEnabled), opuser2 user (Operator role, password-changed), and Purchase 1 with Gross saved. Each test that needs isolation creates its own fresh purchase via POST /api/weighment/gross with a random idempotencyKey.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend must be started per /app/memory/test_credentials.md. Bootstrap seed with `python /app/backend/tests/_bootstrap_phase7.py` (idempotent-ish, tolerates 409/422 for pre-existing rows). Test suite is at /app/backend/tests/test_phase7_printing.py; runs in ~11s under pytest-xdist. Prior iteration suites (iteration_1 phases 1-5, iteration_2 phase 6 camera) were NOT re-run per main-agent instruction; only spot-checks (login + forced-change, gross+tare math, GET /purchases/{id}/images) were verified inside iteration_3 and still pass. Two minor API surface gaps documented under backend_issues.minor - Phase 7 itself has no bugs.",
+  "rca of the issue": "N/A - no Phase 7 bugs. One test initially failed because PurchaseDto does not surface grossPrintCount/tarePrintCount (they exist only on the Purchase entity). Test was corrected to verify counter semantics via the audit log (Print vs Reprint action) which is the officially audited source of truth for this feature. The DTO gap is reported as a minor issue and action item for the main agent."
+}
