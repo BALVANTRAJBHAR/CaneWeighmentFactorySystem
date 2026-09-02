@@ -1,0 +1,37 @@
+{
+  "summary": "Phase 11 (Reports), Phase 12 (Farmer Portal), Phase 13 (Security/Backup/Health) backend E2E tested on fresh SQLite DB (port 8099). 22/22 tests PASSED. All key requirements verified: public /api/health (no auth), Razorpay endpoint fully removed (404), payment modes limited to CASH/BANK/MOBILE_UPI only, Reports (purchases/payments/loans/daily-collection) return valid JSON/PDF (%PDF magic)/XLSX (PK magic) with date-range filters, Farmer role gets 403 on ?format=pdf (Report.Print required) but 200 on ?format=json (Report.View), Backup config validates frequency enum + HH:mm format + retentionDays>=1 + non-empty folder path (all invalids return 400), Backup script emits BACKUP DATABASE SQL, Task Scheduler XML is well-formed, SecurityAuditMiddleware logs BOTH 401 (Unauthenticated) and 403 (PermissionDenied) audit entries automatically (12 Security entries after triggering, confirmed via GET /api/audit?module=Security). Farmer Portal correctly scopes /api/farmer/dashboard + /api/farmer/statement to grower matched by User.Mobile == Grower.Mobile; developer (no matching grower) does NOT receive another farmer's data. Regression smoke: auth login + refresh token rotation still work. dotnet build succeeded (0 errors; 1 pre-existing CS8601 nullable warning in BackupController.cs line 53 - non-blocking).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/backup/config", "issue": "Uses raw BackupConfig entity as [FromBody] type - unknown/misspelled client fields (e.g. old 'scheduledTime'/'backupFolder') are silently ignored instead of returning 400 for missing required fields. Not a security issue but reduces DX. Recommend switching to a BackupConfigDto and using [Required] on required fields."},
+      {"endpoint": "BackupController.cs:53 CS8601", "issue": "Pre-existing nullable-ref-type compiler warning (`Possible null reference assignment`) on TimeOfDay/BackupFolderPath assignment. Non-blocking; existing null-guard code paths above handle it."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_phase11_12_13.py",
+    "/app/test_reports/pytest/phase11_12_13.xml"
+  ],
+  "action_items": [
+    "Optional: replace [FromBody] BackupConfig with a BackupConfigDto in BackupController.UpdateConfig() for stronger request-shape validation and to reject unknown fields via ModelState.",
+    "Optional: fix the CS8601 nullable warning in BackupController.cs:53 by non-null-asserting TimeOfDay/BackupFolderPath after the earlier IsNullOrWhiteSpace guards."
+  ],
+  "critical_code_review_comments": [
+    "Phase 13 SecurityAuditMiddleware registration order in Program.cs is correct (right after ExceptionMiddleware, wrapping Authentication+Authorization+Controllers) - verified by capturing BOTH 401 and 403 audit rows after unauthenticated + Farmer-permission-denied requests.",
+    "Phase 12 farmer scoping is server-authoritative: /api/farmer/dashboard never trusts a client-supplied grower id, uses ICurrentUser mobile to look up the matching Grower row. Verified developer (no matching grower) does not leak another farmer's data.",
+    "Phase 11 report permission split works: Farmer role has Report.View (json OK) but not Report.Print/.Export (pdf -> 403 confirmed).",
+    "Razorpay/ONLINE payment mode fully removed: /api/config/razorpay is 404, /api/payment-modes seeds ONLY CASH/BANK/MOBILE_UPI.",
+    "ReportsController + FarmerController.Statement share ReportExportService (QuestPDF/ClosedXML) - all 4 reports + statement produce valid PDF (%PDF) and XLSX (PK) bytes in the container.",
+    "Backup GenerateScript() correctly includes DIFFERENTIAL + LOG blocks based on flags, and Task Scheduler XML branches on Daily/Hourly/Weekly frequency."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase11_12_13.py (created)"
+  ],
+  "success_rate": {"backend": "100% (22/22)", "frontend": "N/A (Flutter, skipped per task instructions)"},
+  "test_credentials": "developer / DevSecure@2026 (changed from Dev@2026Temp on first-run). Fresh SQLite at /tmp/canefactory_test.db, backend on http://localhost:8099.",
+  "seed_data_creation": "Fresh /tmp/canefactory_test.db (SQLite). Test suite dynamically creates Zone 'Zone T', Village 'Village T', a TEST_ prefixed Grower with a time-based unique mobile, and a farmer user (testfarmer_<epoch> / Farm@2026Temp) with the Farmer role.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend needs: export DOTNET_ROOT=/root/.dotnet PATH=/root/.dotnet:$PATH. Start on port 8099 (8001 is occupied by an unrelated FastAPI placeholder). Use a fresh SQLite DB path to avoid the seeded /tmp/canefactory_dev.db state from earlier iterations. Tests are in /app/backend/tests/test_phase11_12_13.py - run with `python3 -m pytest test_phase11_12_13.py -v -o addopts=''` (the repo pytest.ini defaults to xdist which is incompatible with this suite's session-scoped auth fixture). Correct API field names discovered this iteration: Zone.zoneName/zoneCode, Village.villageName/zoneId, Grower.growerName/mobile/villageId, User.temporaryPassword+roleIds[], BackupConfig.timeOfDay+backupFolderPath (not scheduledTime/backupFolder).",
+  "rca of the issue": "N/A - no bugs found in Phase 11/12/13 implementation."
+}

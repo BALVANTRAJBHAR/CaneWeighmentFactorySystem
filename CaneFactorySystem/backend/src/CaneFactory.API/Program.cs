@@ -72,6 +72,9 @@ QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneDevanagari", File.O
 builder.Services.AddHttpClient<ISmsProviderClient, GenericHttpSmsProvider>();
 builder.Services.AddScoped<ISmsService, SmsService>();
 builder.Services.AddHostedService<SmsQueueProcessor>();
+
+// ---- Reports (Phase 11): generic PDF/Excel export shared by every report endpoint ----
+builder.Services.AddSingleton<IReportExportService, ReportExportService>();
 QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneLatin", File.OpenRead(PrintFonts.PathFor("Tinos-Regular.ttf")));
 QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneLatin", File.OpenRead(PrintFonts.PathFor("Tinos-Bold.ttf")));
 
@@ -172,6 +175,7 @@ app.Use(async (ctx, next) =>
 if (!app.Environment.IsDevelopment()) app.UseHsts();
 
 app.UseMiddleware<ExceptionMiddleware>();
+app.UseMiddleware<CaneFactory.API.Middleware.SecurityAuditMiddleware>();
 app.UseSwagger();
 app.UseSwaggerUI();
 app.UseCors();
@@ -186,7 +190,8 @@ app.Use(async (ctx, next) =>
     if (ctx.User.Identity?.IsAuthenticated == true
         && path.StartsWithSegments("/api")
         && !path.StartsWithSegments("/api/auth")
-        && !path.StartsWithSegments("/api/ping"))
+        && !path.StartsWithSegments("/api/ping")
+        && !path.StartsWithSegments("/api/health"))
     {
         var sub = ctx.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (int.TryParse(sub, out var uid))

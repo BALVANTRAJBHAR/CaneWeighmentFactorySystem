@@ -77,7 +77,7 @@ public class DashboardController : ControllerBase
         {
             todayVehicles = await purchases.CountAsync(),
             pendingTare = await _db.Purchases.CountAsync(p => p.GrossTareStatus == "GROSS_DONE" && !p.IsDeleted),
-            todayFinalWeightQuintal = await purchases.Where(p => p.FinalWeightQuintal != null).SumAsync(p => (decimal?)p.FinalWeightQuintal) ?? 0,
+            todayFinalWeightQuintal = (await purchases.Where(p => p.FinalWeightQuintal != null).Select(p => p.FinalWeightQuintal).ToListAsync()).Sum(x => x ?? 0),
             paymentPending = await _db.Purchases.CountAsync(p => p.PaymentStatus == "PENDING" && !p.IsDeleted),
             totalGrowers = await _db.Growers.CountAsync(g => !g.IsDeleted && g.Status),
             totalVillages = await _db.Villages.CountAsync(v => !v.IsDeleted && v.Status)
@@ -148,8 +148,8 @@ public class DashboardController : ControllerBase
         {
             var sms = await _db.SmsConfigs.AsNoTracking().FirstOrDefaultAsync(s => !s.IsDeleted);
             items.Add(new { name = "SMS", value = sms?.Enabled == true ? "Enabled" : "Disabled", color = sms?.Enabled == true ? "Green" : "Yellow" });
-            var rz = await _db.RazorpayConfigs.AsNoTracking().FirstOrDefaultAsync(r => !r.IsDeleted);
-            items.Add(new { name = "Razorpay", value = rz?.Enabled == true ? $"Enabled ({rz.Mode})" : "Disabled", color = rz?.Enabled == true ? "Green" : "Yellow" });
+            var backup = await _db.BackupConfigs.AsNoTracking().FirstOrDefaultAsync(b => !b.IsDeleted);
+            items.Add(new { name = "Backup Schedule", value = backup?.Enabled == true ? $"{backup.Frequency} @ {backup.TimeOfDay}" : "Disabled", color = backup?.Enabled == true ? "Green" : "Red" });
         }
         // Farmer receives only basic service status
         if (!dev && !admin && !op && !accountant)

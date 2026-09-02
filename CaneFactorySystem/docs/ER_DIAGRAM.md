@@ -14,11 +14,11 @@ ZONE (Id seq:1) ─────< VILLAGE (Id seq:101) ─────< GROWER (G
 
 USER ──< USER_ROLE >── ROLE ──< ROLE_PERMISSION >── PERMISSION (Module.Action)
 USER ──< REFRESH_TOKEN (rotation/revocation)     USER ──< USER_OTP
-AUDIT_LOG (every critical action, old/new values)
+AUDIT_LOG (every critical action, old/new values, incl. every 401/403 via SecurityAuditMiddleware)
 
 Config: WEIGHING_DEVICE >── STRING_PROFILE, DEVICE_CONFIG_HISTORY, WEIGHT_RULE_CONFIG,
         SOUND_CONFIG + SOUND_MESSAGE, CAMERA_CONFIG (1..6), PRINT_CONFIG,
-        SMS_CONFIG + SMS_TEMPLATE, RAZORPAY_CONFIG, COMPANY_CONFIG, SYSTEM_SETTING,
+        SMS_CONFIG + SMS_TEMPLATE, BACKUP_CONFIG (Phase 13), COMPANY_CONFIG, SYSTEM_SETTING,
         NUMBER_SEQUENCE (business serials)
 ```
 

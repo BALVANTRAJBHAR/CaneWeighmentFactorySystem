@@ -1,0 +1,316 @@
+using CaneFactory.Application.DTOs;
+using CaneFactory.Application.Interfaces;
+using CaneFactory.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace CaneFactory.API.Controllers;
+
+/// <summary>
+/// Phase 11: Reporting engine. Rather than 14 separate hard-coded endpoints, four flexible,
+/// filterable, farmer-scoped endpoints cover every named report from the requirements:
+/// Purchases (Daily Weighment/Purchase, Gross/Tare/Net, Village-wise, Grower-wise, Date-range,
+/// Rate-wise, Variety-wise, Vehicle-wise, Pending Payment, Lock report), Payments (Payment +
+/// Cancelled report), Loans (Loan + Cancelled report) and Daily Collection. The existing
+/// /api/audit endpoint (Phase 1) covers the Audit report and gains PDF/Excel export here too.
+/// Every endpoint supports date-range + filters + totals + format=json|pdf|excel.
+/// </summary>
+[ApiController]
+[Authorize]
+[Route("api/reports")]
+public class ReportsController : ControllerBase
+{
+    private readonly AppDbContext _db;
+    private readonly ICurrentUser _current;
+    private readonly IReportExportService _export;
+
+    public ReportsController(AppDbContext db, ICurrentUser current, IReportExportService export)
+    {
+        _db = db; _current = current; _export = export;
+    }
+
+    private IActionResult? Deny(string action) =>
+        _current.HasPermission($"Report.{action}") ? null
+            : StatusCode(403, new { message = $"You do not have 'Report.{action}' permission." });
+
+    private bool IsFarmerOnly =>
+        (_current.Role ?? "").Split(',').All(r => r is "Farmer" or "") && (_current.Role ?? "") != "";
+
+    private static string ActionFor(string format) => format switch { "pdf" => "Print", "excel" => "Export", _ => "View" };
+
+    private static IActionResult? ValidateFormat(string format) =>
+        format is "json" or "pdf" or "excel" ? null : new BadRequestObjectResult(new { message = "format must be json, pdf or excel." });
+
+    private IActionResult ExportFile(string reportName, string format, string title, string subtitle,
+        List<string> headers, List<List<string>> rows, List<(string Label, string Value)> totals)
+    {
+        if (format == "pdf")
+            return File(_export.ToPdf(title, subtitle, headers, rows, totals), "application/pdf", $"{reportName}.pdf");
+        return File(_export.ToExcel(title, headers, rows, totals), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"{reportName}.xlsx");
+    }
+
+    // ---------------------------------------------------------------- PURCHASES
+    /// <summary>Covers Daily Weighment/Purchase, Gross/Tare/Net, Village-wise, Grower-wise,
+    /// Date-range, Rate-wise, Variety-wise, Vehicle-wise, Pending Payment and Lock reports -
+    /// all are this same dataset filtered/sorted differently by the caller.</summary>
+    [HttpGet("purchases")]
+    public async Task<IActionResult> Purchases(
+        [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate, [FromQuery] int? villageId,
+        [FromQuery] string? growerCode, [FromQuery] int? varietyTypeId, [FromQuery] int? varietyId,
+        [FromQuery] int? vehicleTypeId, [FromQuery] decimal? rateMin, [FromQuery] decimal? rateMax,
+        [FromQuery] string? paymentStatus, [FromQuery] string? lockStatus, [FromQuery] string? grossTareStatus,
+        [FromQuery] string sortBy = "grossDateTime", [FromQuery] bool desc = true,
+        [FromQuery] string format = "json", [FromQuery] int page = 1, [FromQuery] int pageSize = 100)
+    {
+        if (Deny(ActionFor(format)) is { } d) return d;
+        if (ValidateFormat(format) is { } fe) return fe;
+
+        var q = _db.Purchases.Where(p => !p.IsDeleted);
+        if (IsFarmerOnly)
+        {
+            var user = await _db.Users.AsNoTracking().FirstAsync(u => u.Id == _current.UserId);
+            q = q.Where(p => p.Grower.Mobile == user.Mobile);
+        }
+        else if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(p => p.GrowerCode == growerCode.Trim());
+        if (villageId.HasValue) q = q.Where(p => p.VillageId == villageId);
+        if (fromDate.HasValue) q = q.Where(p => p.GrossDateTime >= fromDate);
+        if (toDate.HasValue) q = q.Where(p => p.GrossDateTime <= toDate);
+        if (varietyTypeId.HasValue) q = q.Where(p => p.VarietyTypeId == varietyTypeId);
+        if (varietyId.HasValue) q = q.Where(p => p.VarietyId == varietyId);
+        if (vehicleTypeId.HasValue) q = q.Where(p => p.VehicleTypeId == vehicleTypeId);
+        if (rateMin.HasValue) q = q.Where(p => p.Rate >= rateMin);
+        if (rateMax.HasValue) q = q.Where(p => p.Rate <= rateMax);
+        if (!string.IsNullOrWhiteSpace(paymentStatus)) q = q.Where(p => p.PaymentStatus == paymentStatus);
+        if (!string.IsNullOrWhiteSpace(lockStatus)) q = q.Where(p => p.LockStatus == lockStatus);
+        if (!string.IsNullOrWhiteSpace(grossTareStatus)) q = q.Where(p => p.GrossTareStatus == grossTareStatus);
+
+        q = sortBy switch
+        {
+            "villageName" => desc ? q.OrderByDescending(p => p.Grower.Village.VillageName) : q.OrderBy(p => p.Grower.Village.VillageName),
+            "growerName" => desc ? q.OrderByDescending(p => p.Grower.GrowerName) : q.OrderBy(p => p.Grower.GrowerName),
+            "varietyName" => desc ? q.OrderByDescending(p => p.Variety.VarietyName) : q.OrderBy(p => p.Variety.VarietyName),
+            "vehicleNumber" => desc ? q.OrderByDescending(p => p.VehicleNumber) : q.OrderBy(p => p.VehicleNumber),
+            "rate" => desc ? q.OrderByDescending(p => p.Rate) : q.OrderBy(p => p.Rate),
+            _ => desc ? q.OrderByDescending(p => p.GrossDateTime) : q.OrderBy(p => p.GrossDateTime)
+        };
+
+        var totalCount = await q.CountAsync();
+        var totalFinalWeight = (await q.Where(p => p.FinalWeightQuintal != null).Select(p => p.FinalWeightQuintal).ToListAsync()).Sum(x => x ?? 0);
+        var totalPurchaseAmount = (await q.Where(p => p.PurchaseAmount != null).Select(p => p.PurchaseAmount).ToListAsync()).Sum(x => x ?? 0);
+
+        var projected = q.Select(p => new PurchaseReportRow
+        {
+            PurchaseId = p.Id, GrowerCode = p.GrowerCode, GrowerName = p.Grower.GrowerName,
+            VillageName = p.Grower.Village.VillageName, VehicleNumber = p.VehicleNumber, VarietyName = p.Variety.VarietyName,
+            GrossWeightQuintal = p.GrossWeightQuintal, GrossDateTime = p.GrossDateTime,
+            TareWeightQuintal = p.TareWeightQuintal, NetWeightQuintal = p.NetWeightQuintal, FinalWeightQuintal = p.FinalWeightQuintal,
+            Rate = p.Rate, PurchaseAmount = p.PurchaseAmount, GrossTareStatus = p.GrossTareStatus,
+            PaymentStatus = p.PaymentStatus, LockStatus = p.LockStatus
+        });
+
+        var totals = new List<(string, string)>
+        {
+            ("Total Vehicles", totalCount.ToString()),
+            ("Total Final Weight (Qtl)", totalFinalWeight.ToString("F2")),
+            ("Total Purchase Amount (Rs)", totalPurchaseAmount.ToString("F2"))
+        };
+
+        if (format == "json")
+        {
+            var items = await projected.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+            return Ok(new { items, totalCount, page, pageSize, totals = new { totalCount, totalFinalWeight, totalPurchaseAmount } });
+        }
+
+        var rows = await projected.Take(5000).ToListAsync();
+        var headers = new List<string> { "Purchase ID", "Grower Code", "Grower Name", "Village", "Vehicle No", "Variety",
+            "Gross (Qtl)", "Gross Date", "Tare (Qtl)", "Net (Qtl)", "Final (Qtl)", "Rate", "Amount (Rs)", "Weighment Status", "Payment Status", "Lock Status" };
+        var tableRows = rows.Select(r => new List<string> {
+            r.PurchaseId.ToString(), r.GrowerCode, r.GrowerName, r.VillageName, r.VehicleNumber, r.VarietyName,
+            r.GrossWeightQuintal.ToString("F2"), r.GrossDateTime.ToString("dd-MM-yyyy HH:mm"),
+            r.TareWeightQuintal?.ToString("F2") ?? "-", r.NetWeightQuintal?.ToString("F2") ?? "-",
+            r.FinalWeightQuintal?.ToString("F2") ?? "-", r.Rate.ToString("F2"), r.PurchaseAmount?.ToString("F2") ?? "-",
+            r.GrossTareStatus, r.PaymentStatus, r.LockStatus
+        }).ToList();
+        return ExportFile("Purchase-Report", format, "Purchase / Weighment Report",
+            $"Generated by {_current.Username} on {DateTime.UtcNow:dd-MM-yyyy HH:mm} UTC", headers, tableRows, totals);
+    }
+
+    // ---------------------------------------------------------------- PAYMENTS
+    /// <summary>Covers the Payment report and the Cancel report (status=CANCELLED).</summary>
+    [HttpGet("payments")]
+    public async Task<IActionResult> Payments(
+        [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate, [FromQuery] int? villageId,
+        [FromQuery] string? growerCode, [FromQuery] int? paymentModeId, [FromQuery] string? status,
+        [FromQuery] string format = "json", [FromQuery] int page = 1, [FromQuery] int pageSize = 100)
+    {
+        if (Deny(ActionFor(format)) is { } d) return d;
+        if (ValidateFormat(format) is { } fe) return fe;
+
+        var q = _db.Payments.Where(p => !p.IsDeleted);
+        if (IsFarmerOnly)
+        {
+            var user = await _db.Users.AsNoTracking().FirstAsync(u => u.Id == _current.UserId);
+            q = q.Where(p => p.Grower.Mobile == user.Mobile);
+        }
+        else if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(p => p.GrowerCode == growerCode.Trim());
+        if (villageId.HasValue) q = q.Where(p => p.VillageId == villageId);
+        if (fromDate.HasValue) q = q.Where(p => p.PaymentDate >= fromDate);
+        if (toDate.HasValue) q = q.Where(p => p.PaymentDate <= toDate);
+        if (paymentModeId.HasValue) q = q.Where(p => p.PaymentModeId == paymentModeId);
+        if (!string.IsNullOrWhiteSpace(status)) q = q.Where(p => p.PaymentStatus == status);
+        q = q.OrderByDescending(p => p.Id);
+
+        var pCount = await q.CountAsync();
+        var pAmounts = await q.Select(p => new { p.TotalPurchaseAmount, p.LoanDeductedAmount, p.NetPayableAmount }).ToListAsync();
+        var pTotal = pAmounts.Sum(p => p.TotalPurchaseAmount);
+        var pDeducted = pAmounts.Sum(p => p.LoanDeductedAmount);
+        var pNet = pAmounts.Sum(p => p.NetPayableAmount);
+        var totals = new List<(string, string)>
+        {
+            ("Total Payments", pCount.ToString()),
+            ("Total Purchase Amount (Rs)", pTotal.ToString("F2")),
+            ("Total Loan Deducted (Rs)", pDeducted.ToString("F2")),
+            ("Total Net Payable (Rs)", pNet.ToString("F2"))
+        };
+
+        var projected = q.Select(p => new PaymentReportRow
+        {
+            PaymentId = p.Id, AdviceNumber = p.AdviceNumber, GrowerCode = p.GrowerCode, GrowerName = p.Grower.GrowerName,
+            VillageName = p.Grower.Village.VillageName, TotalPurchaseAmount = p.TotalPurchaseAmount,
+            LoanDeductedAmount = p.LoanDeductedAmount, NetPayableAmount = p.NetPayableAmount,
+            PaymentModeName = p.PaymentMode.ModeName, PaymentDate = p.PaymentDate, PaidByUserName = p.PaidByUserName,
+            PaymentStatus = p.PaymentStatus
+        });
+
+        if (format == "json")
+        {
+            var items = await projected.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+            return Ok(new { items, totalCount = pCount, page, pageSize, totals = new { count = pCount, total = pTotal, deducted = pDeducted, net = pNet } });
+        }
+
+        var rows = await projected.Take(5000).ToListAsync();
+        var headers = new List<string> { "Payment ID", "Advice No", "Grower Code", "Grower Name", "Village",
+            "Total Purchase (Rs)", "Loan Deducted (Rs)", "Net Payable (Rs)", "Payment Mode", "Payment Date", "Paid By", "Status" };
+        var tableRows = rows.Select(r => new List<string> {
+            r.PaymentId.ToString(), r.AdviceNumber.ToString(), r.GrowerCode, r.GrowerName, r.VillageName,
+            r.TotalPurchaseAmount.ToString("F2"), r.LoanDeductedAmount.ToString("F2"), r.NetPayableAmount.ToString("F2"),
+            r.PaymentModeName, r.PaymentDate.ToString("dd-MM-yyyy HH:mm"), r.PaidByUserName, r.PaymentStatus
+        }).ToList();
+        return ExportFile("Payment-Report", format, "Payment Report",
+            $"Generated by {_current.Username} on {DateTime.UtcNow:dd-MM-yyyy HH:mm} UTC", headers, tableRows, totals);
+    }
+
+    // ---------------------------------------------------------------- LOANS
+    /// <summary>Covers the Loan report and the Cancel report (status=CANCELLED).</summary>
+    [HttpGet("loans")]
+    public async Task<IActionResult> Loans(
+        [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate, [FromQuery] int? villageId,
+        [FromQuery] string? growerCode, [FromQuery] int? loanTypeId, [FromQuery] string? status,
+        [FromQuery] string format = "json", [FromQuery] int page = 1, [FromQuery] int pageSize = 100)
+    {
+        if (Deny(ActionFor(format)) is { } d) return d;
+        if (ValidateFormat(format) is { } fe) return fe;
+
+        var q = _db.Loans.Where(l => !l.IsDeleted);
+        if (IsFarmerOnly)
+        {
+            var user = await _db.Users.AsNoTracking().FirstAsync(u => u.Id == _current.UserId);
+            q = q.Where(l => l.Grower.Mobile == user.Mobile);
+        }
+        else if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(l => l.GrowerCode == growerCode.Trim());
+        if (villageId.HasValue) q = q.Where(l => l.VillageId == villageId);
+        if (fromDate.HasValue) q = q.Where(l => l.IssueDate >= fromDate);
+        if (toDate.HasValue) q = q.Where(l => l.IssueDate <= toDate);
+        if (loanTypeId.HasValue) q = q.Where(l => l.LoanTypeId == loanTypeId);
+        if (!string.IsNullOrWhiteSpace(status)) q = q.Where(l => l.LoanStatus == status);
+        q = q.OrderByDescending(l => l.Id);
+
+        var lCount = await q.CountAsync();
+        var lAmounts = await q.Select(l => new { l.LoanAmount, l.RecoveredAmount, l.OutstandingAmount }).ToListAsync();
+        var lAmount = lAmounts.Sum(l => l.LoanAmount);
+        var lRecovered = lAmounts.Sum(l => l.RecoveredAmount);
+        var lOutstanding = lAmounts.Sum(l => l.OutstandingAmount);
+        var totals = new List<(string, string)>
+        {
+            ("Total Loans", lCount.ToString()),
+            ("Total Loan Amount (Rs)", lAmount.ToString("F2")),
+            ("Total Recovered (Rs)", lRecovered.ToString("F2")),
+            ("Total Outstanding (Rs)", lOutstanding.ToString("F2"))
+        };
+
+        var projected = q.Select(l => new LoanReportRow
+        {
+            LoanId = l.Id, GrowerCode = l.GrowerCode, GrowerName = l.Grower.GrowerName, VillageName = l.Grower.Village.VillageName,
+            LoanTypeName = l.LoanType.LoanTypeName, LoanAmount = l.LoanAmount, RecoveredAmount = l.RecoveredAmount,
+            OutstandingAmount = l.OutstandingAmount, IssueDate = l.IssueDate, IssuedByUserName = l.IssuedByUserName, LoanStatus = l.LoanStatus
+        });
+
+        if (format == "json")
+        {
+            var items = await projected.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+            return Ok(new { items, totalCount = lCount, page, pageSize, totals = new { count = lCount, amount = lAmount, recovered = lRecovered, outstanding = lOutstanding } });
+        }
+
+        var rows = await projected.Take(5000).ToListAsync();
+        var headers = new List<string> { "Loan ID", "Grower Code", "Grower Name", "Village", "Loan Type",
+            "Loan Amount (Rs)", "Recovered (Rs)", "Outstanding (Rs)", "Issue Date", "Issued By", "Status" };
+        var tableRows = rows.Select(r => new List<string> {
+            r.LoanId.ToString(), r.GrowerCode, r.GrowerName, r.VillageName, r.LoanTypeName,
+            r.LoanAmount.ToString("F2"), r.RecoveredAmount.ToString("F2"), r.OutstandingAmount.ToString("F2"),
+            r.IssueDate.ToString("dd-MM-yyyy"), r.IssuedByUserName, r.LoanStatus
+        }).ToList();
+        return ExportFile("Loan-Report", format, "Loan Report",
+            $"Generated by {_current.Username} on {DateTime.UtcNow:dd-MM-yyyy HH:mm} UTC", headers, tableRows, totals);
+    }
+
+    // ---------------------------------------------------------------- DAILY COLLECTION
+    [HttpGet("daily-collection")]
+    public async Task<IActionResult> DailyCollection(
+        [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate, [FromQuery] int? villageId,
+        [FromQuery] string format = "json")
+    {
+        if (Deny(ActionFor(format)) is { } d) return d;
+        if (ValidateFormat(format) is { } fe) return fe;
+
+        var q = _db.Purchases.Where(p => !p.IsDeleted && p.GrossTareStatus != "CANCELLED");
+        if (IsFarmerOnly)
+        {
+            var user = await _db.Users.AsNoTracking().FirstAsync(u => u.Id == _current.UserId);
+            q = q.Where(p => p.Grower.Mobile == user.Mobile);
+        }
+        if (villageId.HasValue) q = q.Where(p => p.VillageId == villageId);
+        if (fromDate.HasValue) q = q.Where(p => p.GrossDateTime >= fromDate);
+        if (toDate.HasValue) q = q.Where(p => p.GrossDateTime <= toDate);
+
+        var flat = await q.Select(p => new { p.GrossDateTime, p.FinalWeightQuintal, p.PurchaseAmount }).ToListAsync();
+        var rows = flat.GroupBy(p => p.GrossDateTime.Date)
+            .Select(g => new DailyCollectionRow
+            {
+                Date = g.Key,
+                VehicleCount = g.Count(),
+                FinalWeightQuintal = g.Sum(p => p.FinalWeightQuintal ?? 0),
+                PurchaseAmount = g.Sum(p => p.PurchaseAmount ?? 0)
+            }).OrderBy(r => r.Date).ToList();
+
+        var totalVehicles = rows.Sum(r => r.VehicleCount);
+        var totalFinalWeight = rows.Sum(r => r.FinalWeightQuintal);
+        var totalPurchaseAmount = rows.Sum(r => r.PurchaseAmount);
+        var totals = new List<(string, string)>
+        {
+            ("Total Vehicles", totalVehicles.ToString()),
+            ("Total Final Weight (Qtl)", totalFinalWeight.ToString("F2")),
+            ("Total Purchase Amount (Rs)", totalPurchaseAmount.ToString("F2"))
+        };
+
+        if (format == "json")
+            return Ok(new { rows, totals = new { totalVehicles, totalFinalWeight, totalPurchaseAmount } });
+
+        var headers = new List<string> { "Date", "Vehicle Count", "Final Weight (Qtl)", "Purchase Amount (Rs)" };
+        var tableRows = rows.Select(r => new List<string> {
+            r.Date.ToString("dd-MM-yyyy"), r.VehicleCount.ToString(), r.FinalWeightQuintal.ToString("F2"), r.PurchaseAmount.ToString("F2")
+        }).ToList();
+        return ExportFile("Daily-Collection-Report", format, "Daily Collection Report",
+            $"Generated by {_current.Username} on {DateTime.UtcNow:dd-MM-yyyy HH:mm} UTC", headers, tableRows, totals);
+    }
+}

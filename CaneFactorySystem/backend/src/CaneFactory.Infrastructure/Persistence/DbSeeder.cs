@@ -57,10 +57,11 @@ public static class DbSeeder
         admin.AddRange(Codes(new[] { "Audit" }, "View"));
         admin.AddRange(Codes(new[] { "Dashboard", "Health", "UserGuide" }, "View"));
         admin.AddRange(Codes(new[] { "Company", "Season" }, "Configure"));
+        admin.AddRange(Codes(new[] { "Backup" }, "View", "Configure"));
 
         var subAdmin = Codes(Modules.Masters, "View", "Create", "Edit");
         subAdmin.AddRange(Codes(new[] { "Purchase", "Weighment", "Report" }, "View"));
-        subAdmin.AddRange(new[] { "Report.Export", "Report.Print", "Dashboard.View", "Health.View", "UserGuide.View", "Camera.ViewCamera" });
+        subAdmin.AddRange(new[] { "Report.Export", "Report.Print", "Dashboard.View", "Health.View", "UserGuide.View", "Camera.ViewCamera", "Backup.View" });
 
         var accountant = Codes(new[] { "Loan", "LoanRecovery" }, "View", "Create", "Cancel", "Reverse", "Export", "Print");
         accountant.AddRange(Codes(new[] { "Payment" }, "View", "Create", "Pay", "Cancel", "Reverse", "Export", "Print"));
@@ -271,6 +272,10 @@ public static class DbSeeder
                 new SmsTemplate { EventCode = "PAYMENT_COMPLETED", Language = "en",
                     MessageTemplate = "Dear {GrowerName}, your payment is complete. Advice No: {AdviceNumber}, Total: Rs {TotalPurchaseAmount}, Loan Deducted: Rs {LoanDeducted}, Net Payable: Rs {NetPayable} ({PaymentMode})." });
         }
+
+        if (!await db.BackupConfigs.AnyAsync())
+            db.BackupConfigs.Add(new BackupConfig());
+
         await db.SaveChangesAsync();
     }
 

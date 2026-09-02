@@ -59,7 +59,7 @@ real environment variables (System Properties → Environment Variables, or a la
 | `CANE_DB_PROVIDER` | `SqlServer` | `SqlServer` (production) or `Sqlite` (dev containers only) |
 | `CANE_CONNECTION_STRING` | `Server=localhost\SQLEXPRESS;Database=CaneFactoryDb;User Id=canefactory_app;Password=***;TrustServerCertificate=True;Encrypt=True` | EF Core connection |
 | `CANE_JWT_SECRET` | 64+ random chars | JWT signing key |
-| `CANE_ENCRYPTION_KEY` | 64+ random chars | AES-256-GCM key for stored secrets (SMS/Razorpay/camera credentials, Aadhaar) |
+| `CANE_ENCRYPTION_KEY` | 64+ random chars | AES-256-GCM key for stored secrets (SMS/camera credentials, Aadhaar) |
 | `CANE_SEED_DEV_PASSWORD` | temporary password | Initial developer account (forced change at first login) |
 | `ASPNETCORE_URLS` | `http://localhost:5000` | API listen address |
 
@@ -112,7 +112,7 @@ On Web, secure storage uses WebCrypto — use HTTPS in production.
 3. **Windows weighbridge app**: `flutter build windows --release --dart-define=API_BASE_URL=https://factory-server:5001`,
    copy `build\windows\x64\runner\Release\` to operator PCs.
 4. **Offline-first**: Gross/Tare/live weight/printing/local DB all run on the factory LAN with no
-   internet. Only SMS, Razorpay and remote web/mobile access require internet.
+   internet. Only SMS and remote web/mobile access require internet.
 5. **Storage root**: default `D:\CanePaymentData\` (configurable in System Settings). Images are stored
    on disk with metadata in SQL — never as database BLOBs.
 6. Configure backups per `docs/BACKUP_GUIDE.md` and review `docs/SECURITY_CHECKLIST.md` before go-live.
@@ -123,4 +123,4 @@ On Web, secure storage uses WebCrypto — use HTTPS in production.
 - **Printer (TVS MSP 270 / A4)** → `docs/PRINTER_GUIDE.md`
 - **IP cameras** → `docs/CAMERA_GUIDE.md`
 - **SMS provider** → `docs/SMS_GUIDE.md`
-- **RazorpayX** → `docs/RAZORPAY_GUIDE.md`
+- **Automated backups (Phase 13)** → `docs/BACKUP_GUIDE.md`

@@ -1,4 +1,4 @@
-# API DOCUMENTATION — CaneFactory API (Phases 1–5)
+# API DOCUMENTATION — CaneFactory API (Phases 1–14, final)
 
 Base URL: `http(s)://<server>:<port>` — all business endpoints under `/api`. Interactive docs at `/swagger`.
 Auth: `Authorization: Bearer <accessToken>`. 401 = unauthenticated, 403 = missing permission.
@@ -85,8 +85,59 @@ GET list/detail (Farmer sees own only), POST /{id}/lock, /{id}/unlock, /{id}/can
 
 ## Configuration (`/api/config`) — Developer
 weight-rules (GET/PUT), sound (GET/PUT) + sound/messages/{id} (PUT), cameras (GET/POST) +
-cameras/{id}/test (POST), print (GET/PUT), sms (GET/PUT), razorpay (GET/PUT), company (GET/PUT),
+cameras/{id}/test (POST), print (GET/PUT), sms (GET/PUT), company (GET/PUT),
 settings (GET) + settings/{key} (PUT). Secrets always stored encrypted, never returned.
+
+## Loans & Recovery (Phase 8) — Loan.* / LoanRecovery.*
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST | /api/loan-types, /api/loans | Interest-free; auto-computed OutstandingAmount |
+| GET | /api/loans/outstanding?growerCode= | Used by Payment auto-deduction |
+| POST | /api/loans/{id}/cancel | Blocked once any recovery exists |
+| GET/POST | /api/loan-recovery | Manual recovery; `POST /{id}/reverse` |
+
+## Payments & Advice (Phase 9) — Payment.* / CashEvidence.*
+| Method | Path | Notes |
+|---|---|---|
+| GET | /api/payments/eligible?growerCode= | Eligible unpaid Purchases + outstanding loan preview |
+| POST | /api/payments | Cash/Bank/Mobile UPI only (no online gateway); auto-deducts outstanding loans via LoanRecovery |
+| POST | /api/payments/{id}/cancel | Reverses any auto-created LoanRecovery rows |
+| POST | /api/payments/{id}/cash-evidence | Camera-captured evidence photo, CASH mode only |
+
+## SMS Notifications (Phase 10) — Sms.*
+| Method | Path | Notes |
+|---|---|---|
+| GET/PUT | /api/config/sms | Generic HTTP provider (any DLT-compatible gateway), Hindi default |
+| GET/POST/PUT | /api/sms/templates | Per-event, per-language templates with `{Placeholder}` tokens |
+| GET | /api/sms-logs | Sms.View — delivery status per queued message |
+
+## Reports (Phase 11) — Report.* — every endpoint takes `format=json\|pdf\|excel`
+| Method | Path | Covers | Filters |
+|---|---|---|---|
+| GET | /api/reports/purchases | Daily Weighment, Gross/Tare/Net, Village-wise, Grower-wise, Date-range, Rate-wise, Variety-wise, Vehicle-wise, Pending Payment, Lock report | fromDate,toDate,villageId,growerCode,varietyTypeId,varietyId,vehicleTypeId,rateMin,rateMax,paymentStatus,lockStatus,grossTareStatus,sortBy,desc |
+| GET | /api/reports/payments | Payment report + Cancel report | fromDate,toDate,villageId,growerCode,paymentModeId,status |
+| GET | /api/reports/loans | Loan report + Cancel report | fromDate,toDate,villageId,growerCode,loanTypeId,status |
+| GET | /api/reports/daily-collection | Daily Collection report (date-grouped totals) | fromDate,toDate,villageId |
+
+`format=json` requires `Report.View`; `format=pdf` requires `Report.Print`; `format=excel` requires
+`Report.Export`. Farmer role is automatically scoped to its own Grower's rows on every report.
+The pre-existing `GET /api/audit` (Audit.View) also accepts these filters and satisfies the Audit report.
+
+## Farmer Portal (Phase 12) — no extra permission; scoped server-side to caller's own Grower
+| Method | Path | Notes |
+|---|---|---|
+| GET | /api/farmer/dashboard | Profile + purchase/payment/loan summary + last 5 of each; 404 if the account's mobile has no matching Grower |
+| GET | /api/farmer/statement?fromDate=&toDate=&format=json\|pdf\|excel | Combined Purchase+Payment+Loan ledger ("passbook") |
+
+## Security, Backup & Health (Phase 13)
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | /api/health | anonymous | Liveness/readiness probe for ops monitoring (DB connectivity) |
+| GET | /api/dashboard/health | Health.View | Role-aware in-app health panel |
+| GET/PUT | /api/backup/config | Backup.View / Backup.Configure | Frequency/TimeOfDay/RetentionDays/Folder policy (single row) |
+| GET | /api/backup/script | Backup.Configure | Generates the FULL+DIFF+LOG `.sql` backup script from the policy |
+| GET | /api/backup/task-scheduler-xml | Backup.Configure | Windows Task Scheduler XML to run the script without SQL Agent |
+Every 401/403 API response is written to the Audit log automatically (`SecurityAuditMiddleware`).
 
 ## Dashboard, Audit, Guide
 | Path | Permission | Notes |
@@ -96,7 +147,7 @@ settings (GET) + settings/{key} (PUT). Secrets always stored encrypted, never re
 | GET /api/dashboard/health | Health.View | **Role-aware** health items (Green/Yellow/Red) |
 | GET /api/audit | Audit.View | Filters: module/action/username/date, paged |
 | GET /api/user-guide | UserGuide.View | Only the caller's role guides |
-| GET /api/ping | anonymous | Liveness |
+| GET /api/ping, /api/health | anonymous | Liveness |
 
 ## Real-time
 SignalR hub `/hubs/weight` (JWT via `access_token` query param) — event `liveWeight`:

@@ -22,7 +22,7 @@
 - [x] Frontend hides unauthorized buttons/menus, but is explicitly NOT the security boundary
 
 ## Data Protection
-- [x] AES-256-GCM encryption for stored secrets: SMS keys, Razorpay secrets, camera passwords, Aadhaar
+- [x] AES-256-GCM encryption for stored secrets: SMS keys, camera passwords, Aadhaar
 - [x] Aadhaar: encrypted at rest, unique via SHA-256 hash, only masked (XXXX-XXXX-1234) ever returned, never in reports
 - [x] Bank account numbers masked in all list/lookup responses
 - [x] Secrets from environment variables only; `.env.example` has placeholders; no secrets in Git
@@ -57,4 +57,10 @@
 ## Pending (later phases)
 - [ ] File-upload validation pipeline (MIME/magic-bytes/decode/size/traversal/malware hook) — Phase 6 with camera capture
 - [ ] Dependency vulnerability scanning in CI (`dotnet list package --vulnerable`, `flutter pub outdated`) — Phase 13/14
-- [ ] Razorpay webhook signature verification — Phase 10 (architecture ready)
+
+## Phase 13 additions (Security, Backup & Health)
+- [x] `SecurityAuditMiddleware` logs every 401/403 API response (unauthenticated + permission-denied) to the audit log
+- [x] Public unauthenticated `/api/health` liveness probe, separate from the role-aware in-app `/api/dashboard/health`
+- [x] `BackupConfig` (Frequency/TimeOfDay/RetentionDays/Folder) + generated FULL+DIFF+LOG `.sql` script and Windows
+      Task Scheduler XML — SQL Server 2019 Express has no SQL Agent, so scheduling happens via `schtasks`/Task Scheduler
+- [x] Online payment gateway permanently removed (Cash/Bank/Mobile UPI only) — no Razorpay code, config or docs remain

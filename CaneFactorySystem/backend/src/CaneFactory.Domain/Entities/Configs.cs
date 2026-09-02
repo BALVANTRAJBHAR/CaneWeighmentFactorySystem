@@ -87,14 +87,21 @@ public class SmsLog
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
-public class RazorpayConfig : BaseEntity
+/// <summary>Phase 13: automated SQL Server backup schedule/retention configuration (single row).
+/// Actual scheduled execution runs outside the API process via Windows Task Scheduler + sqlcmd
+/// (SQL Server 2019 Express has no SQL Agent) - the API only stores the desired policy and
+/// generates the matching .sql / Task Scheduler XML from it (see BackupController).</summary>
+public class BackupConfig : BaseEntity
 {
-    public bool Enabled { get; set; }
-    public string Mode { get; set; } = "Test";
-    public string? KeyIdEncrypted { get; set; }
-    public string? KeySecretEncrypted { get; set; }
-    public string? WebhookSecretEncrypted { get; set; }
-    public string? AccountNumber { get; set; }
+    public bool Enabled { get; set; } = true;
+    public string Frequency { get; set; } = "Daily"; // Daily | Hourly | Weekly
+    public string TimeOfDay { get; set; } = "02:00"; // HH:mm (24h), used for Daily/Weekly FULL backup
+    public int RetentionDays { get; set; } = 14;
+    public string BackupFolderPath { get; set; } = @"E:\Backup";
+    public bool DifferentialEnabled { get; set; } = true;
+    public int DifferentialIntervalHours { get; set; } = 4;
+    public bool TransactionLogEnabled { get; set; } = true;
+    public int TransactionLogIntervalMinutes { get; set; } = 30;
 }
 
 public class SystemSetting

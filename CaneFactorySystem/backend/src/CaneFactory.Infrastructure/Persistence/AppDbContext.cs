@@ -52,7 +52,7 @@ public class AppDbContext : DbContext
     public DbSet<SmsConfig> SmsConfigs => Set<SmsConfig>();
     public DbSet<SmsTemplate> SmsTemplates => Set<SmsTemplate>();
     public DbSet<SmsLog> SmsLogs => Set<SmsLog>();
-    public DbSet<RazorpayConfig> RazorpayConfigs => Set<RazorpayConfig>();
+    public DbSet<BackupConfig> BackupConfigs => Set<BackupConfig>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<NumberSequence> NumberSequences => Set<NumberSequence>();
 

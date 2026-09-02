@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CaneFactory.API.Controllers;
 
-/// <summary>Developer configuration: weight rules, sound/TTS, cameras, print, SMS, Razorpay, company, system settings.
+/// <summary>Developer configuration: weight rules, sound/TTS, cameras, print, SMS, company, system settings.
 /// All secrets are AES-256-GCM encrypted at rest and NEVER returned to any client.</summary>
 [ApiController]
 [Route("api/config")]
@@ -318,40 +318,6 @@ public class ConfigController : ControllerBase
         return Ok(new { success, message = success ? "Test SMS sent successfully." : $"Test SMS failed: {error}" });
     }
 
-    // ---------------------------------------------------------------- RAZORPAY
-    [HasPermission("Razorpay.View")]
-    [HttpGet("razorpay")]
-    public async Task<IActionResult> GetRazorpay()
-    {
-        var r = await _db.RazorpayConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
-        return Ok(r == null ? null : new
-        {
-            r.Id, r.Enabled, r.Mode, r.AccountNumber,
-            HasKeyId = r.KeyIdEncrypted != null, HasKeySecret = r.KeySecretEncrypted != null,
-            HasWebhookSecret = r.WebhookSecretEncrypted != null
-        });
-    }
-
-    [HasPermission("Razorpay.Configure")]
-    [HttpPut("razorpay")]
-    public async Task<IActionResult> UpdateRazorpay([FromBody] RazorpaySaveRequest req)
-    {
-        if (req.Mode is not ("Test" or "Live")) return BadRequest(new { message = "Mode must be Test or Live." });
-        var r = await _db.RazorpayConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
-        var isNew = r == null;
-        r ??= new RazorpayConfig { CreatedBy = _current.UserId };
-        r.Enabled = req.Enabled; r.Mode = req.Mode; r.AccountNumber = req.AccountNumber;
-        if (!string.IsNullOrEmpty(req.KeyId)) r.KeyIdEncrypted = _protector.Protect(req.KeyId);
-        if (!string.IsNullOrEmpty(req.KeySecret)) r.KeySecretEncrypted = _protector.Protect(req.KeySecret);
-        if (!string.IsNullOrEmpty(req.WebhookSecret)) r.WebhookSecretEncrypted = _protector.Protect(req.WebhookSecret);
-        if (isNew) _db.RazorpayConfigs.Add(r);
-        else { r.UpdatedAt = DateTime.UtcNow; r.UpdatedBy = _current.UserId; }
-        await _db.SaveChangesAsync();
-        await _audit.LogAsync("RazorpayEvent", "Razorpay", "RazorpayConfig", r.Id.ToString(),
-            newValue: new { r.Enabled, r.Mode });
-        return Ok(new { message = $"Razorpay configuration saved ({r.Mode} mode). Secrets stored encrypted server-side only." });
-    }
-
     // ---------------------------------------------------------------- COMPANY
     [HasPermission("Company.View")]
     [HttpGet("company")]
@@ -451,12 +417,4 @@ public class SmsTestSendRequest
     public string? Message { get; set; }
 }
 
-public class RazorpaySaveRequest
-{
-    public bool Enabled { get; set; }
-    public string Mode { get; set; } = "Test";
-    public string? KeyId { get; set; }
-    public string? KeySecret { get; set; }
-    public string? WebhookSecret { get; set; }
-    public string? AccountNumber { get; set; }
-}
+

@@ -27,7 +27,7 @@ public class UserGuideController : ControllerBase
     {
         "Printer fails: check power/cable, verify printer name in Print Configuration, use Reprint after fixing. Weighment data is already saved - never re-weigh for a print problem.",
         "Device (digitizer) fails: check RS232/USB cable and COM port, ask Developer to run Test Communication. Do not save weighment without a valid live weight.",
-        "Internet fails: local weighment (Gross/Tare/Print/Camera) continues on factory LAN. Only SMS/Razorpay/remote access pause and resume automatically."
+        "Internet fails: local weighment (Gross/Tare/Print/Camera) continues on factory LAN. Only SMS/remote access pause and resume automatically."
     };
 
     private static readonly Dictionary<string, object> Guides = new()
@@ -38,7 +38,7 @@ public class UserGuideController : ControllerBase
                 "You have full system access: configuration, security, devices, users and all business modules.",
                 "First login uses the temporary password - the system forces a password change immediately." }),
             new Section("2. Dashboard", new[]{
-                "Header shows Company, Date/Time, your name/role, and full system health (CPU/RAM/Storage/DB/Digitizer/Cameras/Printer/SMS/Razorpay).",
+                "Header shows Company, Date/Time, your name/role, and full system health (CPU/RAM/Storage/DB/Digitizer/Cameras/Printer/SMS/Backup).",
                 "Green=Normal, Yellow=Warning, Red=Critical. Thresholds are configurable under System Settings." }),
             new Section("3. Device Configuration (Digitizer)", new[]{
                 "Developer Dashboard → Weighing Device: set COM Port, Baud Rate (2400 for supplied indicator), Parity=None, Data Bits=8, Stop Bits=1, Flow Control=None.",
@@ -50,12 +50,14 @@ public class UserGuideController : ControllerBase
                 "Configure Minimum Weight (Quintal), apply-to flags for Gross/Tare/CanePurchase/SalePurchase.",
                 "Sound Configuration: language (Hindi/English), volume, speech rate, repeat mode (OFF/ONCE/TWICE/CONTINUOUS) and interval.",
                 "Edit announcement text per event: Below Minimum, Weighing Active, Weighment Completed." }),
-            new Section("5. Camera / SMS / Razorpay / Printing / Storage / Backup", new[]{
+            new Section("5. Camera / SMS / Reports / Farmer Portal / Backup", new[]{
                 "Cameras 1-6: vendor (Hikvision/CP Plus/Dahua/Uniview/ONVIF/RTSP), IP, port, credentials (stored encrypted), capture & live-view switches.",
                 "Global switches: CameraSystemEnabled and ImageCaptureEnabled control all transaction captures.",
                 "SMS: generic HTTP provider - API URL, key/secret (encrypted), sender ID, DLT templates. Test before enabling.",
-                "Razorpay: Test/Live mode, Key ID/Secret/Webhook Secret (encrypted, server-side only).",
+                "Reports: Purchase/Payment/Loan/Daily Collection - filter by date/village/grower, view totals, Print (PDF) or Export (Excel).",
+                "Farmer Portal: farmers get a read-only My Dashboard + Statement, always scoped to their own account only.",
                 "Print: printer type (Dot Matrix/A4), copies per document, Auto Print switch.",
+                "Backup: Frequency/Time/Retention/Folder policy - generates the SQL backup script and Task Scheduler XML for you.",
                 "Storage root default D:\\CanePaymentData - configurable in System Settings. Backup guide is in docs/BACKUP_GUIDE.md." }),
             new Section("6. Security & Users", new[]{
                 "Create Admin first, then other users. No public registration exists.",
@@ -68,7 +70,7 @@ public class UserGuideController : ControllerBase
         {
             new Section("1. Overview", new[]{
                 "You manage business operations: masters, growers, purchases, locking, reports and users.",
-                "Developer-only infrastructure (device/SMS/Razorpay credentials) is not visible to you by design." }),
+                "Developer-only infrastructure (device/SMS/backup credentials) is not visible to you by design." }),
             new Section("2. Masters", new[]{
                 "Maintain Zone → Village → Grower hierarchy. Village IDs start at 101; grower codes are VillageId/Sequence (e.g. 101/1).",
                 "All masters validate duplicates server-side; soft delete only - business-critical records with transactions cannot be deleted.",

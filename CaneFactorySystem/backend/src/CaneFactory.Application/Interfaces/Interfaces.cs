@@ -103,3 +103,14 @@ public interface ISmsService
     Task<bool> QueueAsync(string eventCode, int growerId, string mobileNumber, string referenceId,
         Dictionary<string, string> placeholders);
 }
+
+/// <summary>Phase 11: generic tabular PDF/Excel renderer shared by every report endpoint. Never tied
+/// to one report's shape - callers pass plain headers + string rows + optional totals.</summary>
+public interface IReportExportService
+{
+    byte[] ToPdf(string title, string? subtitle, List<string> headers, List<List<string>> rows,
+        List<(string Label, string Value)>? totals = null);
+
+    byte[] ToExcel(string title, List<string> headers, List<List<string>> rows,
+        List<(string Label, string Value)>? totals = null);
+}

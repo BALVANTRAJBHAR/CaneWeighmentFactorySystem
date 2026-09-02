@@ -1308,3 +1308,614 @@ GO
 COMMIT;
 GO
 
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901112400_AddPurchasePrintCounts'
+)
+BEGIN
+    ALTER TABLE [Purchases] ADD [GrossPrintCount] int NOT NULL DEFAULT 0;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901112400_AddPurchasePrintCounts'
+)
+BEGIN
+    ALTER TABLE [Purchases] ADD [TarePrintCount] int NOT NULL DEFAULT 0;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901112400_AddPurchasePrintCounts'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260901112400_AddPurchasePrintCounts', N'8.0.11');
+END;
+GO
+
+COMMIT;
+GO
+
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    CREATE TABLE [LoanTypes] (
+        [Id] int NOT NULL IDENTITY,
+        [LoanTypeName] nvarchar(450) NOT NULL,
+        [Description] nvarchar(max) NULL,
+        [CreatedAt] datetime2 NOT NULL,
+        [CreatedBy] int NULL,
+        [UpdatedAt] datetime2 NULL,
+        [UpdatedBy] int NULL,
+        [Status] bit NOT NULL,
+        [IsDeleted] bit NOT NULL,
+        [DeletedAt] datetime2 NULL,
+        [DeletedBy] int NULL,
+        CONSTRAINT [PK_LoanTypes] PRIMARY KEY ([Id])
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    CREATE TABLE [Loans] (
+        [Id] int NOT NULL,
+        [GrowerId] int NOT NULL,
+        [GrowerCode] nvarchar(450) NOT NULL,
+        [VillageId] int NOT NULL,
+        [LoanTypeId] int NOT NULL,
+        [LoanAmount] decimal(14,2) NOT NULL,
+        [RecoveredAmount] decimal(14,2) NOT NULL,
+        [OutstandingAmount] decimal(14,2) NOT NULL,
+        [IssueDate] datetime2 NOT NULL,
+        [IssuedByUserId] int NOT NULL,
+        [IssuedByUserName] nvarchar(max) NOT NULL,
+        [Remarks] nvarchar(max) NULL,
+        [LoanStatus] nvarchar(450) NOT NULL,
+        [SeasonId] int NOT NULL,
+        [PrintCount] int NOT NULL,
+        [CreatedAt] datetime2 NOT NULL,
+        [CreatedBy] int NULL,
+        [UpdatedAt] datetime2 NULL,
+        [UpdatedBy] int NULL,
+        [Status] bit NOT NULL,
+        [IsDeleted] bit NOT NULL,
+        [DeletedAt] datetime2 NULL,
+        [DeletedBy] int NULL,
+        CONSTRAINT [PK_Loans] PRIMARY KEY ([Id]),
+        CONSTRAINT [FK_Loans_Growers_GrowerId] FOREIGN KEY ([GrowerId]) REFERENCES [Growers] ([Id]) ON DELETE NO ACTION,
+        CONSTRAINT [FK_Loans_LoanTypes_LoanTypeId] FOREIGN KEY ([LoanTypeId]) REFERENCES [LoanTypes] ([Id]) ON DELETE NO ACTION,
+        CONSTRAINT [FK_Loans_Seasons_SeasonId] FOREIGN KEY ([SeasonId]) REFERENCES [Seasons] ([Id]) ON DELETE NO ACTION
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    CREATE TABLE [LoanRecoveries] (
+        [Id] int NOT NULL,
+        [LoanId] int NOT NULL,
+        [GrowerId] int NOT NULL,
+        [GrowerCode] nvarchar(450) NOT NULL,
+        [RecoveryAmount] decimal(14,2) NOT NULL,
+        [RecoveryDate] datetime2 NOT NULL,
+        [RecoveredByUserId] int NOT NULL,
+        [RecoveredByUserName] nvarchar(max) NOT NULL,
+        [Remarks] nvarchar(max) NULL,
+        [RecoveryStatus] nvarchar(max) NOT NULL,
+        [PrintCount] int NOT NULL,
+        [CreatedAt] datetime2 NOT NULL,
+        [CreatedBy] int NULL,
+        [UpdatedAt] datetime2 NULL,
+        [UpdatedBy] int NULL,
+        [Status] bit NOT NULL,
+        [IsDeleted] bit NOT NULL,
+        [DeletedAt] datetime2 NULL,
+        [DeletedBy] int NULL,
+        CONSTRAINT [PK_LoanRecoveries] PRIMARY KEY ([Id]),
+        CONSTRAINT [FK_LoanRecoveries_Loans_LoanId] FOREIGN KEY ([LoanId]) REFERENCES [Loans] ([Id]) ON DELETE NO ACTION
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    CREATE INDEX [IX_LoanRecoveries_GrowerCode] ON [LoanRecoveries] ([GrowerCode]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    CREATE INDEX [IX_LoanRecoveries_LoanId] ON [LoanRecoveries] ([LoanId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    CREATE INDEX [IX_Loans_GrowerCode] ON [Loans] ([GrowerCode]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    CREATE INDEX [IX_Loans_GrowerId] ON [Loans] ([GrowerId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    CREATE INDEX [IX_Loans_LoanStatus] ON [Loans] ([LoanStatus]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    CREATE INDEX [IX_Loans_LoanTypeId] ON [Loans] ([LoanTypeId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    CREATE INDEX [IX_Loans_SeasonId] ON [Loans] ([SeasonId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    CREATE UNIQUE INDEX [IX_LoanTypes_LoanTypeName] ON [LoanTypes] ([LoanTypeName]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901125724_AddLoanRecoveryModule'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260901125724_AddLoanRecoveryModule', N'8.0.11');
+END;
+GO
+
+COMMIT;
+GO
+
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    ALTER TABLE [LoanRecoveries] ADD [PaymentId] int NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE TABLE [PaymentImages] (
+        [Id] int NOT NULL IDENTITY,
+        [PaymentId] int NOT NULL,
+        [CameraId] int NOT NULL,
+        [ImageName] nvarchar(max) NOT NULL,
+        [FilePath] nvarchar(max) NOT NULL,
+        [FileHash] nvarchar(max) NULL,
+        [CapturedAt] datetime2 NOT NULL,
+        [CapturedBy] int NULL,
+        [Status] bit NOT NULL,
+        CONSTRAINT [PK_PaymentImages] PRIMARY KEY ([Id])
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE TABLE [Payments] (
+        [Id] int NOT NULL,
+        [AdviceNumber] int NOT NULL,
+        [GrowerId] int NOT NULL,
+        [GrowerCode] nvarchar(450) NOT NULL,
+        [VillageId] int NOT NULL,
+        [TotalPurchaseAmount] decimal(14,2) NOT NULL,
+        [LoanDeductedAmount] decimal(14,2) NOT NULL,
+        [NetPayableAmount] decimal(14,2) NOT NULL,
+        [PaymentModeId] int NOT NULL,
+        [TransactionRefNumber] nvarchar(max) NULL,
+        [PaymentDate] datetime2 NOT NULL,
+        [PaidByUserId] int NOT NULL,
+        [PaidByUserName] nvarchar(max) NOT NULL,
+        [PaymentStatus] nvarchar(450) NOT NULL,
+        [CancelReason] nvarchar(max) NULL,
+        [SeasonId] int NOT NULL,
+        [PrintCount] int NOT NULL,
+        [CreatedAt] datetime2 NOT NULL,
+        [CreatedBy] int NULL,
+        [UpdatedAt] datetime2 NULL,
+        [UpdatedBy] int NULL,
+        [Status] bit NOT NULL,
+        [IsDeleted] bit NOT NULL,
+        [DeletedAt] datetime2 NULL,
+        [DeletedBy] int NULL,
+        CONSTRAINT [PK_Payments] PRIMARY KEY ([Id]),
+        CONSTRAINT [FK_Payments_Growers_GrowerId] FOREIGN KEY ([GrowerId]) REFERENCES [Growers] ([Id]) ON DELETE NO ACTION,
+        CONSTRAINT [FK_Payments_PaymentModes_PaymentModeId] FOREIGN KEY ([PaymentModeId]) REFERENCES [PaymentModes] ([Id]) ON DELETE NO ACTION,
+        CONSTRAINT [FK_Payments_Seasons_SeasonId] FOREIGN KEY ([SeasonId]) REFERENCES [Seasons] ([Id]) ON DELETE NO ACTION
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE TABLE [PaymentPurchases] (
+        [Id] int NOT NULL IDENTITY,
+        [PaymentId] int NOT NULL,
+        [PurchaseId] int NOT NULL,
+        [PurchaseAmountAtPayment] decimal(14,2) NOT NULL,
+        CONSTRAINT [PK_PaymentPurchases] PRIMARY KEY ([Id]),
+        CONSTRAINT [FK_PaymentPurchases_Payments_PaymentId] FOREIGN KEY ([PaymentId]) REFERENCES [Payments] ([Id]) ON DELETE NO ACTION,
+        CONSTRAINT [FK_PaymentPurchases_Purchases_PurchaseId] FOREIGN KEY ([PurchaseId]) REFERENCES [Purchases] ([Id]) ON DELETE NO ACTION
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE INDEX [IX_LoanRecoveries_PaymentId] ON [LoanRecoveries] ([PaymentId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE INDEX [IX_PaymentImages_PaymentId] ON [PaymentImages] ([PaymentId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE INDEX [IX_PaymentPurchases_PaymentId] ON [PaymentPurchases] ([PaymentId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE INDEX [IX_PaymentPurchases_PurchaseId] ON [PaymentPurchases] ([PurchaseId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE INDEX [IX_Payments_AdviceNumber] ON [Payments] ([AdviceNumber]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE INDEX [IX_Payments_GrowerCode] ON [Payments] ([GrowerCode]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE INDEX [IX_Payments_GrowerId] ON [Payments] ([GrowerId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE INDEX [IX_Payments_PaymentModeId] ON [Payments] ([PaymentModeId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE INDEX [IX_Payments_PaymentStatus] ON [Payments] ([PaymentStatus]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    CREATE INDEX [IX_Payments_SeasonId] ON [Payments] ([SeasonId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    ALTER TABLE [LoanRecoveries] ADD CONSTRAINT [FK_LoanRecoveries_Payments_PaymentId] FOREIGN KEY ([PaymentId]) REFERENCES [Payments] ([Id]) ON DELETE NO ACTION;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901135917_AddPaymentModule'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260901135917_AddPaymentModule', N'8.0.11');
+END;
+GO
+
+COMMIT;
+GO
+
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    DECLARE @var0 sysname;
+    SELECT @var0 = [d].[name]
+    FROM [sys].[default_constraints] [d]
+    INNER JOIN [sys].[columns] [c] ON [d].[parent_column_id] = [c].[column_id] AND [d].[parent_object_id] = [c].[object_id]
+    WHERE ([d].[parent_object_id] = OBJECT_ID(N'[SmsTemplates]') AND [c].[name] = N'EventCode');
+    IF @var0 IS NOT NULL EXEC(N'ALTER TABLE [SmsTemplates] DROP CONSTRAINT [' + @var0 + '];');
+    ALTER TABLE [SmsTemplates] ALTER COLUMN [EventCode] nvarchar(450) NOT NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    ALTER TABLE [SmsTemplates] ADD [Language] nvarchar(450) NOT NULL DEFAULT N'';
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    ALTER TABLE [SmsConfigs] ADD [Language] nvarchar(max) NOT NULL DEFAULT N'';
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    ALTER TABLE [SmsConfigs] ADD [RequestBodyTemplate] nvarchar(max) NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    ALTER TABLE [SmsConfigs] ADD [RequestContentType] nvarchar(max) NOT NULL DEFAULT N'';
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    ALTER TABLE [SmsConfigs] ADD [ResponseSuccessPath] nvarchar(max) NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    ALTER TABLE [SmsConfigs] ADD [ResponseSuccessValue] nvarchar(max) NULL;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    CREATE TABLE [SmsLogs] (
+        [Id] int NOT NULL IDENTITY,
+        [EventCode] nvarchar(450) NOT NULL,
+        [GrowerId] int NOT NULL,
+        [MobileNumber] nvarchar(max) NOT NULL,
+        [ReferenceId] nvarchar(450) NOT NULL,
+        [TemplateId] int NULL,
+        [MessageText] nvarchar(max) NOT NULL,
+        [Status] nvarchar(450) NOT NULL,
+        [AttemptCount] int NOT NULL,
+        [NextAttemptAt] datetime2 NULL,
+        [SentAt] datetime2 NULL,
+        [FailureReason] nvarchar(max) NULL,
+        [CreatedAt] datetime2 NOT NULL,
+        CONSTRAINT [PK_SmsLogs] PRIMARY KEY ([Id])
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    CREATE UNIQUE INDEX [IX_SmsTemplates_EventCode_Language] ON [SmsTemplates] ([EventCode], [Language]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    CREATE UNIQUE INDEX [IX_SmsLogs_EventCode_ReferenceId] ON [SmsLogs] ([EventCode], [ReferenceId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    CREATE INDEX [IX_SmsLogs_GrowerId] ON [SmsLogs] ([GrowerId]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    CREATE INDEX [IX_SmsLogs_Status] ON [SmsLogs] ([Status]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260901160538_AddSmsModule'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260901160538_AddSmsModule', N'8.0.11');
+END;
+GO
+
+COMMIT;
+GO
+
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260902064112_AddReportsFarmerBackupPhase'
+)
+BEGIN
+    DROP TABLE [RazorpayConfigs];
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260902064112_AddReportsFarmerBackupPhase'
+)
+BEGIN
+    CREATE TABLE [BackupConfigs] (
+        [Id] int NOT NULL IDENTITY,
+        [Enabled] bit NOT NULL,
+        [Frequency] nvarchar(max) NOT NULL,
+        [TimeOfDay] nvarchar(max) NOT NULL,
+        [RetentionDays] int NOT NULL,
+        [BackupFolderPath] nvarchar(max) NOT NULL,
+        [DifferentialEnabled] bit NOT NULL,
+        [DifferentialIntervalHours] int NOT NULL,
+        [TransactionLogEnabled] bit NOT NULL,
+        [TransactionLogIntervalMinutes] int NOT NULL,
+        [CreatedAt] datetime2 NOT NULL,
+        [CreatedBy] int NULL,
+        [UpdatedAt] datetime2 NULL,
+        [UpdatedBy] int NULL,
+        [Status] bit NOT NULL,
+        [IsDeleted] bit NOT NULL,
+        [DeletedAt] datetime2 NULL,
+        [DeletedBy] int NULL,
+        CONSTRAINT [PK_BackupConfigs] PRIMARY KEY ([Id])
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260902064112_AddReportsFarmerBackupPhase'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260902064112_AddReportsFarmerBackupPhase', N'8.0.11');
+END;
+GO
+
+COMMIT;
+GO
+

@@ -8,6 +8,7 @@
     <ProjectReference Include="..\CaneFactory.Application\CaneFactory.Application.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.105.1" />
     <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" Version="14.2.1.2" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.11" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.11" />

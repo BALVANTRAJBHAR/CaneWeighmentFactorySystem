@@ -34,7 +34,7 @@ public static class Modules
         "User", "Role", "Permission",
         "Purchase", "Weighment", "SalePurchase",
         "Loan", "LoanRecovery", "Payment", "CashEvidence",
-        "Device", "Camera", "Sms", "Razorpay", "Print", "Sound", "WeightRule",
+        "Device", "Camera", "Sms", "Print", "Sound", "WeightRule",
         "Audit", "Report", "Dashboard", "Image", "Backup", "SystemSetting", "UserGuide", "Health"
     };
 }

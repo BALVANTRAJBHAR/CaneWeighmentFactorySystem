@@ -10,11 +10,13 @@ import '../screens/auth/change_password_screen.dart';
 import '../screens/dashboard/dashboard_screen.dart';
 import '../screens/developer/device_config_screen.dart';
 import '../screens/developer/settings_screens.dart';
+import '../screens/farmer/farmer_dashboard_screen.dart';
 import '../screens/guide/user_guide_screen.dart';
 import '../screens/loans/loan_screens.dart';
 import '../screens/masters/grower_screen.dart';
 import '../screens/masters/master_screens.dart';
 import '../screens/payments/payment_screens.dart';
+import '../screens/reports/reports_screen.dart';
 import '../screens/search/grower_search_screen.dart';
 import '../screens/users/users_screen.dart';
 import '../screens/weighment/weighment_screen.dart';
@@ -24,7 +26,8 @@ class _NavItem {
   final IconData icon;
   final String permission;
   final Widget Function() builder;
-  const _NavItem(this.label, this.icon, this.permission, this.builder);
+  final String? roleOnly;
+  const _NavItem(this.label, this.icon, this.permission, this.builder, {this.roleOnly});
 }
 
 /// Role-aware application shell. Menu items are hidden without permission,
@@ -43,6 +46,7 @@ class _AppShellState extends State<AppShell> {
 
   static final List<_NavItem> _allItems = [
     _NavItem('Dashboard', Icons.dashboard_outlined, 'Dashboard.View', () => const DashboardScreen()),
+    _NavItem('My Dashboard', Icons.eco_outlined, 'Dashboard.View', () => const FarmerDashboardScreen(), roleOnly: 'Farmer'),
     _NavItem('Weighment', Icons.scale_outlined, 'Weighment.View', () => const WeighmentScreen()),
     _NavItem('Grower Search', Icons.person_search_outlined, 'Grower.View', () => const GrowerSearchScreen()),
     _NavItem('Growers', Icons.agriculture_outlined, 'Grower.View', () => const GrowerScreen()),
@@ -51,6 +55,7 @@ class _AppShellState extends State<AppShell> {
     _NavItem('Payments', Icons.payments_outlined, 'Payment.View', () => const PaymentScreen()),
     _NavItem('Loans', Icons.savings_outlined, 'Loan.View', () => const LoanScreen()),
     _NavItem('Loan Recovery', Icons.currency_rupee_outlined, 'LoanRecovery.View', () => const LoanRecoveryScreen()),
+    _NavItem('Reports', Icons.summarize_outlined, 'Report.View', () => const ReportsScreen()),
     _NavItem('Users & Roles', Icons.group_outlined, 'User.View', () => const UsersScreen()),
     _NavItem('Weighing Device', Icons.settings_input_component_outlined, 'Device.Configure', () => const DeviceConfigScreen()),
     _NavItem('Configuration', Icons.tune_outlined, 'WeightRule.Configure', () => const DeveloperSettingsScreen()),
@@ -82,7 +87,7 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final theme = context.watch<ThemeProvider>();
-    final items = _allItems.where((i) => auth.can(i.permission)).toList();
+    final items = _allItems.where((i) => auth.can(i.permission) && (i.roleOnly == null || auth.hasRole(i.roleOnly!))).toList();
     if (items.isEmpty) {
       return Scaffold(
           body: Center(

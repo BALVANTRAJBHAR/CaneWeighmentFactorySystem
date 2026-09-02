@@ -2,6 +2,17 @@
 
 Express edition has no SQL Agent — use Windows Task Scheduler with `sqlcmd`.
 
+## Phase 13: generate the scripts from the app instead of hand-writing them
+Developer Dashboard → Configuration → Backup tab (or `GET/PUT /api/backup/config`,
+`Backup.View`/`Backup.Configure`) stores the desired Frequency/TimeOfDay/RetentionDays/Folder
+policy. From that policy:
+- `GET /api/backup/script` downloads the exact FULL+DIFFERENTIAL+TRANSACTION LOG `.sql` script
+  below, pre-filled with your folder/retention.
+- `GET /api/backup/task-scheduler-xml` downloads a ready-to-import Task Scheduler XML
+  (`schtasks /Create /XML CaneFactoryBackup-Task.xml /TN CaneFactoryBackup`).
+Save both next to the database server and import the XML — no manual editing needed. The
+manual script below remains as reference/fallback.
+
 ## Strategy
 | Type | Frequency | Retention |
 |---|---|---|

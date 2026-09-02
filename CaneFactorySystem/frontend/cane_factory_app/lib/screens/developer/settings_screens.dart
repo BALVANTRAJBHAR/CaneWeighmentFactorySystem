@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import '../../core/api_client.dart';
 import '../../core/print_service.dart';
+import '../../core/file_download.dart';
 
-/// Developer Configuration hub: Weight Rules, Sound/TTS, Cameras, Print, SMS, Razorpay, Company.
+/// Developer Configuration hub: Weight Rules, Sound/TTS, Cameras, Print, SMS, Backup, Company.
 class DeveloperSettingsScreen extends StatelessWidget {
   const DeveloperSettingsScreen({super.key});
 
@@ -23,7 +24,7 @@ class DeveloperSettingsScreen extends StatelessWidget {
             Tab(text: 'Print'),
             Tab(text: 'SMS'),
             Tab(text: 'SMS Logs'),
-            Tab(text: 'Razorpay'),
+            Tab(text: 'Backup'),
             Tab(text: 'Company'),
           ]),
         ),
@@ -35,7 +36,7 @@ class DeveloperSettingsScreen extends StatelessWidget {
             _PrintTab(),
             _SmsTab(),
             _SmsLogsTab(),
-            _RazorpayTab(),
+            _BackupTab(),
             _CompanyTab(),
           ]),
         ),
@@ -738,62 +739,77 @@ class _SmsLogsTabState extends State<_SmsLogsTab> {
   }
 }
 
-class _RazorpayTab extends StatefulWidget {
-  const _RazorpayTab();
+/// Phase 13: SQL Server backup policy - schedule/retention config + one-click .sql / Task
+/// Scheduler XML download (no SQL Agent needed on Express edition).
+class _BackupTab extends StatefulWidget {
+  const _BackupTab();
   @override
-  State<_RazorpayTab> createState() => _RazorpayTabState();
+  State<_BackupTab> createState() => _BackupTabState();
 }
 
-class _RazorpayTabState extends State<_RazorpayTab> {
-  final c = {for (final k in ['keyId', 'keySecret', 'webhookSecret', 'accountNumber']) k: TextEditingController()};
-  String mode = 'Test';
-  bool enabled = false;
-  String? info;
+class _BackupTabState extends State<_BackupTab> {
+  final folderCtrl = TextEditingController(text: r'E:\Backup');
+  final retentionCtrl = TextEditingController(text: '14');
+  final timeCtrl = TextEditingController(text: '02:00');
+  String frequency = 'Daily';
+  bool enabled = true;
+  bool differentialEnabled = true;
+  bool transactionLogEnabled = true;
 
   @override
   void initState() {
     super.initState();
-    ApiClient.instance.dio.get('/api/config/razorpay').then((res) {
+    ApiClient.instance.dio.get('/api/backup/config').then((res) {
       if (res.statusCode == 200 && res.data != null && mounted) {
         final v = res.data;
         setState(() {
-          mode = v['mode'] ?? 'Test';
           enabled = v['enabled'] == true;
-          c['accountNumber']!.text = v['accountNumber'] ?? '';
-          info = 'Key ID: ${v['hasKeyId'] == true ? 'set' : 'not set'} • Secret: ${v['hasKeySecret'] == true ? 'set' : 'not set'} • Webhook: ${v['hasWebhookSecret'] == true ? 'set' : 'not set'} (all encrypted)';
+          frequency = v['frequency'] ?? 'Daily';
+          timeCtrl.text = v['timeOfDay'] ?? '02:00';
+          retentionCtrl.text = '${v['retentionDays'] ?? 14}';
+          folderCtrl.text = v['backupFolderPath'] ?? r'E:\Backup';
+          differentialEnabled = v['differentialEnabled'] == true;
+          transactionLogEnabled = v['transactionLogEnabled'] == true;
         });
       }
     });
   }
 
+  Future<void> _download(String path, String filename) => downloadAndNotify(context, path, filename);
+
   @override
   Widget build(BuildContext context) {
     return ListView(padding: const EdgeInsets.all(16), children: [
-      const Text('RazorpayX payout configuration. All calls are made server-side only; secrets never reach Flutter/Web/Mobile.',
+      const Text('SQL Server 2019 Express has no SQL Agent - schedule the generated .sql script via Windows Task Scheduler + sqlcmd.',
           style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
-      if (info != null) Padding(padding: const EdgeInsets.only(top: 4), child: Text(info!, style: const TextStyle(fontSize: 12))),
       const SizedBox(height: 10),
       Wrap(spacing: 14, runSpacing: 14, children: [
-        SizedBox(width: 160, child: DropdownButtonFormField<String>(value: mode,
-            decoration: const InputDecoration(labelText: 'Mode'),
-            items: const [DropdownMenuItem(value: 'Test', child: Text('Test')), DropdownMenuItem(value: 'Live', child: Text('Live'))],
-            onChanged: (v) => setState(() => mode = v!))),
-        SizedBox(width: 260, child: TextField(controller: c['keyId'], obscureText: true, decoration: const InputDecoration(labelText: 'Key ID', hintText: 'rzp_test_... (blank keeps existing)'))),
-        SizedBox(width: 260, child: TextField(controller: c['keySecret'], obscureText: true, decoration: const InputDecoration(labelText: 'Key Secret', hintText: 'blank keeps existing'))),
-        SizedBox(width: 260, child: TextField(controller: c['webhookSecret'], obscureText: true, decoration: const InputDecoration(labelText: 'Webhook Secret', hintText: 'blank keeps existing'))),
-        SizedBox(width: 260, child: TextField(controller: c['accountNumber'], decoration: const InputDecoration(labelText: 'RazorpayX Account Number', hintText: 'For payouts'))),
+        SizedBox(width: 160, child: DropdownButtonFormField<String>(value: frequency,
+            decoration: const InputDecoration(labelText: 'Frequency'),
+            items: const [DropdownMenuItem(value: 'Daily', child: Text('Daily')), DropdownMenuItem(value: 'Hourly', child: Text('Hourly')), DropdownMenuItem(value: 'Weekly', child: Text('Weekly'))],
+            onChanged: (v) => setState(() => frequency = v!))),
+        SizedBox(width: 140, child: TextField(controller: timeCtrl, decoration: const InputDecoration(labelText: 'Time (HH:mm)', hintText: '02:00'))),
+        SizedBox(width: 160, child: TextField(controller: retentionCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Retention (days)'))),
+        SizedBox(width: 260, child: TextField(controller: folderCtrl, decoration: const InputDecoration(labelText: 'Backup Folder Path', hintText: r'E:\Backup'))),
       ]),
-      SwitchListTile(title: const Text('Razorpay Enabled'), value: enabled, onChanged: (v) => setState(() => enabled = v)),
-      FilledButton(onPressed: () async {
-        final res = await ApiClient.instance.dio.put('/api/config/razorpay', data: {
-          'enabled': enabled, 'mode': mode,
-          'keyId': c['keyId']!.text.isEmpty ? null : c['keyId']!.text,
-          'keySecret': c['keySecret']!.text.isEmpty ? null : c['keySecret']!.text,
-          'webhookSecret': c['webhookSecret']!.text.isEmpty ? null : c['webhookSecret']!.text,
-          'accountNumber': c['accountNumber']!.text,
-        });
-        if (context.mounted) showResult(context, res);
-      }, child: const Text('Save Razorpay Configuration')),
+      SwitchListTile(title: const Text('Backup Enabled'), value: enabled, onChanged: (v) => setState(() => enabled = v)),
+      SwitchListTile(title: const Text('Differential backups (every few hours)'), value: differentialEnabled, onChanged: (v) => setState(() => differentialEnabled = v)),
+      SwitchListTile(title: const Text('Transaction log backups (every few minutes)'), value: transactionLogEnabled, onChanged: (v) => setState(() => transactionLogEnabled = v)),
+      Wrap(spacing: 10, runSpacing: 10, children: [
+        FilledButton(onPressed: () async {
+          final res = await ApiClient.instance.dio.put('/api/backup/config', data: {
+            'enabled': enabled, 'frequency': frequency, 'timeOfDay': timeCtrl.text,
+            'retentionDays': int.tryParse(retentionCtrl.text) ?? 14, 'backupFolderPath': folderCtrl.text,
+            'differentialEnabled': differentialEnabled, 'differentialIntervalHours': 4,
+            'transactionLogEnabled': transactionLogEnabled, 'transactionLogIntervalMinutes': 30,
+          });
+          if (context.mounted) showResult(context, res);
+        }, child: const Text('Save Backup Policy')),
+        OutlinedButton(onPressed: () => _download('/api/backup/script', 'CaneFactoryBackup.sql'),
+            child: const Text('Download Backup Script (.sql)')),
+        OutlinedButton(onPressed: () => _download('/api/backup/task-scheduler-xml', 'CaneFactoryBackup-Task.xml'),
+            child: const Text('Download Task Scheduler XML')),
+      ]),
     ]);
   }
 }
