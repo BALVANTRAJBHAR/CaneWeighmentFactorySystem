@@ -172,6 +172,33 @@ public class PrintController : ControllerBase
         return File(bytes, contentType, $"Payment-{id}.{ext}");
     }
 
+    [HttpGet("sale-purchase/{id:int}")]
+    public async Task<IActionResult> SalePurchaseSlip(int id, [FromQuery] string stage, [FromQuery] string? target, [FromQuery] string format = "final")
+    {
+        if (!_current.HasPermission("SalePurchase.Print")) return StatusCode(403, new { message = "You do not have 'SalePurchase.Print' permission." });
+        stage = (stage ?? "").Trim().ToUpperInvariant();
+        if (stage is not ("TARE" or "GROSS")) return BadRequest(new { message = "stage must be TARE or GROSS." });
+        if (format is not ("final" or "preview")) return BadRequest(new { message = "format must be final or preview." });
+        var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
+        var resolvedTarget = target ?? cfg?.PrinterType ?? "DotMatrix";
+        if (resolvedTarget is not ("A4" or "DotMatrix")) return BadRequest(new { message = "target must be A4 or DotMatrix." });
+        var record = await _db.SalePurchases.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
+        if (record == null) return NotFound(new { message = $"SalePurchase {id} not found." });
+        if (stage == "GROSS" && record.WeighmentStatus != "COMPLETED") return Conflict(new { message = "Gross slip is available only after completion." });
+        PrintDocument doc;
+        try { doc = await _engine.BuildSalePurchaseSlipAsync(id, stage, _current.Username ?? ""); }
+        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException) { return Conflict(new { message = ex.Message }); }
+        var (bytes, contentType, ext) = _engine.Render(doc, resolvedTarget, format == "preview");
+        if (format == "final")
+        {
+            var reprint = stage == "TARE" ? record.TarePrintCount > 0 : record.GrossPrintCount > 0;
+            if (stage == "TARE") record.TarePrintCount++; else record.GrossPrintCount++;
+            await _db.SaveChangesAsync();
+            await _audit.LogAsync(reprint ? "Reprint" : "Print", "SalePurchase", "SalePurchase", id.ToString(), newValue: new { stage, target = resolvedTarget });
+        }
+        return File(bytes, contentType, $"SalePurchase-{id}-{stage}.{ext}");
+    }
+
     /// <summary>Developer print test with sample data - no purchase/audit side effects. Lets the
     /// Developer verify printer, paper type, language, Hindi glyph rendering, QR readability and
     /// alignment before relying on Auto Print in production.</summary>

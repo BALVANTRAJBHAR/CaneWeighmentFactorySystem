@@ -9,6 +9,9 @@ class LiveWeight {
   final String weightUnit;
   final bool stable;
   final bool deviceConnected;
+  final bool readerRunning;
+  final bool isLive;
+  final String readerState;
   final DateTime? lastReceivedAt;
   final String? deviceName;
   final String? error;
@@ -19,6 +22,9 @@ class LiveWeight {
     this.weightUnit = 'KG',
     this.stable = false,
     this.deviceConnected = false,
+    this.readerRunning = false,
+    this.isLive = false,
+    this.readerState = 'DISCONNECTED',
     this.lastReceivedAt,
     this.deviceName,
     this.error,
@@ -30,6 +36,9 @@ class LiveWeight {
         weightUnit: j['weightUnit'] ?? 'KG',
         stable: j['stable'] == true,
         deviceConnected: j['deviceConnected'] == true,
+        readerRunning: j['readerRunning'] == true,
+        isLive: j['isLive'] == true,
+        readerState: j['readerState']?.toString() ?? 'DISCONNECTED',
         lastReceivedAt: j['lastReceivedAt'] != null
             ? DateTime.tryParse(j['lastReceivedAt'])
             : null,

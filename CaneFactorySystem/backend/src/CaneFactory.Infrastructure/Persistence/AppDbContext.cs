@@ -32,6 +32,8 @@ public class AppDbContext : DbContext
 
     public DbSet<Purchase> Purchases => Set<Purchase>();
     public DbSet<PurchaseImage> PurchaseImages => Set<PurchaseImage>();
+    public DbSet<SalePurchase> SalePurchases => Set<SalePurchase>();
+    public DbSet<SalePurchaseImage> SalePurchaseImages => Set<SalePurchaseImage>();
 
     public DbSet<LoanTypeMaster> LoanTypes => Set<LoanTypeMaster>();
     public DbSet<Loan> Loans => Set<Loan>();
@@ -147,6 +149,28 @@ public class AppDbContext : DbContext
         });
         b.Entity<PurchaseImage>().HasIndex(x => x.PurchaseId);
 
+        b.Entity<SalePurchase>(e =>
+        {
+            e.Property(x => x.Id).ValueGeneratedNever();
+            // SalePurchase validation already limits a vehicle number to 4-15 characters;
+            // persist that same domain limit because it participates in a composite index.
+            e.Property(x => x.VehicleNumber).HasMaxLength(15).IsRequired();
+            // Status is queried for the pending-grid/report workflow and is indexed below.
+            // A bounded value maps to nvarchar(32), which is index-compatible on SQL Server.
+            e.Property(x => x.WeighmentStatus).HasMaxLength(32).IsRequired();
+            e.HasIndex(x => x.WeighmentStatus);
+            e.HasIndex(x => x.TareDateTime);
+            e.HasIndex(x => x.GrossDateTime);
+            e.HasIndex(x => new { x.PartyId, x.VehicleNumber });
+            foreach (var p in new[] { "ScaleReadingTareKg", "TareWeightQuintal", "ScaleReadingGrossKg", "GrossWeightQuintal", "FinalWeightQuintal", "Rate" })
+                e.Property(p).HasPrecision(12, 2);
+            e.Property(x => x.Amount).HasPrecision(14, 2);
+            e.HasOne(x => x.Item).WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Party).WithMany().HasForeignKey(x => x.PartyId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.VehicleType).WithMany().HasForeignKey(x => x.VehicleTypeId).OnDelete(DeleteBehavior.Restrict);
+        });
+        b.Entity<SalePurchaseImage>().HasIndex(x => x.SalePurchaseId);
+
         b.Entity<LoanTypeMaster>().HasIndex(x => x.LoanTypeName).IsUnique();
         b.Entity<Loan>(e =>
         {
@@ -199,6 +223,7 @@ public class AppDbContext : DbContext
             e.HasIndex(x => new { x.EventCode, x.ReferenceId }).IsUnique();
             e.HasIndex(x => x.Status);
             e.HasIndex(x => x.GrowerId);
+            e.HasIndex(x => x.PartyId);
         });
 
         b.Entity<WeightRuleConfig>(e =>

@@ -24,23 +24,50 @@ public class UsersController : ControllerBase
         _db = db; _audit = audit; _userState = userState;
     }
 
+    private bool IsDeveloper => (_currentRoleNames()).Contains("Developer", StringComparer.OrdinalIgnoreCase);
+
+    private IEnumerable<string> _currentRoleNames() =>
+        (HttpContext.User.FindAll(System.Security.Claims.ClaimTypes.Role).Select(c => c.Value));
+
+    private async Task<IActionResult> RejectDeveloperRoleAttemptAsync(string operation, string? targetUserId, IEnumerable<int> roleIds)
+    {
+        await _audit.LogAsync("PrivilegeEscalationRejected", "User", "User", targetUserId,
+            newValue: new { Operation = operation, RequestedRoleIds = roleIds }, success: false,
+            failureReason: "Only a Developer may create, assign, or manage the Developer role.");
+        return StatusCode(403, new { message = "Only a Developer may create, assign, or manage the Developer role." });
+    }
+
+    private Task<bool> IsDeveloperUserAsync(int userId) =>
+        _db.UserRoles.AnyAsync(ur => ur.UserId == userId && ur.Role.Name == "Developer");
+
     [HasPermission("User.View")]
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] string? search, [FromQuery] bool includeInactive = false,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
-        var q = _db.Users.Include(u => u.UserRoles).ThenInclude(ur => ur.Role).Where(u => !u.IsDeleted);
+        var q = _db.Users.Where(u => !u.IsDeleted);
         if (!includeInactive) q = q.Where(u => u.Status);
         if (!string.IsNullOrWhiteSpace(search))
             q = q.Where(u => u.Username.Contains(search) || u.FullName.Contains(search) || u.Mobile.Contains(search));
         var total = await q.CountAsync();
-        var items = await q.OrderBy(u => u.Username).Skip((page - 1) * pageSize).Take(pageSize)
+        // Project UserRoles only once.  Projecting it separately for Roles and RoleIds made EF
+        // compile two collection navigations for the same parent query, which triggers
+        // MultipleCollectionIncludeWarning and can produce a cartesian result as this grows.
+        // This is a read-only list endpoint, so shape the single collection in SQL and split it
+        // into the existing response fields after materialisation.
+        var pageRows = await q.OrderBy(u => u.Username).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(u => new
             {
                 u.Id, u.Username, u.FullName, u.Mobile, u.Email, u.Status, u.MustChangePassword,
-                u.LastLoginAt, Roles = u.UserRoles.Select(r => r.Role.Name).ToList(),
-                RoleIds = u.UserRoles.Select(r => r.RoleId).ToList()
+                u.LastLoginAt,
+                RoleAssignments = u.UserRoles.Select(r => new { r.RoleId, RoleName = r.Role.Name }).ToList()
             }).ToListAsync();
+        var items = pageRows.Select(u => new
+        {
+            u.Id, u.Username, u.FullName, u.Mobile, u.Email, u.Status, u.MustChangePassword, u.LastLoginAt,
+            Roles = u.RoleAssignments.Select(r => r.RoleName).ToList(),
+            RoleIds = u.RoleAssignments.Select(r => r.RoleId).ToList()
+        });
         return Ok(new { items, totalCount = total, page, pageSize });
     }
 
@@ -57,6 +84,8 @@ public class UsersController : ControllerBase
         if (req.RoleIds.Count == 0) return BadRequest(new { message = "At least one role is required." });
         var validRoles = await _db.Roles.Where(r => req.RoleIds.Contains(r.Id) && !r.IsDeleted).ToListAsync();
         if (validRoles.Count != req.RoleIds.Count) return BadRequest(new { message = "One or more roles do not exist." });
+        if (!IsDeveloper && validRoles.Any(r => r.Name == "Developer"))
+            return await RejectDeveloperRoleAttemptAsync("Create", null, req.RoleIds);
 
         var user = new User
         {
@@ -83,6 +112,12 @@ public class UsersController : ControllerBase
         if (user == null) return NotFound(new { message = "User not found." });
         if (!Validators.IsMobile(req.Mobile)) return BadRequest(new { message = "Mobile must be exactly 10 digits." });
         if (!Validators.IsEmail(req.Email)) return BadRequest(new { message = "Email format is invalid." });
+
+        var validRoles = await _db.Roles.Where(r => req.RoleIds.Contains(r.Id) && !r.IsDeleted).ToListAsync();
+        if (validRoles.Count != req.RoleIds.Distinct().Count()) return BadRequest(new { message = "One or more roles do not exist." });
+        var targetIsDeveloper = await _db.UserRoles.AnyAsync(ur => ur.UserId == id && ur.Role.Name == "Developer");
+        if (!IsDeveloper && (targetIsDeveloper || validRoles.Any(r => r.Name == "Developer")))
+            return await RejectDeveloperRoleAttemptAsync("Edit", id.ToString(), req.RoleIds);
 
         var old = new { user.FullName, user.Mobile, user.Email, user.Status, Roles = user.UserRoles.Select(r => r.RoleId).ToList() };
         user.FullName = Validators.Norm(req.FullName);
@@ -113,6 +148,8 @@ public class UsersController : ControllerBase
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
         if (user == null) return NotFound(new { message = "User not found." });
+        if (!IsDeveloper && await IsDeveloperUserAsync(id))
+            return await RejectDeveloperRoleAttemptAsync("ResetPassword", id.ToString(), Array.Empty<int>());
         var temp = body.GetValueOrDefault("temporaryPassword") ?? "";
         if (temp.Length < 8) return BadRequest(new { message = "Temporary password must be at least 8 characters." });
         user.PasswordHash = Hasher.HashPassword(user, temp);
@@ -131,6 +168,8 @@ public class UsersController : ControllerBase
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
         if (user == null) return NotFound(new { message = "User not found." });
         if (user.Username == "developer") return BadRequest(new { message = "The initial developer account cannot be deleted." });
+        if (!IsDeveloper && await IsDeveloperUserAsync(id))
+            return await RejectDeveloperRoleAttemptAsync("Delete", id.ToString(), Array.Empty<int>());
         user.IsDeleted = true;
         user.DeletedAt = DateTime.UtcNow;
         user.Status = false;
@@ -149,7 +188,9 @@ public class RolesController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IAuditService _audit;
-    public RolesController(AppDbContext db, IAuditService audit) { _db = db; _audit = audit; }
+    private readonly ICurrentUser _current;
+    public RolesController(AppDbContext db, IAuditService audit, ICurrentUser current) { _db = db; _audit = audit; _current = current; }
+    private bool IsDeveloper => (_current.Role ?? "").Split(',').Contains("Developer", StringComparer.OrdinalIgnoreCase);
 
     [HasPermission("Role.View")]
     [HttpGet]
@@ -191,6 +232,13 @@ public class RolesController : ControllerBase
     {
         var role = await _db.Roles.Include(r => r.RolePermissions).FirstOrDefaultAsync(r => r.Id == id && !r.IsDeleted);
         if (role == null) return NotFound(new { message = "Role not found." });
+        if (role.Name == "Developer" && !IsDeveloper)
+        {
+            await _audit.LogAsync("PrivilegeEscalationRejected", "Role", "Role", id.ToString(),
+                newValue: new { Operation = "PermissionChange" }, success: false,
+                failureReason: "Only a Developer may manage the Developer role.");
+            return StatusCode(403, new { message = "Only a Developer may manage the Developer role." });
+        }
         if (role.Name == "Developer") return BadRequest(new { message = "Developer role permissions cannot be reduced." });
         var old = role.RolePermissions.Select(rp => rp.PermissionId).ToList();
         _db.RolePermissions.RemoveRange(role.RolePermissions);

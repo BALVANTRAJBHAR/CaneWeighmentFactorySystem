@@ -90,10 +90,19 @@ cd frontend\cane_factory_app
 flutter create . --platforms=windows,android,ios,web --project-name cane_factory_app
 flutter pub get
 flutter analyze          # must be clean
-flutter run -d windows --dart-define=API_BASE_URL=http://localhost:5000
+flutter run -d windows
 ```
-`API_BASE_URL` is injected at build time — nothing is hard-coded.
-For Android emulator use `http://10.0.2.2:5000`; for LAN devices use the factory server IP.
+`API_BASE_URL` is injected at build time. Without it the app uses `http://localhost:5000` for same-PC development only; no database connection string or secret is ever included in Flutter.
+
+| Scenario | Command / API URL |
+|---|---|
+| Same PC | `flutter run -d windows` (defaults to `http://localhost:5000`) |
+| Factory LAN | `flutter run -d windows --dart-define=API_BASE_URL=http://192.168.31.173:5000` |
+| Android emulator | `flutter run --dart-define=API_BASE_URL=http://10.0.2.2:5000` |
+| Android/iOS/Windows on LAN | Build/run with the server's reachable LAN IP or DNS name |
+| Production internet | `flutter build windows --release --dart-define=API_BASE_URL=https://api.example.com` |
+
+The same `API_BASE_URL` is used by REST and SignalR on Windows, Android, iOS, and Web. Configure the backend SQL Server connection only with `CANE_CONNECTION_STRING` on the server; never in Flutter.
 
 Windows-only note (`flutter_secure_storage`): tokens are stored via Windows Credential Manager.
 On Web, secure storage uses WebCrypto — use HTTPS in production.

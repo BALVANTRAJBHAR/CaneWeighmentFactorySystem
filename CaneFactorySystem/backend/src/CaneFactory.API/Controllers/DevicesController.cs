@@ -38,6 +38,7 @@ public class DevicesController : ControllerBase
                 d.Id, d.DeviceName, d.Manufacturer, d.ModelNumber, d.ConnectionType, d.ComPort, d.BaudRate,
                 d.Parity, d.DataBits, d.StopBits, d.FlowControl, d.CharacterEncoding, d.ReadTimeoutMs,
                 d.ReadIntervalMs, d.AutoReconnect, d.ReconnectAttempts, d.IsEnabled, d.ActiveConfiguration,
+                d.DesiredConnectionState, d.DesiredReaderRunning,
                 d.ActiveStringProfileId, ActiveStringProfileName = d.ActiveStringProfile != null ? d.ActiveStringProfile.StringProfileName : null
             }).ToListAsync());
 
@@ -95,7 +96,10 @@ public class DevicesController : ControllerBase
     {
         var d = await _db.WeighingDevices.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
         if (d == null) return NotFound(new { message = "Device not found." });
+        if (_weighing.IsOperatingDevice(id)) _weighing.Disconnect();
         d.ActiveConfiguration = false;
+        d.DesiredConnectionState = "Disconnected";
+        d.DesiredReaderRunning = false;
         await _db.SaveChangesAsync();
         await LogHistory(id, "Deactivate", null, new { d.DeviceName }, "Deactivated");
         return Ok(new { message = $"Configuration for '{d.DeviceName}' deactivated." });
@@ -117,35 +121,53 @@ public class DevicesController : ControllerBase
     public async Task<IActionResult> Connect(int id)
     {
         var (ok, message) = await _weighing.ConnectAsync(id);
+        if (ok)
+        {
+            var device = await _db.WeighingDevices.FindAsync(id);
+            if (device != null) { device.DesiredConnectionState = "Connected"; await _db.SaveChangesAsync(); }
+        }
         await LogHistory(id, "TestConnection", null, null, ok ? "Connected" : message);
         return ok ? Ok(new { message }) : Conflict(new { message });
     }
 
     [HasPermission("Device.Configure")]
     [HttpPost("disconnect")]
-    public IActionResult Disconnect()
+    public async Task<IActionResult> Disconnect()
     {
         _weighing.Disconnect();
+        var active = await _db.WeighingDevices.Where(d => d.ActiveConfiguration).ToListAsync();
+        foreach (var d in active) { d.DesiredConnectionState = "Disconnected"; d.DesiredReaderRunning = false; }
+        await _db.SaveChangesAsync();
         return Ok(new { message = "Device disconnected." });
     }
 
     [HasPermission("Device.Configure")]
     [HttpPost("start-reading")]
-    public IActionResult StartReading()
+    public async Task<IActionResult> StartReading()
     {
         var (ok, message) = _weighing.StartReading();
+        if (ok)
+        {
+            var active = await _db.WeighingDevices.FirstOrDefaultAsync(d => d.ActiveConfiguration);
+            if (active != null) { active.DesiredConnectionState = "Connected"; active.DesiredReaderRunning = true; await _db.SaveChangesAsync(); }
+        }
         return ok ? Ok(new { message }) : Conflict(new { message });
     }
 
     [HasPermission("Device.Configure")]
     [HttpPost("stop-reading")]
-    public IActionResult StopReading()
+    public async Task<IActionResult> StopReading()
     {
         _weighing.StopReading();
+        var active = await _db.WeighingDevices.Where(d => d.ActiveConfiguration).ToListAsync();
+        foreach (var d in active) d.DesiredReaderRunning = false;
+        await _db.SaveChangesAsync();
         return Ok(new { message = "Reading stopped." });
     }
 
-    [HasPermission("Weighment.View")]
+    // Technical users who can view device configuration must be able to read its current
+    // operational state too; saves remain protected by Device.Configure.
+    [HasPermission("Device.View")]
     [HttpGet("live-weight")]
     public IActionResult LiveWeight() => Ok(_weighing.Current);
 

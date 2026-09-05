@@ -60,6 +60,7 @@ public interface ICameraCaptureService
 {
     Task<List<CameraCaptureResult>> CaptureForPurchaseAsync(int purchaseId, string stage, int? capturedByUserId, CancellationToken ct = default);
     Task<List<CameraCaptureResult>> CaptureForPaymentAsync(int paymentId, int? capturedByUserId, CancellationToken ct = default);
+    Task<List<CameraCaptureResult>> CaptureForSalePurchaseAsync(int salePurchaseId, string stage, int? capturedByUserId, CancellationToken ct = default);
     Task<CameraCaptureResult> CaptureSingleAsync(int cameraConfigId, CancellationToken ct = default);
 }
 
@@ -81,6 +82,7 @@ public interface IPrintEngineService
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildLoanSlipAsync(int loanId, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildLoanRecoverySlipAsync(int loanRecoveryId, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildPaymentSlipAsync(int paymentId, string generatedByUserName);
+    Task<CaneFactory.Application.DTOs.PrintDocument> BuildSalePurchaseSlipAsync(int salePurchaseId, string stage, string generatedByUserName);
     CaneFactory.Application.DTOs.PrintDocument BuildTestDocument(string language, string generatedByUserName);
     (byte[] bytes, string contentType, string fileExtension) Render(CaneFactory.Application.DTOs.PrintDocument doc, string target, bool preview);
 }
@@ -101,6 +103,8 @@ public interface ISmsProviderClient
 public interface ISmsService
 {
     Task<bool> QueueAsync(string eventCode, int growerId, string mobileNumber, string referenceId,
+        Dictionary<string, string> placeholders);
+    Task<bool> QueueForPartyAsync(string eventCode, int partyId, string mobileNumber, string referenceId,
         Dictionary<string, string> placeholders);
 }
 

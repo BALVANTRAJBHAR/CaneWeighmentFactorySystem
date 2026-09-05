@@ -136,6 +136,40 @@ public class CameraCaptureService : ICameraCaptureService
         return results;
     }
 
+    public async Task<List<CameraCaptureResult>> CaptureForSalePurchaseAsync(int salePurchaseId, string stage, int? capturedByUserId, CancellationToken ct = default)
+    {
+        var results = new List<CameraCaptureResult>();
+        if (!await SettingTrueAsync("CameraSystemEnabled") || !await SettingTrueAsync("ImageCaptureEnabled")) return results;
+        var sale = await _db.SalePurchases.AsNoTracking().FirstOrDefaultAsync(x => x.Id == salePurchaseId, ct);
+        if (sale == null) return results;
+        var cameras = await _db.Cameras.AsNoTracking().Where(c => !c.IsDeleted && c.Status && c.CaptureEnabled)
+            .OrderBy(c => c.CameraNumber).ToListAsync(ct);
+        foreach (var cam in cameras)
+        {
+            var result = new CameraCaptureResult { CameraConfigId = cam.Id, CameraNumber = cam.CameraNumber };
+            try
+            {
+                var provider = ResolveProvider(cam.Protocol);
+                if (provider == null) { result.Error = $"No capture provider registered for protocol '{cam.Protocol}'."; results.Add(result); continue; }
+                var password = cam.PasswordEncrypted != null ? _protector.Unprotect(cam.PasswordEncrypted) : null;
+                var (ok, bytes, error) = await provider.CaptureAsync(cam, password, ct);
+                if (!ok || bytes == null)
+                {
+                    result.Error = error;
+                    await _audit.LogAsync("ImageCaptureFailed", "Image", "SalePurchase", salePurchaseId.ToString(), newValue: new { cam.CameraNumber, stage, error }, success: false, failureReason: error);
+                }
+                else
+                {
+                    var (imageId, imageName) = await SaveSalePurchaseImageAsync(bytes, salePurchaseId, stage, cam, capturedByUserId, ct);
+                    result.Success = true; result.ImageId = imageId; result.ImageName = imageName;
+                }
+            }
+            catch (Exception ex) { result.Error = ex.Message; _log.LogWarning(ex, "Camera capture failed for SalePurchase {SalePurchaseId}", salePurchaseId); }
+            results.Add(result);
+        }
+        return results;
+    }
+
     public async Task<CameraCaptureResult> CaptureSingleAsync(int cameraConfigId, CancellationToken ct = default)
     {
         var cam = await _db.Cameras.AsNoTracking().FirstOrDefaultAsync(c => c.Id == cameraConfigId && !c.IsDeleted, ct);
@@ -241,6 +275,28 @@ public class CameraCaptureService : ICameraCaptureService
         await _db.SaveChangesAsync(ct);
         await _audit.LogAsync("ImageCaptured", "CashEvidence", "Payment", payment.Id.ToString(),
             newValue: new { payment.Id, cam.CameraNumber, fileName });
+        return (image.Id, fileName);
+    }
+
+    private async Task<(int imageId, string imageName)> SaveSalePurchaseImageAsync(byte[] bytes, int salePurchaseId, string stage,
+        CameraConfig cam, int? capturedByUserId, CancellationToken ct)
+    {
+        var root = _config["Storage:ImageRoot"];
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            var setting = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot", ct);
+            root = string.IsNullOrWhiteSpace(setting?.Value) ? Path.Combine(Path.GetTempPath(), "CanePaymentData") : setting!.Value;
+        }
+        var now = DateTime.Now; var stageTag = stage.ToUpperInvariant();
+        var folder = Path.Combine(root, "SalePurchaseImages", now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"SP-{salePurchaseId}");
+        Directory.CreateDirectory(folder);
+        var seq = await _db.SalePurchaseImages.CountAsync(i => i.SalePurchaseId == salePurchaseId && i.CameraId == cam.Id && i.CaptureStage == stageTag, ct) + 1;
+        var fileName = $"{stageTag}-CAM{cam.CameraNumber:D2}-{seq:D2}.jpg"; var fullPath = Path.Combine(folder, fileName);
+        await File.WriteAllBytesAsync(fullPath, bytes, ct);
+        var image = new SalePurchaseImage { SalePurchaseId = salePurchaseId, CameraId = cam.Id, CaptureStage = stageTag,
+            ImageName = fileName, FilePath = fullPath, FileHash = Convert.ToHexString(SHA256.HashData(bytes)), CapturedAt = DateTime.UtcNow, CapturedBy = capturedByUserId };
+        _db.SalePurchaseImages.Add(image); await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ImageCaptured", "Image", "SalePurchaseImage", image.Id.ToString(), newValue: new { salePurchaseId, cam.CameraNumber, stageTag, fileName });
         return (image.Id, fileName);
     }
 

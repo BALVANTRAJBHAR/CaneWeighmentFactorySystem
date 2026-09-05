@@ -18,9 +18,11 @@ import '../screens/masters/grower_screen.dart';
 import '../screens/masters/master_screens.dart';
 import '../screens/payments/payment_screens.dart';
 import '../screens/reports/reports_screen.dart';
+import '../screens/sale_purchase/sale_purchase_weighment_screen.dart';
 import '../screens/search/grower_search_screen.dart';
 import '../screens/users/users_screen.dart';
 import '../screens/weighment/weighment_screen.dart';
+import 'warrior_branding_footer.dart';
 
 class _NavItem {
   final String label;
@@ -64,6 +66,8 @@ class _AppShellState extends State<AppShell> {
         () => const PurchasesScreen()),
     _NavItem('Payments', Icons.payments_outlined, 'Payment.View',
         () => const PaymentScreen()),
+    _NavItem('SalePurchase Weighment', Icons.local_shipping_outlined,
+        'SalePurchase.View', () => const SalePurchaseWeighmentScreen()),
     _NavItem(
         'Loans', Icons.savings_outlined, 'Loan.View', () => const LoanScreen()),
     _NavItem('Loan Recovery', Icons.currency_rupee_outlined,
@@ -248,25 +252,30 @@ class _AppShellState extends State<AppShell> {
                 ),
               ),
             ),
-      body: wide
-          ? Row(children: [
-              NavigationRail(
-                selectedIndex: safeIndex,
-                onDestinationSelected: (i) => setState(() => _index = i),
-                labelType: NavigationRailLabelType.all,
-                minWidth: 84,
-                scrollable: true,
-                destinations: [
-                  for (final i in items)
-                    NavigationRailDestination(
-                        icon: Icon(i.icon),
-                        label: Text(i.label, textAlign: TextAlign.center)),
-                ],
-              ),
-              const VerticalDivider(width: 1),
-              Expanded(child: items[safeIndex].builder()),
-            ])
-          : SafeArea(top: false, child: items[safeIndex].builder()),
+      body: Column(children: [
+        Expanded(
+          child: wide
+              ? Row(children: [
+                  NavigationRail(
+                    selectedIndex: safeIndex,
+                    onDestinationSelected: (i) => setState(() => _index = i),
+                    labelType: NavigationRailLabelType.all,
+                    minWidth: 84,
+                    scrollable: true,
+                    destinations: [
+                      for (final i in items)
+                        NavigationRailDestination(
+                            icon: Icon(i.icon),
+                            label: Text(i.label, textAlign: TextAlign.center)),
+                    ],
+                  ),
+                  const VerticalDivider(width: 1),
+                  Expanded(child: items[safeIndex].builder()),
+                ])
+              : SafeArea(top: false, child: items[safeIndex].builder()),
+        ),
+        const SafeArea(top: false, child: WarriorBrandingFooter(compact: true)),
+      ]),
     );
   }
 

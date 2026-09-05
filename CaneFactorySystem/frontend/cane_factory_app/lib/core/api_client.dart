@@ -7,8 +7,21 @@ class ApiClient {
   ApiClient._();
   static final ApiClient instance = ApiClient._();
 
-  static const String baseUrl =
-      String.fromEnvironment('API_BASE_URL', defaultValue: 'http://localhost:5000');
+  // Dart defines work on Windows, Android, iOS and Web. The local fallback is deliberately
+  // generic for same-PC development only; production/LAN builds must pass API_BASE_URL.
+  static const String baseUrl = String.fromEnvironment('API_BASE_URL',
+      defaultValue: 'http://localhost:5000');
+  static Uri? get baseUri => Uri.tryParse(baseUrl);
+  static String? get configurationError {
+    final uri = baseUri;
+    if (uri == null ||
+        !uri.hasScheme ||
+        !uri.hasAuthority ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      return 'Invalid API_BASE_URL. Use http://server:5000 or https://api.example.com.';
+    }
+    return null;
+  }
 
   final _storage = const FlutterSecureStorage();
   late final Dio dio = _build();
@@ -54,8 +67,10 @@ class ApiClient {
     final rt = await _storage.read(key: 'refresh_token');
     if (rt == null) return false;
     try {
-      final res = await Dio(BaseOptions(baseUrl: baseUrl)).post('/api/auth/refresh',
-          data: {'refreshToken': rt}, options: Options(validateStatus: (s) => s != null && s < 500));
+      final res = await Dio(BaseOptions(baseUrl: baseUrl)).post(
+          '/api/auth/refresh',
+          data: {'refreshToken': rt},
+          options: Options(validateStatus: (s) => s != null && s < 500));
       if (res.statusCode == 200) {
         await saveTokens(res.data['accessToken'], res.data['refreshToken']);
         return true;
@@ -78,11 +93,14 @@ class ApiClient {
     await _storage.delete(key: 'refresh_token');
   }
 
-  static String errorMessage(Response? res, [String fallback = 'Something went wrong. Please try again.']) {
+  static String errorMessage(Response? res,
+      [String fallback = 'Something went wrong. Please try again.']) {
     final data = res?.data;
-    if (data is Map && data['message'] != null) return data['message'].toString();
+    if (data is Map && data['message'] != null)
+      return data['message'].toString();
     if (data is Map && data['errors'] is Map) {
-      final errs = (data['errors'] as Map).values.expand((v) => v is List ? v : [v]);
+      final errs =
+          (data['errors'] as Map).values.expand((v) => v is List ? v : [v]);
       return errs.join(' ');
     }
     return fallback;

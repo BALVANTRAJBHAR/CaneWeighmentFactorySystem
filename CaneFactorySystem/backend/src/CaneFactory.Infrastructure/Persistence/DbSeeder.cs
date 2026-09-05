@@ -50,6 +50,7 @@ public static class DbSeeder
         admin.AddRange(Codes(new[] { "Role" }, "View"));
         admin.AddRange(Codes(new[] { "Purchase" }, "View", "Create", "Edit", "Lock", "Unlock", "Cancel", "Export", "Print"));
         admin.AddRange(Codes(new[] { "Weighment" }, "View", "Create", "Edit", "Print"));
+        admin.AddRange(Codes(new[] { "SalePurchase" }, "View", "Create", "Edit", "Cancel", "Export", "Print"));
         admin.AddRange(Codes(new[] { "Loan", "LoanRecovery", "Payment" }, "View", "Export", "Print"));
         admin.AddRange(Codes(new[] { "Report" }, "View", "Export", "Print"));
         admin.AddRange(Codes(new[] { "Camera" }, "ViewCamera"));
@@ -90,7 +91,7 @@ public static class DbSeeder
         {
             "SalePurchase.View", "SalePurchase.Create", "SalePurchase.Edit", "SalePurchase.Print", "SalePurchase.Export",
             "Party.View", "Party.Create", "Item.View", "Vehicle.View", "Vehicle.Create",
-            "Camera.ViewCamera", "Image.Create", "Report.View", "Report.Print",
+            "Camera.ViewCamera", "Image.Create", "Report.View", "Report.Print", "Report.Export",
             "Dashboard.View", "Health.View", "UserGuide.View", "Print.Print"
         };
 
@@ -270,8 +271,20 @@ public static class DbSeeder
                 new SmsTemplate { EventCode = "PAYMENT_COMPLETED", Language = "hi",
                     MessageTemplate = "प्रिय {GrowerName}, आपका भुगतान पूर्ण हुआ। अग्रिम क्रमांक: {AdviceNumber}, कुल राशि: Rs {TotalPurchaseAmount}, ऋण कटौती: Rs {LoanDeducted}, शुद्ध देय: Rs {NetPayable} ({PaymentMode})." },
                 new SmsTemplate { EventCode = "PAYMENT_COMPLETED", Language = "en",
-                    MessageTemplate = "Dear {GrowerName}, your payment is complete. Advice No: {AdviceNumber}, Total: Rs {TotalPurchaseAmount}, Loan Deducted: Rs {LoanDeducted}, Net Payable: Rs {NetPayable} ({PaymentMode})." });
+                    MessageTemplate = "Dear {GrowerName}, your payment is complete. Advice No: {AdviceNumber}, Total: Rs {TotalPurchaseAmount}, Loan Deducted: Rs {LoanDeducted}, Net Payable: Rs {NetPayable} ({PaymentMode})." },
+                new SmsTemplate { EventCode = "SALE_PURCHASE_COMPLETED", Language = "hi",
+                    MessageTemplate = "बिक्री/खरीद क्रमांक {SalePurchaseId} पूर्ण हुआ। पार्टी: {PartyName}, अंतिम वजन: {FinalWeight} क्विंटल, राशि: Rs {Amount}." },
+                new SmsTemplate { EventCode = "SALE_PURCHASE_COMPLETED", Language = "en",
+                    MessageTemplate = "SalePurchase {SalePurchaseId} completed. Party: {PartyName}, Final Weight: {FinalWeight} Qtl, Amount: Rs {Amount}." });
         }
+        // Existing installations already have an SMS configuration; seed the new event template
+        // independently so enabling SalePurchase SMS never requires recreating that configuration.
+        if (!await db.SmsTemplates.AnyAsync(t => t.EventCode == "SALE_PURCHASE_COMPLETED" && t.Language == "hi"))
+            db.SmsTemplates.Add(new SmsTemplate { EventCode = "SALE_PURCHASE_COMPLETED", Language = "hi",
+                MessageTemplate = "बिक्री/खरीद क्रमांक {SalePurchaseId} पूर्ण हुआ। पार्टी: {PartyName}, अंतिम वजन: {FinalWeight} क्विंटल, राशि: Rs {Amount}." });
+        if (!await db.SmsTemplates.AnyAsync(t => t.EventCode == "SALE_PURCHASE_COMPLETED" && t.Language == "en"))
+            db.SmsTemplates.Add(new SmsTemplate { EventCode = "SALE_PURCHASE_COMPLETED", Language = "en",
+                MessageTemplate = "SalePurchase {SalePurchaseId} completed. Party: {PartyName}, Final Weight: {FinalWeight} Qtl, Amount: Rs {Amount}." });
 
         if (!await db.BackupConfigs.AnyAsync())
             db.BackupConfigs.Add(new BackupConfig());
@@ -294,7 +307,9 @@ public static class DbSeeder
             ["Health.Storage.Critical"] = "85",
             ["Security.MaxFailedLogins"] = "5",
             ["Security.LockoutMinutes"] = "15",
-            ["Security.RequireOtpForAuthenticatedPasswordChange"] = "false"
+            ["Security.RequireOtpForAuthenticatedPasswordChange"] = "false",
+            // Empty means no expiry date has been issued yet. Use yyyy-MM-dd when licensing is enabled.
+            ["LicenseEndDate"] = ""
         };
         var existing = await db.SystemSettings.Select(s => s.Key).ToListAsync();
         foreach (var (k, v) in defaults)

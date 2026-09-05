@@ -23,6 +23,8 @@ void main() {
     // First frame only - the startup sequence (config/API/session checks) hasn't
     // resolved yet, so the splash screen with the app name must be visible.
     expect(find.text('Cane Factory Management System'), findsOneWidget);
+    expect(find.text('WARRIOR SOFTECH'), findsOneWidget);
+    expect(find.text('Software Development & Technology Solutions'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsWidgets);
   });
 }

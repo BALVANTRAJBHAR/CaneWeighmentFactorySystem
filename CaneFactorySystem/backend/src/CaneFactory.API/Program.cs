@@ -3,6 +3,7 @@ using System.Threading.RateLimiting;
 using CaneFactory.API.Auth;
 using CaneFactory.API.Hubs;
 using CaneFactory.API.Middleware;
+using CaneFactory.API.Services;
 using CaneFactory.Application.Interfaces;
 using CaneFactory.Infrastructure.Persistence;
 using CaneFactory.Infrastructure.Services;
@@ -51,7 +52,9 @@ builder.Services.AddSingleton<ISecretProtector, SecretProtector>();
 builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddSingleton<ILiveWeightBroadcaster, SignalRWeightBroadcaster>();
 builder.Services.AddSingleton<WeighingService>();
+builder.Services.AddHostedService<WeighingRecoveryService>();
 builder.Services.AddScoped<UserStateService>();
+builder.Services.AddScoped<LicenseService>();
 
 // ---- Camera capture (Phase 6): vendor-abstracted providers + orchestration service ----
 builder.Services.AddSingleton<ICameraCaptureProvider, IsapiCaptureProvider>();
@@ -181,6 +184,25 @@ app.UseSwaggerUI();
 app.UseCors();
 app.UseRateLimiter();
 app.UseAuthentication();
+
+// Server-side license gate. Public health/license status stay reachable so the client can show a useful error.
+app.Use(async (ctx, next) =>
+{
+    if (ctx.Request.Path.StartsWithSegments("/api")
+        && !ctx.Request.Path.StartsWithSegments("/api/health")
+        && !ctx.Request.Path.StartsWithSegments("/api/ping")
+        && !ctx.Request.Path.StartsWithSegments("/api/license"))
+    {
+        var license = await ctx.RequestServices.GetRequiredService<LicenseService>().CheckAsync();
+        if (!license.IsValid)
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await ctx.Response.WriteAsJsonAsync(license);
+            return;
+        }
+    }
+    await next();
+});
 
 // Global account-state gate: deactivated users and pending forced-password-change users
 // are blocked on ALL business APIs (auth endpoints excluded so they can change the password).

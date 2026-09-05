@@ -76,6 +76,23 @@ public class PrintEngineService : IPrintEngineService
         return doc;
     }
 
+    public async Task<PrintDocument> BuildSalePurchaseSlipAsync(int salePurchaseId, string stage, string generatedByUserName)
+    {
+        var p = await _db.SalePurchases.AsNoTracking().Include(x => x.Item).Include(x => x.Party)
+            .Include(x => x.VehicleType).FirstOrDefaultAsync(x => x.Id == salePurchaseId);
+        if (p == null) throw new KeyNotFoundException($"SalePurchase {salePurchaseId} not found.");
+        stage = stage.ToUpperInvariant();
+        if (stage is not ("TARE" or "GROSS")) throw new ArgumentException("Stage must be TARE or GROSS.");
+        if (stage == "GROSS" && p.WeighmentStatus != "COMPLETED")
+            throw new InvalidOperationException("Gross slip is available only after SalePurchase completion.");
+        var doc = await BaseDocAsync(null, generatedByUserName);
+        doc.TitleHindi = stage == "TARE" ? "बिक्री/खरीद तौल पर्ची - टेयर" : "बिक्री/खरीद तौल पर्ची - अंतिम";
+        doc.TitleEnglish = stage == "TARE" ? "Sale/Purchase Weighment Slip - Tare" : "Sale/Purchase Weighment Slip - Final";
+        doc.QrValue = p.Id;
+        doc.Rows = SalePurchaseRows(p, stage);
+        return doc;
+    }
+
     public PrintDocument BuildTestDocument(string language, string generatedByUserName) => new()
     {
         Language = language,
@@ -230,4 +247,32 @@ public class PrintEngineService : IPrintEngineService
         new("भुगतान तिथि", "Payment Date", p.PaymentDate.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
         new("भुगतान कर्ता", "Paid By", p.PaidByUserName),
     };
+
+    private static List<PrintRow> SalePurchaseRows(SalePurchase p, string stage)
+    {
+        var rows = new List<PrintRow>
+        {
+            new("बिक्री/खरीद क्रमांक", "SalePurchase ID", p.Id.ToString()),
+            new("वस्तु", "Item", p.Item.ItemName),
+            new("पार्टी", "Party", p.Party.PartyName),
+            new("वाहन प्रकार", "Vehicle Type", p.VehicleType.VehicleTypeName),
+            new("वाहन क्रमांक", "Vehicle Number", p.VehicleNumber),
+            new("चालक", "Driver", p.DriverName),
+            new("टिप्पणी", "Remark", p.Remark ?? "-"),
+            new("टेयर वजन (क्विंटल)", "Tare Weight (Qtl)", p.TareWeightQuintal.ToString("F2")),
+            new("टेयर तिथि/समय", "Tare Date/Time", p.TareDateTime.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
+            new("टेयर ऑपरेटर", "Tare Operator", p.TareByUserName),
+            new("स्थिति", "Status", p.WeighmentStatus)
+        };
+        if (stage == "GROSS") rows.AddRange(new[]
+        {
+            new PrintRow("सकल वजन (क्विंटल)", "Gross Weight (Qtl)", p.GrossWeightQuintal?.ToString("F2") ?? "-"),
+            new PrintRow("अंतिम वजन (क्विंटल)", "Final Weight (Qtl)", p.FinalWeightQuintal?.ToString("F2") ?? "-"),
+            new PrintRow("दर", "Rate", p.Rate?.ToString("F2") ?? "-"),
+            new PrintRow("राशि (₹)", "Amount (Rs)", p.Amount?.ToString("F2") ?? "-"),
+            new PrintRow("सकल तिथि/समय", "Gross Date/Time", p.GrossDateTime?.ToLocalTime().ToString("dd-MM-yyyy HH:mm") ?? "-"),
+            new PrintRow("सकल ऑपरेटर", "Gross Operator", p.GrossByUserName ?? "-")
+        });
+        return rows;
+    }
 }

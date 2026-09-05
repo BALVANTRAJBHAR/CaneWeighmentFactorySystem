@@ -21,6 +21,10 @@ public class WeighingDevice : BaseEntity
     public int ReconnectAttempts { get; set; } = 5;
     public bool IsEnabled { get; set; } = true;
     public bool ActiveConfiguration { get; set; }
+    /// <summary>Operator intent persisted across API restarts: Connected | Disconnected.</summary>
+    public string DesiredConnectionState { get; set; } = "Disconnected";
+    /// <summary>Operator intent persisted across API restarts. Never inferred from a cached weight.</summary>
+    public bool DesiredReaderRunning { get; set; }
     public int? ActiveStringProfileId { get; set; }
     public StringProfile? ActiveStringProfile { get; set; }
 }

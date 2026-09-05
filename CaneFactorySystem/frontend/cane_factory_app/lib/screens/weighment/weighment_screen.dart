@@ -364,7 +364,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
             crossAxisAlignment: WrapCrossAlignment.center,
             spacing: 8,
             children: [
-              Text(live.weightQuintal.toStringAsFixed(2),
+              Text(live.isLive ? live.weightQuintal.toStringAsFixed(2) : '--',
                   style: const TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 34,
@@ -372,7 +372,10 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                       color: Color(0xFF7CFC8F))),
               const Text('Qtl',
                   style: TextStyle(color: Color(0xFF7CFC8F), fontSize: 16)),
-              Text('(${live.weightKg.toStringAsFixed(0)} KG)',
+              Text(
+                  live.isLive
+                      ? '(${live.weightKg.toStringAsFixed(0)} KG)'
+                      : 'Reading Stopped',
                   style: const TextStyle(color: Colors.white54, fontSize: 13)),
             ]),
       );
@@ -399,11 +402,14 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                           : 'Digitizer: Disconnected',
                       style: const TextStyle(fontSize: 11)),
                 ]),
-                Text(live.stable ? 'STABLE' : 'UNSTABLE',
+                Text(
+                    live.isLive
+                        ? (live.stable ? 'STABLE' : 'UNSTABLE')
+                        : live.readerState.replaceAll('_', ' '),
                     style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: live.stable
+                        color: live.stable && live.isLive
                             ? const Color(0xFF2E7D32)
                             : Colors.orange)),
                 Text(
@@ -476,6 +482,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 width: 190,
                 child: DropdownButtonFormField<int>(
                   value: _vehicleTypeId,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                       labelText: 'Vehicle Type',
                       hintText: 'Select Vehicle Type'),
@@ -483,7 +490,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                     for (final v in _vehicleTypes)
                       DropdownMenuItem(
                           value: v['id'] as int,
-                          child: Text(v['vehicleTypeName']))
+                          child: Text(v['vehicleTypeName'],
+                              overflow: TextOverflow.ellipsis))
                   ],
                   onChanged: (v) => setState(() => _vehicleTypeId = v),
                 ),
@@ -502,6 +510,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 width: 190,
                 child: DropdownButtonFormField<int>(
                   value: _varietyTypeId,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                       labelText: 'Variety Type',
                       hintText: 'Select Variety Type'),
@@ -509,7 +518,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                     for (final v in _varietyTypes)
                       DropdownMenuItem(
                           value: v['id'] as int,
-                          child: Text(v['varietyTypeName']))
+                          child: Text(v['varietyTypeName'],
+                              overflow: TextOverflow.ellipsis))
                   ],
                   onChanged: (v) {
                     setState(() {
@@ -525,12 +535,15 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 width: 190,
                 child: DropdownButtonFormField<int>(
                   value: _varietyId,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                       labelText: 'Variety', hintText: 'Select Variety'),
                   items: [
                     for (final v in _varieties)
                       DropdownMenuItem(
-                          value: v['id'] as int, child: Text(v['varietyName']))
+                          value: v['id'] as int,
+                          child: Text(v['varietyName'],
+                              overflow: TextOverflow.ellipsis))
                   ],
                   onChanged: (v) => setState(() => _varietyId = v),
                 ),

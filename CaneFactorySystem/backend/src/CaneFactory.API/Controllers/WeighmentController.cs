@@ -3,6 +3,7 @@ using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Interfaces;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
+using CaneFactory.Infrastructure.Weighing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -27,11 +28,12 @@ public class WeighmentController : ControllerBase
     private readonly IMemoryCache _cache;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ISmsService _sms;
+    private readonly WeighingService _weighing;
 
     public WeighmentController(AppDbContext db, IAuditService audit, ICurrentUser current,
-        ISequenceGenerator seq, IMemoryCache cache, IServiceScopeFactory scopeFactory, ISmsService sms)
+        ISequenceGenerator seq, IMemoryCache cache, IServiceScopeFactory scopeFactory, ISmsService sms, WeighingService weighing)
     {
-        _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache; _scopeFactory = scopeFactory; _sms = sms;
+        _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache; _scopeFactory = scopeFactory; _sms = sms; _weighing = weighing;
     }
 
     private IActionResult? Deny(string action) =>
@@ -112,9 +114,10 @@ public class WeighmentController : ControllerBase
             return BadRequest(new { message = "Selected Variety does not belong to the selected Variety Type." });
         if (req.CuttingPercent is < 0 or > 100) return BadRequest(new { message = "Cutting % must be between 0 and 100. Example: 2.00" });
         if (req.TaxPercent is < 0 or > 100) return BadRequest(new { message = "Tax % must be between 0 and 100." });
-        if (req.ScaleReadingKg <= 0) return BadRequest(new { message = "Live weight is not valid. Check the weighing indicator." });
+        if (!_weighing.TryGetUsableWeight(out var liveKg, out var liveWeightError))
+            return Conflict(new { message = liveWeightError });
 
-        var grossQuintal = WeightCalculator.KgToQuintal(req.ScaleReadingKg);
+        var grossQuintal = WeightCalculator.KgToQuintal(liveKg);
         var minError = await MinimumWeightErrorAsync(grossQuintal, applyGross: true);
         if (minError != null) return Conflict(new { message = minError, soundEvent = "BELOW_MINIMUM" });
 
@@ -141,7 +144,7 @@ public class WeighmentController : ControllerBase
             VehicleNumber = vehicleNumber,
             VarietyTypeId = req.VarietyTypeId,
             VarietyId = req.VarietyId,
-            ScaleReadingGrossKg = WeightCalculator.R2(req.ScaleReadingKg),
+            ScaleReadingGrossKg = WeightCalculator.R2(liveKg),
             GrossWeightQuintal = grossQuintal,
             GrossDateTime = now,
             GrossByUserId = _current.UserId!.Value,
@@ -185,9 +188,10 @@ public class WeighmentController : ControllerBase
         if (p.GrossTareStatus == "CANCELLED") return Conflict(new { message = "This purchase is CANCELLED." });
         if (p.GrossTareStatus == "TARE_DONE") return Conflict(new { message = "Tare is already completed for this purchase (duplicate save blocked)." });
         if (p.LockStatus == "LOCKED") return Conflict(new { message = "This purchase is LOCKED." });
-        if (req.ScaleReadingKg <= 0) return BadRequest(new { message = "Live weight is not valid. Check the weighing indicator." });
+        if (!_weighing.TryGetUsableWeight(out var liveKg, out var liveWeightError))
+            return Conflict(new { message = liveWeightError });
 
-        var tareQuintal = WeightCalculator.KgToQuintal(req.ScaleReadingKg);
+        var tareQuintal = WeightCalculator.KgToQuintal(liveKg);
         var minError = await MinimumWeightErrorAsync(tareQuintal, applyGross: false);
         if (minError != null) return Conflict(new { message = minError, soundEvent = "BELOW_MINIMUM" });
         if (tareQuintal >= p.GrossWeightQuintal)
@@ -196,7 +200,7 @@ public class WeighmentController : ControllerBase
         var (net, cutting, tax, final, amount) = WeightCalculator.Calculate(
             p.GrossWeightQuintal, tareQuintal, p.CuttingPercent, p.TaxPercent, p.Rate);
 
-        p.ScaleReadingTareKg = WeightCalculator.R2(req.ScaleReadingKg);
+        p.ScaleReadingTareKg = WeightCalculator.R2(liveKg);
         p.TareWeightQuintal = tareQuintal;
         p.TareDateTime = DateTime.UtcNow;
         p.TareByUserId = _current.UserId;

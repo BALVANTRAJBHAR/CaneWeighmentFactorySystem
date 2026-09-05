@@ -14,7 +14,7 @@ Cancel, Reverse, Pay, Export, Print, Configure, ViewCamera, ViewSensitiveData (5
 | Payment / Pay / Cancel / Reverse (Phase 9) | ✅ | View/Export/Print | — | ✅ full | — | View (own) | — |
 | Loan / Recovery (Phase 8) | ✅ | View/Export/Print | — | ✅ full incl. Cancel/Reverse | — | View (own) | — |
 | Cash evidence capture | ✅ | View | — | ✅ View/Create | — | — | — |
-| SalePurchase module (Phase 5+) | ✅ | — | — | — | — | — | ✅ View/Create/Edit/Print/Export |
+| SalePurchase module | ✅ | ✅ View/Create/Edit/Cancel/Print/Export | — | — | — | — | ✅ View/Create/Edit/Print/Export |
 | Reports / Export / Print | ✅ | ✅ | View/Export/Print | ✅ | View/Print | View (own) | View/Print |
 | Camera live view | ✅ | ✅ | ✅ | — | ✅ | — (never factory-wide) | ✅ |
 | Users management | ✅ | ✅ View/Create/Edit/Delete | — | — | — | — | — |

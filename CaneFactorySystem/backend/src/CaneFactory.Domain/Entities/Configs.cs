@@ -56,6 +56,8 @@ public class SmsConfig : BaseEntity
     public string? RequestBodyTemplate { get; set; } // placeholders: {Mobile} {Message} {ApiKey} {ApiSecret} {SenderId} {EntityId}
     public string? ResponseSuccessPath { get; set; } // dotted JSON field path, e.g. "status"; empty = any 2xx is success
     public string? ResponseSuccessValue { get; set; } // expected value at ResponseSuccessPath, e.g. "success"
+    /// <summary>Comma-separated operational recipients for completed SalePurchase weighments.</summary>
+    public string? SalePurchaseRecipients { get; set; }
 }
 
 public class SmsTemplate : BaseEntity
@@ -74,7 +76,8 @@ public class SmsLog
 {
     public int Id { get; set; }
     public string EventCode { get; set; } = string.Empty;
-    public int GrowerId { get; set; }
+    public int? GrowerId { get; set; }
+    public int? PartyId { get; set; }
     public string MobileNumber { get; set; } = string.Empty; // full number stored; masked only in API responses
     public string ReferenceId { get; set; } = string.Empty; // e.g. PUR-105, PAY-12 - idempotency key
     public int? TemplateId { get; set; }

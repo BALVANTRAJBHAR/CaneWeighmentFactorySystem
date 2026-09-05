@@ -17,6 +17,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   static const _reportTypes = {
     'purchases': 'Purchase / Weighment Report',
     'payments': 'Payment Report',
+    'sale-purchases': 'SalePurchase Weighment Report',
     'loans': 'Loan Report',
     'daily-collection': 'Daily Collection Report',
   };
@@ -48,7 +49,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
       if (_toDate != null) 'toDate': _toDate!.toIso8601String(),
       if (format != null) 'format': format,
     };
-    if (_reportType != 'daily-collection') {
+    if (_reportType == 'sale-purchases') {
+      if (_growerCode.text.trim().isNotEmpty)
+        q['vehicleNumber'] = _growerCode.text.trim();
+      if (_statusCtrl.text.trim().isNotEmpty)
+        q['status'] = _statusCtrl.text.trim();
+    } else if (_reportType != 'daily-collection') {
       if (_growerCode.text.trim().isNotEmpty)
         q['growerCode'] = _growerCode.text.trim();
       if (_statusCtrl.text.trim().isNotEmpty) {
@@ -85,7 +91,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
   Future<void> _export(String format) async {
     final ext = format == 'pdf' ? 'pdf' : 'xlsx';
     await downloadAndNotify(
-        context, '/api/reports/$_reportType', '$_reportType-report.$ext');
+        context, '/api/reports/$_reportType', '$_reportType-report.$ext',
+        queryParameters: _query(format: format));
   }
 
   @override
@@ -115,6 +122,20 @@ class _ReportsScreenState extends State<ReportsScreen> {
           'outstandingAmount',
           'issueDate',
           'loanStatus'
+        ];
+      case 'sale-purchases':
+        return [
+          'salePurchaseId',
+          'item',
+          'party',
+          'vehicleNumber',
+          'driver',
+          'tareWeightQuintal',
+          'grossWeightQuintal',
+          'finalWeightQuintal',
+          'rate',
+          'amount',
+          'status'
         ];
       case 'daily-collection':
         return ['date', 'vehicleCount', 'finalWeightQuintal', 'purchaseAmount'];
@@ -155,10 +176,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   width: 260,
                   child: DropdownButtonFormField<String>(
                     value: _reportType,
+                    isExpanded: true,
                     decoration: const InputDecoration(labelText: 'Report'),
                     items: [
                       for (final e in _reportTypes.entries)
-                        DropdownMenuItem(value: e.key, child: Text(e.value))
+                        DropdownMenuItem(
+                            value: e.key,
+                            child:
+                                Text(e.value, overflow: TextOverflow.ellipsis))
                     ],
                     onChanged: (v) => setState(() => _reportType = v!),
                   ),
@@ -180,8 +205,13 @@ class _ReportsScreenState extends State<ReportsScreen> {
                       width: 160,
                       child: TextField(
                           controller: _growerCode,
-                          decoration: const InputDecoration(
-                              labelText: 'Grower Code', hintText: '101/1'))),
+                          decoration: InputDecoration(
+                              labelText: _reportType == 'sale-purchases'
+                                  ? 'Vehicle Number'
+                                  : 'Grower Code',
+                              hintText: _reportType == 'sale-purchases'
+                                  ? 'UP32AB1234'
+                                  : '101/1'))),
                 if (_reportType != 'daily-collection')
                   SizedBox(
                       width: 160,

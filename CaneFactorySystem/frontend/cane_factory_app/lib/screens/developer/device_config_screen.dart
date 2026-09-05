@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
+import '../../providers/auth_provider.dart';
 
 /// Developer: Weighing Device configuration + String Profiles + Communication/Parser Test.
 class DeviceConfigScreen extends StatefulWidget {
@@ -18,11 +21,32 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
   Map<String, dynamic>? _parseResult;
   final _simWeight = TextEditingController(text: '25000');
   String? _status;
+  Timer? _stateTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _stateTimer =
+        Timer.periodic(const Duration(seconds: 2), (_) => _refreshLive());
+  }
+
+  @override
+  void dispose() {
+    _stateTimer?.cancel();
+    _rawHex.dispose();
+    _simWeight.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refreshLive() async {
+    try {
+      final response =
+          await ApiClient.instance.dio.get('/api/devices/live-weight');
+      if (mounted && response.statusCode == 200) {
+        setState(() => _live = Map<String, dynamic>.from(response.data));
+      }
+    } catch (_) {}
   }
 
   Future<void> _load() async {
@@ -46,6 +70,56 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
         ? res.data['message']
         : ApiClient.errorMessage(res));
     _load();
+  }
+
+  bool _isConnected(Map<String, dynamic> device) =>
+      _live?['deviceConnected'] == true &&
+      _live?['deviceName']?.toString() == device['deviceName']?.toString();
+
+  bool _isRunning(Map<String, dynamic> device) =>
+      _isConnected(device) && _live?['readerRunning'] == true;
+
+  List<PopupMenuEntry<String>> _deviceActions(Map<String, dynamic> device) {
+    final connected = _isConnected(device);
+    final running = _isRunning(device);
+    final active = device['activeConfiguration'] == true;
+    final enabled = device['isEnabled'] == true;
+    return [
+      const PopupMenuItem(value: 'edit', child: Text('Edit Configuration')),
+      if (!active)
+        const PopupMenuItem(value: 'activate', child: Text('Activate')),
+      if (active)
+        const PopupMenuItem(value: 'deactivate', child: Text('Deactivate')),
+      if (!connected && active && enabled)
+        const PopupMenuItem(value: 'connect', child: Text('Connect')),
+      if (connected && active && !running)
+        const PopupMenuItem(
+            value: 'start-reading', child: Text('Start Reading')),
+      if (running)
+        const PopupMenuItem(value: 'stop-reading', child: Text('Stop Reading')),
+      if (connected)
+        const PopupMenuItem(value: 'disconnect', child: Text('Disconnect')),
+      const PopupMenuDivider(),
+      const PopupMenuItem(value: 'test-parser', child: Text('Test Parser')),
+    ];
+  }
+
+  void _onDeviceAction(Map<String, dynamic> device, String action) {
+    switch (action) {
+      case 'edit':
+        _editDevice(device);
+        return;
+      case 'test-parser':
+        _testParser();
+        return;
+      case 'connect':
+      case 'activate':
+      case 'deactivate':
+        _post('/api/devices/${device['id']}/$action');
+        return;
+      default:
+        _post('/api/devices/$action');
+    }
   }
 
   Future<void> _testParser() async {
@@ -97,6 +171,7 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                     width: 230,
                     child: DropdownButtonFormField<String>(
                         value: connType,
+                        isExpanded: true,
                         decoration:
                             const InputDecoration(labelText: 'Connection Type'),
                         items: const [
@@ -112,6 +187,7 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                     width: 230,
                     child: DropdownButtonFormField<int>(
                         value: baud,
+                        isExpanded: true,
                         decoration:
                             const InputDecoration(labelText: 'Baud Rate'),
                         items: [
@@ -132,6 +208,7 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                     width: 230,
                     child: DropdownButtonFormField<String>(
                         value: parity,
+                        isExpanded: true,
                         decoration: const InputDecoration(labelText: 'Parity'),
                         items: const [
                           DropdownMenuItem(value: 'None', child: Text('None')),
@@ -143,6 +220,7 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                     width: 110,
                     child: DropdownButtonFormField<int>(
                         value: dataBits,
+                        isExpanded: true,
                         decoration:
                             const InputDecoration(labelText: 'Data Bits'),
                         items: const [
@@ -154,6 +232,7 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                     width: 110,
                     child: DropdownButtonFormField<int>(
                         value: stopBits,
+                        isExpanded: true,
                         decoration:
                             const InputDecoration(labelText: 'Stop Bits'),
                         items: const [
@@ -165,6 +244,7 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                     width: 230,
                     child: DropdownButtonFormField<String>(
                         value: flow,
+                        isExpanded: true,
                         decoration:
                             const InputDecoration(labelText: 'Flow Control'),
                         items: const [
@@ -178,6 +258,7 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                     width: 230,
                     child: DropdownButtonFormField<int>(
                         value: profileId,
+                        isExpanded: true,
                         decoration: const InputDecoration(
                             labelText: 'Active String Profile'),
                         items: [
@@ -235,6 +316,7 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final canConfigure = context.watch<AuthProvider>().can('Device.Configure');
     return ListView(padding: const EdgeInsets.all(14), children: [
       Text('Weighing Device / Digitizer Configuration',
           style: Theme.of(context)
@@ -265,38 +347,21 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                 title: Text(
                     '${d['deviceName']}  •  ${d['comPort']} @ ${d['baudRate']} ${d['parity']}-${d['dataBits']}-${d['stopBits']}'),
                 subtitle: Text(
-                    'Profile: ${d['activeStringProfileName'] ?? '-'} • ${d['activeConfiguration'] == true ? 'ACTIVE' : 'inactive'} • ${d['isEnabled'] == true ? 'enabled' : 'disabled'}'),
-                trailing: PopupMenuButton<String>(
-                  tooltip: 'Device actions',
-                  onSelected: (action) {
-                    if (action == 'edit')
-                      _editDevice(Map<String, dynamic>.from(d));
-                    else
-                      _post('/api/devices/${d['id']}/$action');
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(
-                        value: 'edit', child: Text('Edit configuration')),
-                    PopupMenuItem(value: 'connect', child: Text('Connect')),
-                    PopupMenuItem(value: 'activate', child: Text('Activate')),
-                    PopupMenuItem(
-                        value: 'deactivate', child: Text('Deactivate')),
-                  ],
-                ),
+                    'Profile: ${d['activeStringProfileName'] ?? '-'} • '
+                    '${_isConnected(d) ? 'Connected' : 'Disconnected'} • '
+                    '${_isRunning(d) ? 'Running' : 'Stopped'} • '
+                    '${d['activeConfiguration'] == true ? 'Active' : 'Inactive'} • '
+                    '${d['isEnabled'] == true ? 'Enabled' : 'Disabled'}'),
+                trailing: canConfigure
+                    ? PopupMenuButton<String>(
+                        tooltip: 'Device actions',
+                        onSelected: (action) => _onDeviceAction(
+                            Map<String, dynamic>.from(d), action),
+                        itemBuilder: (_) =>
+                            _deviceActions(Map<String, dynamic>.from(d)),
+                      )
+                    : null,
               ),
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              FilledButton.tonal(
-                  onPressed: () => _post('/api/devices/start-reading'),
-                  child: const Text('Start Reading')),
-              const SizedBox(width: 8),
-              FilledButton.tonal(
-                  onPressed: () => _post('/api/devices/stop-reading'),
-                  child: const Text('Stop Reading')),
-              const SizedBox(width: 8),
-              FilledButton.tonal(
-                  onPressed: () => _post('/api/devices/disconnect'),
-                  child: const Text('Disconnect')),
-            ]),
           ]),
         ),
       ),
@@ -317,6 +382,7 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                     width: 280,
                     child: DropdownButtonFormField<int>(
                       value: _testProfileId,
+                      isExpanded: true,
                       decoration:
                           const InputDecoration(labelText: 'String Profile'),
                       items: [
@@ -342,7 +408,8 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                   ),
                   const SizedBox(width: 10),
                   FilledButton(
-                      onPressed: _testParser, child: const Text('Test Parser')),
+                      onPressed: canConfigure ? _testParser : null,
+                      child: const Text('Test Parser')),
                 ]),
             if (_parseResult != null)
               Container(
@@ -392,20 +459,25 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                   ),
                   const SizedBox(width: 8),
                   FilledButton.tonal(
-                      onPressed: () => _post('/api/devices/simulator/start', {
-                            'targetKg':
-                                double.tryParse(_simWeight.text) ?? 25000
-                          }),
+                      onPressed: canConfigure
+                          ? () => _post('/api/devices/simulator/start', {
+                                'targetKg':
+                                    double.tryParse(_simWeight.text) ?? 25000
+                              })
+                          : null,
                       child: const Text('Start Simulator')),
                   const SizedBox(width: 8),
                   FilledButton.tonal(
-                      onPressed: () => _post(
-                          '/api/devices/simulator/set-weight',
-                          {'kg': double.tryParse(_simWeight.text) ?? 0}),
+                      onPressed: canConfigure
+                          ? () => _post('/api/devices/simulator/set-weight',
+                              {'kg': double.tryParse(_simWeight.text) ?? 0})
+                          : null,
                       child: const Text('Set Exact Weight')),
                   const SizedBox(width: 8),
                   FilledButton.tonal(
-                      onPressed: () => _post('/api/devices/simulator/stop'),
+                      onPressed: canConfigure
+                          ? () => _post('/api/devices/simulator/stop')
+                          : null,
                       child: const Text('Stop')),
                 ]),
             if (_live != null)
@@ -435,8 +507,10 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                 subtitle: Text(
                     'STX ${p['startByte'] ?? '-'} • Sign@${p['signPosition'] ?? '-'} • Weight@${p['weightStartPosition']} len ${p['weightLength']} • ETX ${p['endByte'] ?? '-'} • ${p['weightUnit']}'),
                 trailing: TextButton(
-                    onPressed: () =>
-                        _post('/api/string-profiles/${p['id']}/duplicate'),
+                    onPressed: canConfigure
+                        ? () =>
+                            _post('/api/string-profiles/${p['id']}/duplicate')
+                        : null,
                     child: const Text('Duplicate')),
               ),
             const Text(

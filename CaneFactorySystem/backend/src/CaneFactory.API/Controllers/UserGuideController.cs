@@ -146,7 +146,7 @@ public class UserGuideController : ControllerBase
         ["SalePurchase"] = new object[]
         {
             new Section("1. Overview", new[]{
-                "You operate the Sugar/Gud/Bagasse/Molasses SalePurchase weighment (module activates fully in a later phase).",
+                "You operate the separate Sugar/Gud/Bagasse/Molasses SalePurchase weighment module.",
                 "You do NOT have access to cane payment, loans, user management or developer configuration." }),
             new Section("2. Workflow (TARE first)", new[]{
                 "1. Select Item and Party, Vehicle Type/Number, Driver Name, Remark.",

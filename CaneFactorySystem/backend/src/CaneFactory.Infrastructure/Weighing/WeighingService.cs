@@ -34,9 +34,28 @@ public class WeighingService
 
     private decimal _lastWeightKg;
     private DateTime _lastChangeAt = DateTime.UtcNow;
-    private LiveWeightDto _current = new() { DeviceConnected = false };
+    private LiveWeightDto _current = new() { DeviceConnected = false, ReaderState = "DISCONNECTED" };
     public bool SimulatorRunning => _simCts != null;
     public bool Reading => _readCts != null;
+    public bool Connected => _port?.IsOpen == true;
+    public bool IsOperatingDevice(int deviceId) => _device?.Id == deviceId && (_port?.IsOpen == true || Reading);
+
+    public bool TryGetUsableWeight(out decimal weightKg, out string reason)
+    {
+        var current = Current;
+        var fresh = current.LastReceivedAt != default && DateTime.UtcNow - current.LastReceivedAt <= TimeSpan.FromSeconds(5);
+        if (!current.DeviceConnected || !current.ReaderRunning || !current.IsLive || !fresh)
+        {
+            weightKg = 0;
+            reason = current.ReaderState == "STOPPED"
+                ? "Reading is stopped. Start the weighing device before saving."
+                : "No fresh live weight is available. Connect and start the weighing device before saving.";
+            return false;
+        }
+        weightKg = current.WeightKg;
+        reason = string.Empty;
+        return true;
+    }
 
     public WeighingService(IServiceScopeFactory scopes, ILiveWeightBroadcaster broadcaster, ILogger<WeighingService> log)
     {
@@ -85,12 +104,12 @@ public class WeighingService
             };
             port.Open();
             _port = port;
-            UpdateState(d => { d.DeviceConnected = true; d.DeviceName = device.DeviceName; d.Error = null; });
+            UpdateState(d => { d.DeviceConnected = true; d.DeviceName = device.DeviceName; d.Error = null; d.ReaderRunning = false; d.IsLive = false; d.ReaderState = "CONNECTED"; d.WeightKg = 0; d.WeightQuintal = 0; d.LastReceivedAt = default; });
             return (true, $"Connected to {device.ComPort} @ {device.BaudRate} baud.");
         }
         catch (Exception ex)
         {
-            UpdateState(d => { d.DeviceConnected = false; d.Error = ex.Message; });
+            ClearLiveState("DISCONNECTED", ex.Message);
             return (false, $"Serial connection failed: {ex.Message}");
         }
     }
@@ -101,7 +120,7 @@ public class WeighingService
         StopSimulator();
         try { _port?.Close(); _port?.Dispose(); } catch { /* ignore */ }
         _port = null;
-        UpdateState(d => { d.DeviceConnected = false; });
+        ClearLiveState("DISCONNECTED");
     }
 
     public (bool ok, string message) StartReading()
@@ -109,6 +128,7 @@ public class WeighingService
         if (_port == null || !_port.IsOpen) return (false, "Device is not connected.");
         if (_readCts != null) return (true, "Already reading.");
         _readCts = new CancellationTokenSource();
+        UpdateState(d => { d.ReaderRunning = true; d.IsLive = false; d.ReaderState = "READING"; d.WeightKg = 0; d.WeightQuintal = 0; d.LastReceivedAt = default; d.Error = null; });
         var interval = Math.Max(20, _device?.ReadIntervalMs ?? 200);
         _ = Task.Run(() => ReadLoopAsync(interval, _readCts.Token));
         return (true, "Reading started.");
@@ -118,6 +138,7 @@ public class WeighingService
     {
         _readCts?.Cancel();
         _readCts = null;
+        if (_simCts == null) ClearLiveState(_port is { IsOpen: true } ? "STOPPED" : "DISCONNECTED");
     }
 
     private async Task ReadLoopAsync(int intervalMs, CancellationToken ct)
@@ -196,7 +217,7 @@ public class WeighingService
     {
         if (_parser == null || _profile == null) return;
         var parsed = _parser.Parse(frame);
-        if (!parsed.FrameValid || parsed.NumericWeight == null) return; // invalid frames ignored safely
+        if (!parsed.FrameValid || parsed.NumericWeight == null || (!Reading && !SimulatorRunning)) return; // invalid/stopped frames ignored safely
 
         var kg = parsed.NumericWeight.Value;
         var now = DateTime.UtcNow;
@@ -213,6 +234,9 @@ public class WeighingService
             d.WeightUnit = _profile.WeightUnit;
             d.Stable = stable;
             d.LastReceivedAt = now;
+            d.ReaderRunning = Reading || SimulatorRunning;
+            d.IsLive = true;
+            d.ReaderState = "READING";
             d.Error = null;
         });
         _ = _broadcaster.BroadcastAsync(Current);
@@ -224,7 +248,7 @@ public class WeighingService
         StopSimulator();
         _profile = profile;
         _parser = ParserFactory.Create(profile);
-        UpdateState(d => { d.DeviceConnected = true; d.DeviceName = "SIMULATOR"; });
+        UpdateState(d => { d.DeviceConnected = true; d.DeviceName = "SIMULATOR"; d.ReaderRunning = true; d.IsLive = false; d.ReaderState = "READING"; });
         _simCts = new CancellationTokenSource();
         var ct = _simCts.Token;
         _ = Task.Run(async () =>
@@ -250,6 +274,7 @@ public class WeighingService
     {
         _simCts?.Cancel();
         _simCts = null;
+        if (!Reading) ClearLiveState(_port is { IsOpen: true } ? "STOPPED" : "DISCONNECTED");
     }
 
     public static byte[] BuildType15Frame(decimal kg)
@@ -277,6 +302,9 @@ public class WeighingService
                 WeightUnit = _current.WeightUnit,
                 Stable = _current.Stable,
                 DeviceConnected = _current.DeviceConnected,
+                ReaderRunning = _current.ReaderRunning,
+                IsLive = _current.IsLive,
+                ReaderState = _current.ReaderState,
                 LastReceivedAt = _current.LastReceivedAt,
                 DeviceName = _current.DeviceName,
                 Error = _current.Error
@@ -285,4 +313,16 @@ public class WeighingService
             _current = copy;
         }
     }
+
+    private void ClearLiveState(string state, string? error = null) => UpdateState(d =>
+    {
+        d.WeightKg = 0;
+        d.WeightQuintal = 0;
+        d.Stable = false;
+        d.IsLive = false;
+        d.ReaderRunning = false;
+        d.ReaderState = state;
+        d.LastReceivedAt = default;
+        d.Error = error;
+    });
 }

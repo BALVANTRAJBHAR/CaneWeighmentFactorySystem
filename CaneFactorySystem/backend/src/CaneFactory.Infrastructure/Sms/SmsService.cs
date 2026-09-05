@@ -16,6 +16,14 @@ public class SmsService : ISmsService
 
     public async Task<bool> QueueAsync(string eventCode, int growerId, string mobileNumber, string referenceId,
         Dictionary<string, string> placeholders)
+        => await QueueInternalAsync(eventCode, growerId, null, mobileNumber, referenceId, placeholders);
+
+    public async Task<bool> QueueForPartyAsync(string eventCode, int partyId, string mobileNumber, string referenceId,
+        Dictionary<string, string> placeholders)
+        => await QueueInternalAsync(eventCode, null, partyId, mobileNumber, referenceId, placeholders);
+
+    private async Task<bool> QueueInternalAsync(string eventCode, int? growerId, int? partyId, string mobileNumber,
+        string referenceId, Dictionary<string, string> placeholders)
     {
         if (string.IsNullOrWhiteSpace(mobileNumber)) return false;
 
@@ -37,6 +45,7 @@ public class SmsService : ISmsService
             {
                 EventCode = eventCode,
                 GrowerId = growerId,
+                PartyId = partyId,
                 MobileNumber = mobileNumber,
                 ReferenceId = referenceId,
                 TemplateId = template.Id,

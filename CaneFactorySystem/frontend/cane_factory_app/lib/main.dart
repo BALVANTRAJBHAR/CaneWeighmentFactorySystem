@@ -80,16 +80,56 @@ class _RootGateState extends State<RootGate> {
       _companyName = prefs.getString('cached_company_name');
     } catch (_) {}
 
+    final urlError = ApiClient.configurationError;
+    if (urlError != null) {
+      setState(() {
+        _apiError = true;
+        _status = urlError;
+      });
+      return;
+    }
     setState(() => _status = 'Checking server connection...');
     try {
-      final res = await ApiClient.instance.dio
-          .get('/api/health', options: Options(sendTimeout: const Duration(seconds: 8), receiveTimeout: const Duration(seconds: 8)));
-      if (res.statusCode != 200) throw Exception('Server responded with ${res.statusCode}');
+      final res = await ApiClient.instance.dio.get('/api/health',
+          options: Options(
+              sendTimeout: const Duration(seconds: 8),
+              receiveTimeout: const Duration(seconds: 8)));
+      if (res.statusCode != 200)
+        throw Exception('Server responded with ${res.statusCode}');
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _apiError = true;
-        _status = 'Cannot reach the server. Check your network connection and try again.';
+        _status =
+            'Cannot reach the server. Check your network connection and try again.';
+      });
+      return;
+    }
+
+    try {
+      final license = await ApiClient.instance.dio.get('/api/license/status');
+      if (license.statusCode != 200 || license.data['isValid'] != true) {
+        if (!mounted) return;
+        setState(() {
+          _apiError = true;
+          _status = license.data['message']?.toString() ??
+              'Software license validation failed.';
+        });
+        return;
+      }
+      if (license.data['isWarning'] == true && mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted)
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(license.data['message'].toString()),
+                duration: const Duration(seconds: 8)));
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _apiError = true;
+        _status = 'Could not validate the software license.';
       });
       return;
     }
@@ -106,10 +146,15 @@ class _RootGateState extends State<RootGate> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     if (_checking || _apiError) {
-      return SplashScreen(statusText: _status, hasError: _apiError, onRetry: _apiError ? _startup : null, companyName: _companyName);
+      return SplashScreen(
+          statusText: _status,
+          hasError: _apiError,
+          onRetry: _apiError ? _startup : null,
+          companyName: _companyName);
     }
     if (!auth.isLoggedIn) return const LoginScreen();
-    if (auth.mustChangePassword) return const ChangePasswordScreen(forced: true);
+    if (auth.mustChangePassword)
+      return const ChangePasswordScreen(forced: true);
     return const AppShell();
   }
 }

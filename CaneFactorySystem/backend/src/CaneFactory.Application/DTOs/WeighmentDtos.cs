@@ -90,7 +90,29 @@ public class LiveWeightDto
     public string WeightUnit { get; set; } = "KG";
     public bool Stable { get; set; }
     public bool DeviceConnected { get; set; }
+    public bool ReaderRunning { get; set; }
+    /// <summary>True only while a connected reader/simulator has supplied a current frame.</summary>
+    public bool IsLive { get; set; }
+    public string ReaderState { get; set; } = "DISCONNECTED";
     public DateTime LastReceivedAt { get; set; }
     public string? DeviceName { get; set; }
     public string? Error { get; set; }
+}
+
+public class SalePurchaseTareSaveRequest
+{
+    public int ItemId { get; set; }
+    public int PartyId { get; set; }
+    public int VehicleTypeId { get; set; }
+    public string VehicleNumber { get; set; } = string.Empty;
+    public string DriverName { get; set; } = string.Empty;
+    public string? Remark { get; set; }
+    public string? IdempotencyKey { get; set; }
+}
+
+public class SalePurchaseGrossSaveRequest
+{
+    public int SalePurchaseId { get; set; }
+    public decimal? Rate { get; set; }
+    public string? IdempotencyKey { get; set; }
 }

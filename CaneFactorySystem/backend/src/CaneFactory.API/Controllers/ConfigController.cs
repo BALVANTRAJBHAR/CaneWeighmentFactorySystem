@@ -212,7 +212,7 @@ public class ConfigController : ControllerBase
                 s.Id, s.ProviderName, s.ApiBaseUrl, s.HttpMethod,
                 HasApiKey = s.ApiKeyEncrypted != null, HasApiSecret = s.ApiSecretEncrypted != null,
                 s.AuthorizationHeader, s.SenderId, s.EntityId, s.Enabled,
-                s.Language, s.RequestContentType, s.RequestBodyTemplate, s.ResponseSuccessPath, s.ResponseSuccessValue
+                s.Language, s.RequestContentType, s.RequestBodyTemplate, s.ResponseSuccessPath, s.ResponseSuccessValue, s.SalePurchaseRecipients
             },
             templates
         });
@@ -235,6 +235,7 @@ public class ConfigController : ControllerBase
         s.RequestBodyTemplate = req.RequestBodyTemplate;
         s.ResponseSuccessPath = req.ResponseSuccessPath;
         s.ResponseSuccessValue = req.ResponseSuccessValue;
+        s.SalePurchaseRecipients = req.SalePurchaseRecipients;
         if (isNew) _db.SmsConfigs.Add(s);
         else { s.UpdatedAt = DateTime.UtcNow; s.UpdatedBy = _current.UserId; }
         await _db.SaveChangesAsync();
@@ -244,12 +245,12 @@ public class ConfigController : ControllerBase
     }
 
     /// <summary>Create or update the message template for one EventCode+Language combination.
-    /// EventCode must be TARE_COMPLETED or PAYMENT_COMPLETED (the only two SMS events in Phase 10).</summary>
+    /// EventCode selects a known successful business event.</summary>
     [HasPermission("Sms.Configure")]
     [HttpPost("sms/templates")]
     public async Task<IActionResult> SaveSmsTemplate([FromBody] SmsTemplateSaveRequest req)
     {
-        var validEvents = new[] { "TARE_COMPLETED", "PAYMENT_COMPLETED" };
+        var validEvents = new[] { "TARE_COMPLETED", "PAYMENT_COMPLETED", "SALE_PURCHASE_COMPLETED" };
         if (!validEvents.Contains(req.EventCode))
             return BadRequest(new { message = $"eventCode must be one of: {string.Join(", ", validEvents)}" });
         if (req.Language is not ("hi" or "en"))
@@ -400,6 +401,7 @@ public class SmsSaveRequest
     public string? RequestBodyTemplate { get; set; }
     public string? ResponseSuccessPath { get; set; }
     public string? ResponseSuccessValue { get; set; }
+    public string? SalePurchaseRecipients { get; set; }
 }
 
 public class SmsTemplateSaveRequest
@@ -416,5 +418,4 @@ public class SmsTestSendRequest
     public string MobileNumber { get; set; } = string.Empty;
     public string? Message { get; set; }
 }
-
 
