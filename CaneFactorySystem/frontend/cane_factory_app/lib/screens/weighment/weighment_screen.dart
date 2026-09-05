@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
@@ -77,7 +76,9 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         if (vt.statusCode == 200) _vehicleTypes = vt.data['items'];
         if (vart.statusCode == 200) _varietyTypes = vart.data['items'];
         if (cams.statusCode == 200 && cams.data is List) {
-          _cameras = (cams.data as List).where((c) => c['liveViewEnabled'] == true && c['status'] == true).toList();
+          _cameras = (cams.data as List)
+              .where((c) => c['liveViewEnabled'] == true && c['status'] == true)
+              .toList();
         }
       });
     } catch (_) {}
@@ -85,7 +86,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
 
   Future<void> _loadPending() async {
     try {
-      final res = await ApiClient.instance.dio.get('/api/weighment/pending-tare');
+      final res =
+          await ApiClient.instance.dio.get('/api/weighment/pending-tare');
       if (res.statusCode == 200 && mounted) setState(() => _pending = res.data);
     } catch (_) {}
   }
@@ -114,7 +116,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     }
     final cfg = cfgRes.data;
     final outcome = await PrintService.printDocument(
-      documentUrl: '/api/print/purchase/$_lastCapturedPurchaseId?stage=$stage&format=final',
+      documentUrl:
+          '/api/print/purchase/$_lastCapturedPurchaseId?stage=$stage&format=final',
       printerType: cfg['printerType'] ?? 'DotMatrix',
       printerName: cfg['printerName'] ?? '',
     );
@@ -122,7 +125,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   }
 
   Future<void> _loadVarieties(int typeId) async {
-    final res = await ApiClient.instance.dio.get('/api/varieties/by-type/$typeId');
+    final res =
+        await ApiClient.instance.dio.get('/api/varieties/by-type/$typeId');
     if (res.statusCode == 200 && mounted) setState(() => _varieties = res.data);
   }
 
@@ -132,8 +136,11 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     _lastCapturedPurchaseId = purchaseId;
     await Future.delayed(const Duration(seconds: 2));
     try {
-      final res = await ApiClient.instance.dio.get('/api/purchases/$purchaseId/images');
-      if (res.statusCode == 200 && mounted && _lastCapturedPurchaseId == purchaseId) {
+      final res =
+          await ApiClient.instance.dio.get('/api/purchases/$purchaseId/images');
+      if (res.statusCode == 200 &&
+          mounted &&
+          _lastCapturedPurchaseId == purchaseId) {
         setState(() => _capturedImages = res.data);
       }
     } catch (_) {}
@@ -144,8 +151,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       _grower = null;
       _growerError = null;
     });
-    final res = await ApiClient.instance.dio
-        .get('/api/growers/by-code', queryParameters: {'code': _growerCode.text.trim()});
+    final res = await ApiClient.instance.dio.get('/api/growers/by-code',
+        queryParameters: {'code': _growerCode.text.trim()});
     setState(() {
       if (res.statusCode == 200) {
         _grower = Map<String, dynamic>.from(res.data);
@@ -160,7 +167,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       _selectedPurchase = null;
       _tareError = null;
     });
-    final res = await ApiClient.instance.dio.get('/api/weighment/purchase/$id/for-tare');
+    final res = await ApiClient.instance.dio
+        .get('/api/weighment/purchase/$id/for-tare');
     setState(() {
       if (res.statusCode == 200) {
         _selectedPurchase = Map<String, dynamic>.from(res.data);
@@ -175,17 +183,26 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(msg, style: const TextStyle(fontSize: 15)),
         duration: Duration(seconds: error ? 5 : 4),
-        backgroundColor: error ? Theme.of(context).colorScheme.error : const Color(0xFF2E7D32)));
+        backgroundColor: error
+            ? Theme.of(context).colorScheme.error
+            : const Color(0xFF2E7D32)));
   }
 
   Future<void> _saveGross() async {
     final live = context.read<LiveWeightProvider>().current;
-    if (_grower == null) return _toast('Lookup a valid Grower Code first (press ENTER).', error: true);
-    if (_vehicleTypeId == null) return _toast('Select Vehicle Type.', error: true);
-    if (_vehicleNumber.text.trim().length < 4) return _toast('Enter a valid Vehicle Number. Example: UP32AB1234', error: true);
-    if (_varietyTypeId == null || _varietyId == null) return _toast('Select Variety Type and Variety.', error: true);
+    if (_grower == null)
+      return _toast('Lookup a valid Grower Code first (press ENTER).',
+          error: true);
+    if (_vehicleTypeId == null)
+      return _toast('Select Vehicle Type.', error: true);
+    if (_vehicleNumber.text.trim().length < 4)
+      return _toast('Enter a valid Vehicle Number. Example: UP32AB1234',
+          error: true);
+    if (_varietyTypeId == null || _varietyId == null)
+      return _toast('Select Variety Type and Variety.', error: true);
     setState(() => _saving = true);
-    final res = await ApiClient.instance.dio.post('/api/weighment/gross', data: {
+    final res =
+        await ApiClient.instance.dio.post('/api/weighment/gross', data: {
       'growerCode': _grower!['growerCode'],
       'vehicleTypeId': _vehicleTypeId,
       'vehicleNumber': _vehicleNumber.text.trim().toUpperCase(),
@@ -194,7 +211,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       'cuttingPercent': double.tryParse(_cutting.text) ?? 0,
       'taxPercent': double.tryParse(_tax.text) ?? 0,
       'scaleReadingKg': live.weightKg,
-      'idempotencyKey': 'gross-${_grower!['growerCode']}-${DateTime.now().millisecondsSinceEpoch ~/ 30000}',
+      'idempotencyKey':
+          'gross-${_grower!['growerCode']}-${DateTime.now().millisecondsSinceEpoch ~/ 30000}',
     });
     setState(() => _saving = false);
     if (res.statusCode == 200) {
@@ -219,7 +237,10 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
 
   Future<void> _saveTare() async {
     final live = context.read<LiveWeightProvider>().current;
-    if (_selectedPurchase == null) return _toast('Select a pending purchase (double-click a row or enter Purchase ID).', error: true);
+    if (_selectedPurchase == null)
+      return _toast(
+          'Select a pending purchase (double-click a row or enter Purchase ID).',
+          error: true);
     setState(() => _saving = true);
     final res = await ApiClient.instance.dio.post('/api/weighment/tare', data: {
       'purchaseId': _selectedPurchase!['purchaseId'],
@@ -252,110 +273,164 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     _sound.onWeight(live.weightQuintal);
     final scheme = Theme.of(context).colorScheme;
 
-    return Padding(
-      padding: const EdgeInsets.all(10),
-      child: Column(children: [
-        // ---------- TOP: mode radio + live weight + status ----------
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            child: Row(children: [
-              for (final m in [(true, 'GROSS'), (false, 'TARE')])
-                Row(mainAxisSize: MainAxisSize.min, children: [
-                  Radio<bool>(
-                      value: m.$1,
-                      groupValue: _grossMode,
-                      onChanged: (v) {
-                        _sound.reset(); // mode change stops any repeating message
-                        setState(() => _grossMode = v!);
-                        _loadPending();
-                      }),
-                  Text(m.$2,
-                      style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 16,
-                          color: _grossMode == m.$1 ? scheme.primary : null)),
-                  const SizedBox(width: 10),
-                ]),
-              const SizedBox(width: 20),
-              // LIVE WEIGHT display
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0D1B0F),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: live.stable ? const Color(0xFF2E7D32) : Colors.orange, width: 2),
-                  ),
-                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Text(live.weightQuintal.toStringAsFixed(2),
-                        style: const TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 34,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF7CFC8F))),
-                    const SizedBox(width: 8),
-                    const Text('Qtl', style: TextStyle(color: Color(0xFF7CFC8F), fontSize: 16)),
-                    const SizedBox(width: 16),
-                    Text('(${live.weightKg.toStringAsFixed(0)} KG)',
-                        style: const TextStyle(color: Colors.white54, fontSize: 13)),
-                  ]),
-                ),
+    return SafeArea(
+      child: LayoutBuilder(builder: (context, constraints) {
+        final compactHeader = constraints.maxWidth < 1100;
+        final gridHeight = constraints.maxHeight < 700 ? 170.0 : 210.0;
+        return Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(children: [
+            // ---------- TOP: mode radio + live weight + status ----------
+            Card(
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                child: compactHeader
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                            _modeSelector(scheme),
+                            const SizedBox(height: 8),
+                            _liveWeightDisplay(live),
+                            const SizedBox(height: 8),
+                            _deviceStatus(live, auth),
+                          ])
+                    : Row(children: [
+                        _modeSelector(scheme),
+                        const SizedBox(width: 20),
+                        // LIVE WEIGHT display
+                        Expanded(
+                          child: _liveWeightDisplay(live),
+                        ),
+                        const SizedBox(width: 14),
+                        _deviceStatus(live, auth),
+                      ]),
               ),
-              const SizedBox(width: 14),
-              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Row(children: [
+            ),
+            const SizedBox(height: 6),
+            // ---------- CENTER: entry panel + cameras ----------
+            Expanded(
+              child:
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(
+                    flex: 3, child: _grossMode ? _grossPanel() : _tarePanel()),
+                if (_cameras.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  SizedBox(width: 230, child: _cameraPanel()),
+                ],
+              ]),
+            ),
+            const SizedBox(height: 6),
+            // ---------- BOTTOM: pending grid ----------
+            SizedBox(height: gridHeight, child: _pendingGrid()),
+          ]),
+        );
+      }),
+    );
+  }
+
+  Widget _modeSelector(ColorScheme scheme) => RadioGroup<bool>(
+        groupValue: _grossMode,
+        onChanged: (v) {
+          _sound.reset();
+          setState(() => _grossMode = v!);
+          _loadPending();
+        },
+        child: Wrap(children: [
+          for (final m in [(true, 'GROSS'), (false, 'TARE')])
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Radio<bool>(value: m.$1),
+              Text(m.$2,
+                  style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                      color: _grossMode == m.$1 ? scheme.primary : null)),
+              const SizedBox(width: 10),
+            ]),
+        ]),
+      );
+
+  Widget _liveWeightDisplay(dynamic live) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 18),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0D1B0F),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: live.stable ? const Color(0xFF2E7D32) : Colors.orange,
+              width: 2),
+        ),
+        child: Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            children: [
+              Text(live.weightQuintal.toStringAsFixed(2),
+                  style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 34,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF7CFC8F))),
+              const Text('Qtl',
+                  style: TextStyle(color: Color(0xFF7CFC8F), fontSize: 16)),
+              Text('(${live.weightKg.toStringAsFixed(0)} KG)',
+                  style: const TextStyle(color: Colors.white54, fontSize: 13)),
+            ]),
+      );
+
+  Widget _deviceStatus(dynamic live, AuthProvider auth) => Wrap(
+        spacing: 12,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(mainAxisSize: MainAxisSize.min, children: [
                   Icon(live.deviceConnected ? Icons.usb : Icons.usb_off,
-                      size: 15, color: live.deviceConnected ? const Color(0xFF2E7D32) : Colors.red),
+                      size: 15,
+                      color: live.deviceConnected
+                          ? const Color(0xFF2E7D32)
+                          : Colors.red),
                   const SizedBox(width: 4),
-                  Text(live.deviceConnected ? 'Digitizer: ${live.deviceName ?? "Connected"}' : 'Digitizer: Disconnected',
+                  Text(
+                      live.deviceConnected
+                          ? 'Digitizer: ${live.deviceName ?? "Connected"}'
+                          : 'Digitizer: Disconnected',
                       style: const TextStyle(fontSize: 11)),
                 ]),
                 Text(live.stable ? 'STABLE' : 'UNSTABLE',
                     style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: live.stable ? const Color(0xFF2E7D32) : Colors.orange)),
+                        color: live.stable
+                            ? const Color(0xFF2E7D32)
+                            : Colors.orange)),
                 Text(
                     live.lastReceivedAt == null
                         ? 'No data yet'
                         : 'Last: ${DateFormat('HH:mm:ss').format(live.lastReceivedAt!.toLocal())}',
                     style: const TextStyle(fontSize: 10)),
               ]),
-              const SizedBox(width: 12),
-              Chip(
-                avatar: const Icon(Icons.person, size: 14),
-                visualDensity: VisualDensity.compact,
-                label: Text('${auth.user?['username']} • ${auth.roles.join(",")}', style: const TextStyle(fontSize: 11)),
-              ),
-            ]),
-          ),
-        ),
-        const SizedBox(height: 6),
-        // ---------- CENTER: entry panel + cameras ----------
-        Expanded(
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Expanded(flex: 3, child: _grossMode ? _grossPanel() : _tarePanel()),
-            if (_cameras.isNotEmpty) ...[
-              const SizedBox(width: 6),
-              SizedBox(width: 230, child: _cameraPanel()),
-            ],
-          ]),
-        ),
-        const SizedBox(height: 6),
-        // ---------- BOTTOM: pending grid ----------
-        SizedBox(height: 220, child: _pendingGrid()),
-      ]),
-    );
-  }
+          Chip(
+              avatar: const Icon(Icons.person, size: 14),
+              visualDensity: VisualDensity.compact,
+              label: Text('${auth.user?['username']} • ${auth.roles.join(",")}',
+                  style: const TextStyle(fontSize: 11))),
+        ],
+      );
 
   Widget _grossPanel() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: SingleChildScrollView(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('GROSS ENTRY', style: TextStyle(fontWeight: FontWeight.w800, color: Theme.of(context).colorScheme.primary)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('GROSS ENTRY',
+                style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: Theme.of(context).colorScheme.primary)),
             const SizedBox(height: 10),
             Row(children: [
               SizedBox(
@@ -364,19 +439,24 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                   controller: _growerCode,
                   autofocus: true,
                   decoration: const InputDecoration(
-                      labelText: 'Grower Code', hintText: 'Example: 101/1', prefixIcon: Icon(Icons.badge_outlined, size: 18)),
+                      labelText: 'Grower Code',
+                      hintText: 'Example: 101/1',
+                      prefixIcon: Icon(Icons.badge_outlined, size: 18)),
                   onSubmitted: (_) => _lookupGrower(),
                 ),
               ),
               const SizedBox(width: 8),
-              FilledButton.tonal(onPressed: _lookupGrower, child: const Text('Lookup (Enter)')),
+              FilledButton.tonal(
+                  onPressed: _lookupGrower,
+                  child: const Text('Lookup (Enter)')),
               const SizedBox(width: 14),
               if (_grower != null)
                 Expanded(
                   child: Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                        color: const Color(0xFF2E7D32).withOpacity(0.10), borderRadius: BorderRadius.circular(8)),
+                        color: const Color(0xFF2E7D32).withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(8)),
                     child: Text(
                       '${_grower!['growerName']}  S/o ${_grower!['fatherName']}  •  Village: ${_grower!['villageName']}  •  '
                       'Bank: ${_grower!['bankName'] ?? '-'} ${_grower!['accountMasked'] ?? ''}',
@@ -385,7 +465,10 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                   ),
                 ),
               if (_growerError != null)
-                Expanded(child: Text(_growerError!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+                Expanded(
+                    child: Text(_growerError!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error))),
             ]),
             const SizedBox(height: 12),
             Wrap(spacing: 12, runSpacing: 12, children: [
@@ -393,8 +476,15 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 width: 190,
                 child: DropdownButtonFormField<int>(
                   value: _vehicleTypeId,
-                  decoration: const InputDecoration(labelText: 'Vehicle Type', hintText: 'Select Vehicle Type'),
-                  items: [for (final v in _vehicleTypes) DropdownMenuItem(value: v['id'] as int, child: Text(v['vehicleTypeName']))],
+                  decoration: const InputDecoration(
+                      labelText: 'Vehicle Type',
+                      hintText: 'Select Vehicle Type'),
+                  items: [
+                    for (final v in _vehicleTypes)
+                      DropdownMenuItem(
+                          value: v['id'] as int,
+                          child: Text(v['vehicleTypeName']))
+                  ],
                   onChanged: (v) => setState(() => _vehicleTypeId = v),
                 ),
               ),
@@ -403,15 +493,24 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 child: TextField(
                   controller: _vehicleNumber,
                   textCapitalization: TextCapitalization.characters,
-                  decoration: const InputDecoration(labelText: 'Vehicle Number', hintText: 'Example: UP32AB1234'),
+                  decoration: const InputDecoration(
+                      labelText: 'Vehicle Number',
+                      hintText: 'Example: UP32AB1234'),
                 ),
               ),
               SizedBox(
                 width: 190,
                 child: DropdownButtonFormField<int>(
                   value: _varietyTypeId,
-                  decoration: const InputDecoration(labelText: 'Variety Type', hintText: 'Select Variety Type'),
-                  items: [for (final v in _varietyTypes) DropdownMenuItem(value: v['id'] as int, child: Text(v['varietyTypeName']))],
+                  decoration: const InputDecoration(
+                      labelText: 'Variety Type',
+                      hintText: 'Select Variety Type'),
+                  items: [
+                    for (final v in _varietyTypes)
+                      DropdownMenuItem(
+                          value: v['id'] as int,
+                          child: Text(v['varietyTypeName']))
+                  ],
                   onChanged: (v) {
                     setState(() {
                       _varietyTypeId = v;
@@ -426,8 +525,13 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 width: 190,
                 child: DropdownButtonFormField<int>(
                   value: _varietyId,
-                  decoration: const InputDecoration(labelText: 'Variety', hintText: 'Select Variety'),
-                  items: [for (final v in _varieties) DropdownMenuItem(value: v['id'] as int, child: Text(v['varietyName']))],
+                  decoration: const InputDecoration(
+                      labelText: 'Variety', hintText: 'Select Variety'),
+                  items: [
+                    for (final v in _varieties)
+                      DropdownMenuItem(
+                          value: v['id'] as int, child: Text(v['varietyName']))
+                  ],
                   onChanged: (v) => setState(() => _varietyId = v),
                 ),
               ),
@@ -435,18 +539,26 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 width: 120,
                 child: TextField(
                   controller: _cutting,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))],
-                  decoration: const InputDecoration(labelText: 'Cutting %', hintText: 'Example: 2.00'),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))
+                  ],
+                  decoration: const InputDecoration(
+                      labelText: 'Cutting %', hintText: 'Example: 2.00'),
                 ),
               ),
               SizedBox(
                 width: 120,
                 child: TextField(
                   controller: _tax,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))],
-                  decoration: const InputDecoration(labelText: 'Tax %', hintText: 'Example: 0.00'),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))
+                  ],
+                  decoration: const InputDecoration(
+                      labelText: 'Tax %', hintText: 'Example: 0.00'),
                 ),
               ),
             ]),
@@ -455,7 +567,9 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
               onPressed: _saving ? null : _saveGross,
               icon: const Icon(Icons.save_outlined),
               label: Text(_saving ? 'Saving...' : 'SAVE GROSS'),
-              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 34, vertical: 18)),
+              style: FilledButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 34, vertical: 18)),
             ),
           ]),
         ),
@@ -469,8 +583,12 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: SingleChildScrollView(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('TARE ENTRY', style: TextStyle(fontWeight: FontWeight.w800, color: Theme.of(context).colorScheme.primary)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('TARE ENTRY',
+                style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: Theme.of(context).colorScheme.primary)),
             const SizedBox(height: 10),
             Row(children: [
               SizedBox(
@@ -480,7 +598,9 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: const InputDecoration(
-                      labelText: 'Purchase ID', hintText: 'Example: 15482', prefixIcon: Icon(Icons.receipt_long, size: 18)),
+                      labelText: 'Purchase ID',
+                      hintText: 'Example: 15482',
+                      prefixIcon: Icon(Icons.receipt_long, size: 18)),
                   onSubmitted: (v) {
                     final id = int.tryParse(v);
                     if (id != null) _selectPurchase(id);
@@ -495,31 +615,45 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                   },
                   child: const Text('Fetch (Enter)')),
               const SizedBox(width: 10),
-              const Text('or double-click a row in the pending grid below', style: TextStyle(fontSize: 12)),
+              const Text('or double-click a row in the pending grid below',
+                  style: TextStyle(fontSize: 12)),
             ]),
             if (_tareError != null)
               Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text(_tareError!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+                  child: Text(_tareError!,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error))),
             if (p != null) ...[
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withOpacity(0.07),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.07),
                     borderRadius: BorderRadius.circular(10)),
                 child: Wrap(spacing: 26, runSpacing: 8, children: [
                   _ro('Purchase ID', '${p['purchaseId']}'),
                   _ro('Grower', '${p['growerCode']} ${p['growerName']}'),
                   _ro('Father', '${p['fatherName']}'),
                   _ro('Village', '${p['villageName']}'),
-                  _ro('Vehicle', '${p['vehicleNumber']} (${p['vehicleTypeName']})'),
+                  _ro('Vehicle',
+                      '${p['vehicleNumber']} (${p['vehicleTypeName']})'),
                   _ro('Variety', '${p['varietyName']}'),
                   _ro('Rate', (p['rate'] as num).toStringAsFixed(2)),
-                  _ro('Gross Weight', '${(p['grossWeightQuintal'] as num).toStringAsFixed(2)} Qtl'),
-                  _ro('Gross Time', '${p['grossDateTime']}'.replaceFirst('T', ' ').split('.').first),
+                  _ro('Gross Weight',
+                      '${(p['grossWeightQuintal'] as num).toStringAsFixed(2)} Qtl'),
+                  _ro(
+                      'Gross Time',
+                      '${p['grossDateTime']}'
+                          .replaceFirst('T', ' ')
+                          .split('.')
+                          .first),
                   _ro('Gross Operator', '${p['grossByUserName']}'),
-                  _ro('Cutting %', (p['cuttingPercent'] as num).toStringAsFixed(2)),
+                  _ro('Cutting %',
+                      (p['cuttingPercent'] as num).toStringAsFixed(2)),
                   _ro('Tax %', (p['taxPercent'] as num).toStringAsFixed(2)),
                 ]),
               ),
@@ -528,7 +662,9 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 onPressed: _saving ? null : _saveTare,
                 icon: const Icon(Icons.save_outlined),
                 label: Text(_saving ? 'Saving...' : 'SAVE TARE'),
-                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 34, vertical: 18)),
+                style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 34, vertical: 18)),
               ),
             ],
           ]),
@@ -537,17 +673,25 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     );
   }
 
-  Widget _ro(String label, String value) => Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-      ]);
+  Widget _ro(String label, String value) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label,
+                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            Text(value,
+                style:
+                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+          ]);
 
   Widget _cameraPanel() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(8),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          const Text('Live Cameras', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Text('Live Cameras',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
           const SizedBox(height: 6),
           Expanded(
             flex: 3,
@@ -557,19 +701,25 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                   height: 110,
                   margin: const EdgeInsets.only(bottom: 6),
                   decoration: BoxDecoration(
-                      color: Colors.black87, borderRadius: BorderRadius.circular(8)),
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(8)),
                   child: Stack(children: [
-                    const Center(child: Icon(Icons.videocam_outlined, color: Colors.white38, size: 34)),
+                    const Center(
+                        child: Icon(Icons.videocam_outlined,
+                            color: Colors.white38, size: 34)),
                     Positioned(
                         left: 6,
                         top: 4,
-                        child: Text('Camera ${c['cameraNumber']} • ${c['vendor']}',
-                            style: const TextStyle(color: Colors.white70, fontSize: 10))),
+                        child: Text(
+                            'Camera ${c['cameraNumber']} • ${c['vendor']}',
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 10))),
                     Positioned(
                         left: 6,
                         bottom: 4,
                         child: Text('${c['ipAddress']} (${c['protocol']})',
-                            style: const TextStyle(color: Colors.white38, fontSize: 9))),
+                            style: const TextStyle(
+                                color: Colors.white38, fontSize: 9))),
                   ]),
                 ),
             ]),
@@ -577,7 +727,10 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           if (_capturedImages.isNotEmpty) ...[
             const Divider(height: 12),
             Row(children: [
-              const Expanded(child: Text('Captured Evidence', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12))),
+              const Expanded(
+                  child: Text('Captured Evidence',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 12))),
               TextButton.icon(
                 onPressed: () => _manualPrint(_lastPrintStage ?? 'GROSS'),
                 icon: const Icon(Icons.print, size: 16),
@@ -588,7 +741,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
             Expanded(
               flex: 2,
               child: GridView.builder(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 4, mainAxisSpacing: 4),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2, crossAxisSpacing: 4, mainAxisSpacing: 4),
                 itemCount: _capturedImages.length,
                 itemBuilder: (ctx, i) => _evidenceThumb(_capturedImages[i]),
               ),
@@ -604,17 +758,26 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       future: _fetchImageBytes(img['id']),
       builder: (ctx, snap) {
         return Container(
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), color: Colors.black87),
+          decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6), color: Colors.black87),
           clipBehavior: Clip.antiAlias,
           child: Stack(fit: StackFit.expand, children: [
             if (snap.hasData && snap.data != null)
               Image.memory(Uint8List.fromList(snap.data!), fit: BoxFit.cover)
             else
-              const Center(child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))),
+              const Center(
+                  child: SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2))),
             Positioned(
               left: 3,
               bottom: 2,
-              child: Text('${img['captureStage']}', style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
+              child: Text('${img['captureStage']}',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700)),
             ),
           ]),
         );
@@ -624,8 +787,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
 
   Future<List<int>?> _fetchImageBytes(int imageId) async {
     try {
-      final res = await ApiClient.instance.dio
-          .get('/api/images/$imageId/file', options: Options(responseType: ResponseType.bytes));
+      final res = await ApiClient.instance.dio.get('/api/images/$imageId/file',
+          options: Options(responseType: ResponseType.bytes));
       return res.statusCode == 200 ? (res.data as List<int>) : null;
     } catch (_) {
       return null;
@@ -638,16 +801,25 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
           child: Row(children: [
-            Text(_grossMode ? 'Today\'s Gross (Pending Tare)' : 'Pending Gross — double-click to select for Tare',
-                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+            Text(
+                _grossMode
+                    ? 'Today\'s Gross (Pending Tare)'
+                    : 'Pending Gross — double-click to select for Tare',
+                style:
+                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
             const Spacer(),
-            Text('${_pending.length} pending', style: const TextStyle(fontSize: 12)),
-            IconButton(onPressed: _loadPending, icon: const Icon(Icons.refresh, size: 18)),
+            Text('${_pending.length} pending',
+                style: const TextStyle(fontSize: 12)),
+            IconButton(
+                onPressed: _loadPending,
+                icon: const Icon(Icons.refresh, size: 18)),
           ]),
         ),
         Expanded(
           child: _pending.isEmpty
-              ? const Center(child: Text('No pending gross transactions.', style: TextStyle(fontSize: 12)))
+              ? const Center(
+                  child: Text('No pending gross transactions.',
+                      style: TextStyle(fontSize: 12)))
               : SingleChildScrollView(
                   scrollDirection: Axis.vertical,
                   child: SingleChildScrollView(
@@ -675,14 +847,20 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                                 ? (_) => _selectPurchase(p['purchaseId'])
                                 : null,
                             cells: [
-                              DataCell(Text('${p['purchaseId']}', style: const TextStyle(fontWeight: FontWeight.w700))),
+                              DataCell(Text('${p['purchaseId']}',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w700))),
                               DataCell(Text('${p['growerCode']}')),
                               DataCell(Text('${p['growerName']}')),
                               DataCell(Text('${p['fatherName']}')),
                               DataCell(Text('${p['villageName']}')),
                               DataCell(Text('${p['vehicleNumber']}')),
-                              DataCell(Text((p['grossWeightQuintal'] as num).toStringAsFixed(2))),
-                              DataCell(Text('${p['grossDateTime']}'.replaceFirst('T', ' ').split('.').first)),
+                              DataCell(Text((p['grossWeightQuintal'] as num)
+                                  .toStringAsFixed(2))),
+                              DataCell(Text('${p['grossDateTime']}'
+                                  .replaceFirst('T', ' ')
+                                  .split('.')
+                                  .first)),
                               DataCell(Text('${p['grossByUserName']}')),
                             ],
                           ),

@@ -64,7 +64,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     setState(() => from ? _fromDate = d : _toDate = d);
   }
 
-  Future<void> _preview() async {
+  Future<void> _loadPreview() async {
     setState(() {
       _preview = null;
       _previewError = null;
@@ -224,7 +224,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   child: Text(_toDate == null ? 'To Date' : '${_toDate!.day}-${_toDate!.month}-${_toDate!.year}')),
             ],
             FilledButton.tonal(
-                onPressed: _previewing ? null : _preview, child: Text(_previewing ? 'Loading...' : 'Preview')),
+                onPressed: _previewing ? null : _loadPreview, child: Text(_previewing ? 'Loading...' : 'Preview')),
           ]),
           if (_previewError != null)
             Padding(
@@ -272,7 +272,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primary.withOpacity(0.06), borderRadius: BorderRadius.circular(8)),
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(8)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('${eligible.length} eligible purchase(s)  •  Total: Rs ${(_preview!['totalPurchaseAmount'] as num).toStringAsFixed(2)}',
               style: const TextStyle(fontWeight: FontWeight.w700)),

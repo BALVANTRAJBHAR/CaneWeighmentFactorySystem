@@ -47,7 +47,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 children: [
                   Stepper(
                     physics: const NeverScrollableScrollPhysics(),
-                    shrinkWrap: true,
                     currentStep: _step,
                     controlsBuilder: (_, __) => const SizedBox.shrink(),
                     steps: const [

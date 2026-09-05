@@ -206,7 +206,7 @@ class _LoanScreenState extends State<LoanScreen> {
                     child: Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                          color: const Color(0xFF2E7D32).withOpacity(0.10), borderRadius: BorderRadius.circular(8)),
+                          color: const Color(0xFF2E7D32).withValues(alpha: 0.10), borderRadius: BorderRadius.circular(8)),
                       child: Text('${_grower!['growerName']}  S/o ${_grower!['fatherName']}  •  Village: ${_grower!['villageName']}',
                           style: const TextStyle(fontWeight: FontWeight.w600)),
                     ),
@@ -457,7 +457,7 @@ class _LoanRecoveryScreenState extends State<LoanRecoveryScreen> {
                     child: Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.primary.withOpacity(0.08), borderRadius: BorderRadius.circular(8)),
+                          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8)),
                       child: Text(
                         '${_loan!['growerCode']} ${_loan!['growerName']}  •  Loan Amount: Rs ${(_loan!['loanAmount'] as num).toStringAsFixed(2)}'
                         '  •  Outstanding: Rs ${(_loan!['outstandingAmount'] as num).toStringAsFixed(2)}  •  Status: ${_loan!['loanStatus']}',

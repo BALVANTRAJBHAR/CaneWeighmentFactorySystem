@@ -59,14 +59,17 @@ class _GrowerSearchScreenState extends State<GrowerSearchScreen> {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
                 const Text('Search by: ', style: TextStyle(fontWeight: FontWeight.w600)),
-                for (final opt in [('name', 'Name'), ('father', 'Father Name'), ('village', 'Village')])
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    Radio<String>(
-                        value: opt.$1,
-                        groupValue: _searchBy,
-                        onChanged: (v) => setState(() => _searchBy = v!)),
-                    Text(opt.$2),
+                RadioGroup<String>(
+                  groupValue: _searchBy,
+                  onChanged: (v) => setState(() => _searchBy = v!),
+                  child: Row(children: [
+                    for (final opt in [('name', 'Name'), ('father', 'Father Name'), ('village', 'Village')])
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        Radio<String>(value: opt.$1),
+                        Text(opt.$2),
+                      ]),
                   ]),
+                ),
               ]),
               TextField(
                 autofocus: true,
@@ -92,7 +95,7 @@ class _GrowerSearchScreenState extends State<GrowerSearchScreen> {
                   margin: const EdgeInsets.only(top: 10),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                      color: const Color(0xFF2E7D32).withOpacity(0.1),
+                      color: const Color(0xFF2E7D32).withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8)),
                   child: Text(
                       '${_codeResult!['growerCode']} — ${_codeResult!['growerName']} S/o ${_codeResult!['fatherName']}, '

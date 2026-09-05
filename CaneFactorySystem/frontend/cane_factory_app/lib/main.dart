@@ -1,13 +1,17 @@
 import 'dart:io';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:printing_ffi/printing_ffi.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'core/api_client.dart';
 import 'core/app_theme.dart';
 import 'providers/auth_provider.dart';
 import 'providers/live_weight_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/auth/change_password_screen.dart';
 import 'screens/auth/login_screen.dart';
+import 'screens/splash/splash_screen.dart';
 import 'widgets/app_shell.dart';
 
 void main() {
@@ -53,19 +57,57 @@ class RootGate extends StatefulWidget {
 
 class _RootGateState extends State<RootGate> {
   bool _checking = true;
+  bool _apiError = false;
+  String _status = 'Initializing...';
+  String? _companyName;
 
   @override
   void initState() {
     super.initState();
-    context.read<AuthProvider>().tryRestoreSession().whenComplete(() {
-      if (mounted) setState(() => _checking = false);
+    _startup();
+  }
+
+  Future<void> _startup() async {
+    setState(() {
+      _checking = true;
+      _apiError = false;
+      _status = 'Loading configuration...';
     });
+
+    // Instant branding from the last successful login, if any (no network needed).
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _companyName = prefs.getString('cached_company_name');
+    } catch (_) {}
+
+    setState(() => _status = 'Checking server connection...');
+    try {
+      final res = await ApiClient.instance.dio
+          .get('/api/health', options: Options(sendTimeout: const Duration(seconds: 8), receiveTimeout: const Duration(seconds: 8)));
+      if (res.statusCode != 200) throw Exception('Server responded with ${res.statusCode}');
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _apiError = true;
+        _status = 'Cannot reach the server. Check your network connection and try again.';
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => _status = 'Checking your session...');
+    await context.read<AuthProvider>().tryRestoreSession();
+
+    if (!mounted) return;
+    setState(() => _checking = false);
   }
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    if (_checking) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_checking || _apiError) {
+      return SplashScreen(statusText: _status, hasError: _apiError, onRetry: _apiError ? _startup : null, companyName: _companyName);
+    }
     if (!auth.isLoggedIn) return const LoginScreen();
     if (auth.mustChangePassword) return const ChangePasswordScreen(forced: true);
     return const AppShell();

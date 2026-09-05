@@ -80,7 +80,7 @@ public class BackupController : ControllerBase
     {
         var cs = _config.GetConnectionString("Default") ?? "";
         var match = System.Text.RegularExpressions.Regex.Match(cs, @"Database=([^;]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        return match.Success ? match.Groups[1].Value : "CaneFactoryDb";
+        return match.Success ? match.Groups[1].Value : "AFFLLPCaneFactory";
     }
 
     /// <summary>Generates the FULL + DIFFERENTIAL + TRANSACTION LOG backup .sql script matching the

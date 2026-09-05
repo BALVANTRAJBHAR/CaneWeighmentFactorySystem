@@ -233,7 +233,7 @@ class _GrowerFormState extends State<_GrowerForm> {
                 Container(
                   margin: const EdgeInsets.only(top: 8),
                   padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(color: Colors.orange.withOpacity(0.15), borderRadius: BorderRadius.circular(8)),
+                  decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('Possible duplicate:', style: TextStyle(fontWeight: FontWeight.w700)),
                     for (final w in _warnings) Text('• $w'),

@@ -14,7 +14,7 @@ class ThemeProvider extends ChangeNotifier {
   Future<void> _load() async {
     final p = await SharedPreferences.getInstance();
     mode = ThemeMode.values[p.getInt('theme_mode') ?? ThemeMode.light.index];
-    seed = Color(p.getInt('theme_seed') ?? AppTheme.themeColors.values.first.value);
+    seed = Color(p.getInt('theme_seed') ?? AppTheme.themeColors.values.first.toARGB32());
     notifyListeners();
   }
 
@@ -27,6 +27,6 @@ class ThemeProvider extends ChangeNotifier {
   Future<void> setSeed(Color c) async {
     seed = c;
     notifyListeners();
-    (await SharedPreferences.getInstance()).setInt('theme_seed', c.value);
+    (await SharedPreferences.getInstance()).setInt('theme_seed', c.toARGB32());
   }
 }

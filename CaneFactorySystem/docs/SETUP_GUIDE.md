@@ -57,7 +57,7 @@ real environment variables (System Properties → Environment Variables, or a la
 | Variable | Example | Purpose |
 |---|---|---|
 | `CANE_DB_PROVIDER` | `SqlServer` | `SqlServer` (production) or `Sqlite` (dev containers only) |
-| `CANE_CONNECTION_STRING` | `Server=localhost\SQLEXPRESS;Database=CaneFactoryDb;User Id=canefactory_app;Password=***;TrustServerCertificate=True;Encrypt=True` | EF Core connection |
+| `CANE_CONNECTION_STRING` | `Server=localhost\SQLEXPRESS;Database=AFFLLPCaneFactory;User Id=canefactory_app;Password=***;TrustServerCertificate=True;Encrypt=True` | EF Core connection |
 | `CANE_JWT_SECRET` | 64+ random chars | JWT signing key |
 | `CANE_ENCRYPTION_KEY` | 64+ random chars | AES-256-GCM key for stored secrets (SMS/camera credentials, Aadhaar) |
 | `CANE_SEED_DEV_PASSWORD` | temporary password | Initial developer account (forced change at first login) |

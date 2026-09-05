@@ -9,7 +9,7 @@ public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<AppDbConte
     public AppDbContext CreateDbContext(string[] args)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlServer("Server=localhost\\SQLEXPRESS;Database=CaneFactoryDb;Trusted_Connection=True;TrustServerCertificate=True")
+            .UseSqlServer("Server=localhost\\SQLEXPRESS;Database=AFFLLPCaneFactory;Trusted_Connection=True;TrustServerCertificate=True")
             .Options;
         return new AppDbContext(options);
     }

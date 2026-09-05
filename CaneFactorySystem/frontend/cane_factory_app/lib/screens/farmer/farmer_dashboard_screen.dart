@@ -90,7 +90,7 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
         Row(children: [
           _statCard('Total Vehicles', '${summary['totalVehicles']}', Icons.local_shipping_outlined, Colors.brown),
           const SizedBox(width: 10),
-          _statCard('Final Weight (Qtl)', '${(summary['totalFinalWeight'] as num).toStringAsFixed(2)}', Icons.scale_outlined, Colors.teal),
+          _statCard('Final Weight (Qtl)', (summary['totalFinalWeight'] as num).toStringAsFixed(2), Icons.scale_outlined, Colors.teal),
           const SizedBox(width: 10),
           _statCard('Pending Payment', '${summary['pendingPayment']}', Icons.pending_actions_outlined, Colors.orange),
         ]),

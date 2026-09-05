@@ -12,9 +12,9 @@ class AppTheme {
       useMaterial3: true,
       colorScheme: scheme,
       scaffoldBackgroundColor: isDark ? const Color(0xFF12151A) : const Color(0xFFF4F6F8),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         elevation: 1.5,
-        shadowColor: Colors.black.withOpacity(isDark ? 0.5 : 0.15),
+        shadowColor: Colors.black.withValues(alpha: isDark ? 0.5 : 0.15),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.all(6),
       ),
@@ -32,7 +32,7 @@ class AppTheme {
         ),
       ),
       dataTableTheme: DataTableThemeData(
-        headingRowColor: WidgetStatePropertyAll(scheme.primary.withOpacity(isDark ? 0.25 : 0.08)),
+        headingRowColor: WidgetStatePropertyAll(scheme.primary.withValues(alpha: isDark ? 0.25 : 0.08)),
         headingTextStyle: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: scheme.onSurface),
         dataTextStyle: TextStyle(fontSize: 13, color: scheme.onSurface),
         dividerThickness: 0.4,

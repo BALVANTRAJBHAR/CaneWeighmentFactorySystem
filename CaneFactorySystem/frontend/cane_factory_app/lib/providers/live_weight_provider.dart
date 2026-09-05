@@ -30,7 +30,9 @@ class LiveWeight {
         weightUnit: j['weightUnit'] ?? 'KG',
         stable: j['stable'] == true,
         deviceConnected: j['deviceConnected'] == true,
-        lastReceivedAt: j['lastReceivedAt'] != null ? DateTime.tryParse(j['lastReceivedAt']) : null,
+        lastReceivedAt: j['lastReceivedAt'] != null
+            ? DateTime.tryParse(j['lastReceivedAt'])
+            : null,
         deviceName: j['deviceName'],
         error: j['error'],
       );
@@ -42,44 +44,62 @@ class LiveWeightProvider extends ChangeNotifier {
   LiveWeight current = LiveWeight();
   HubConnection? _hub;
   Timer? _pollTimer;
-  bool _hubConnected = false;
+  bool _polling = false;
 
   Future<void> start() async {
     await _connectHub();
     _pollTimer ??= Timer.periodic(const Duration(seconds: 2), (_) {
-      if (!_hubConnected) _poll();
+      // Poll even while SignalR is connected. This keeps the displayed value
+      // current if a websocket silently stalls on a factory LAN.
+      _poll();
     });
+    await _poll();
   }
 
   Future<void> _connectHub() async {
     try {
-      final token = await ApiClient.instance.accessToken;
       _hub = HubConnectionBuilder()
           .withUrl('${ApiClient.baseUrl}/hubs/weight',
-              options: HttpConnectionOptions(accessTokenFactory: () async => token ?? ''))
+              options: HttpConnectionOptions(
+                  accessTokenFactory: () async =>
+                      await ApiClient.instance.accessToken ?? ''))
           .withAutomaticReconnect()
           .build();
+      _hub!.onreconnecting(({error}) {
+        _poll();
+      });
+      _hub!.onreconnected(({connectionId}) {
+        _poll();
+      });
+      _hub!.onclose(({error}) {
+        _poll();
+      });
       _hub!.on('liveWeight', (args) {
         if (args != null && args.isNotEmpty && args[0] is Map) {
-          current = LiveWeight.fromJson(Map<String, dynamic>.from(args[0] as Map));
+          current =
+              LiveWeight.fromJson(Map<String, dynamic>.from(args[0] as Map));
           notifyListeners();
         }
       });
       await _hub!.start();
-      _hubConnected = true;
     } catch (_) {
-      _hubConnected = false; // polling fallback stays active
+      // Polling fallback stays active when SignalR cannot connect.
     }
   }
 
   Future<void> _poll() async {
+    if (_polling) return;
+    _polling = true;
     try {
       final res = await ApiClient.instance.dio.get('/api/devices/live-weight');
       if (res.statusCode == 200 && res.data is Map) {
         current = LiveWeight.fromJson(Map<String, dynamic>.from(res.data));
         notifyListeners();
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _polling = false;
+    }
   }
 
   Future<void> stop() async {
@@ -88,7 +108,6 @@ class LiveWeightProvider extends ChangeNotifier {
     try {
       await _hub?.stop();
     } catch (_) {}
-    _hubConnected = false;
   }
 
   @override

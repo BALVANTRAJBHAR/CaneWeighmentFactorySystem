@@ -5,13 +5,13 @@
 -- Run as sysadmin (sa or Windows admin) in SSMS / sqlcmd.
 -- =====================================================================
 
-IF DB_ID('CaneFactoryDb') IS NULL
+IF DB_ID('AFFLLPCaneFactory') IS NULL
 BEGIN
-    CREATE DATABASE CaneFactoryDb;
+    CREATE DATABASE AFFLLPCaneFactory;
 END
 GO
 
-ALTER DATABASE CaneFactoryDb SET RECOVERY FULL;  -- supports transaction-log backups
+ALTER DATABASE AFFLLPCaneFactory SET RECOVERY FULL;  -- supports transaction-log backups
 GO
 
 -- ---------------------------------------------------------------------
@@ -24,7 +24,7 @@ BEGIN
 END
 GO
 
-USE CaneFactoryDb;
+USE AFFLLPCaneFactory;
 GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = 'canefactory_app')
