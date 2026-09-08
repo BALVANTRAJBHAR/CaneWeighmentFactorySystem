@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 
 namespace CaneFactory.API.Controllers;
 
@@ -28,11 +29,13 @@ public class SalePurchaseWeighmentController : ControllerBase
     private readonly ISmsService _sms;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IMemoryCache _cache;
+    private readonly ILogger<SalePurchaseWeighmentController> _log;
 
     public SalePurchaseWeighmentController(AppDbContext db, ICurrentUser current, IAuditService audit,
-        ISequenceGenerator sequence, WeighingService weighing, ISmsService sms, IServiceScopeFactory scopeFactory, IMemoryCache cache)
+        ISequenceGenerator sequence, WeighingService weighing, ISmsService sms, IServiceScopeFactory scopeFactory, IMemoryCache cache,
+        ILogger<SalePurchaseWeighmentController> log)
     {
-        _db = db; _current = current; _audit = audit; _sequence = sequence; _weighing = weighing; _sms = sms; _scopeFactory = scopeFactory; _cache = cache;
+        _db = db; _current = current; _audit = audit; _sequence = sequence; _weighing = weighing; _sms = sms; _scopeFactory = scopeFactory; _cache = cache; _log = log;
     }
 
     private IActionResult? Deny(string action) => _current.HasPermission($"SalePurchase.{action}")
@@ -94,26 +97,40 @@ public class SalePurchaseWeighmentController : ControllerBase
         if (!item || party == null || !vehicleType) return BadRequest(new { message = "Selected Item, Party or Vehicle Type is inactive or invalid." });
 
         var tare = WeightCalculator.KgToQuintal(liveKg);
-        if (tare <= 0) return Conflict(new { message = "Live tare weight must be greater than zero." });
+        if (await MinimumWeightErrorAsync(tare, applyGross: false) is { } tareError)
+            return Conflict(new { message = tareError });
         var now = DateTime.UtcNow;
-        await using var tx = await _db.Database.BeginTransactionAsync();
-        var id = (int)await _sequence.NextAsync("SalePurchaseId", 1);
-        var record = new SalePurchase
+        SalePurchase? record = null;
+        try
         {
-            Id = id, ItemId = req.ItemId, PartyId = req.PartyId, VehicleTypeId = req.VehicleTypeId,
+            await _db.ExecuteInTransactionAsync(async () =>
+            {
+            var id = (int)await _sequence.NextAsync("SalePurchaseId", 1);
+            record = new SalePurchase
+            {
+                Id = id, ItemId = req.ItemId, PartyId = req.PartyId, VehicleTypeId = req.VehicleTypeId,
             VehicleNumber = vehicle, DriverName = driver, Remark = Validators.Norm(req.Remark),
             ScaleReadingTareKg = WeightCalculator.R2(liveKg), TareWeightQuintal = tare,
             TareDateTime = now, TareByUserId = _current.UserId!.Value, TareByUserName = _current.Username ?? "",
-            WeighmentStatus = "TARE_PENDING_GROSS", CreatedBy = _current.UserId
-        };
-        _db.SalePurchases.Add(record);
-        await _db.SaveChangesAsync();
-        await tx.CommitAsync();
-        await _audit.LogAsync("TareSave", "SalePurchase", "SalePurchase", id.ToString(), newValue: new
-        { record.ItemId, record.PartyId, record.VehicleNumber, record.TareWeightQuintal, record.TareDateTime });
-        QueueCapture(id, "TARE");
-        return Ok(new { message = $"Tare saved. SalePurchase ID: {id}. Pending gross weighment.", salePurchaseId = id,
-            tareWeightQuintal = tare, status = record.WeighmentStatus, autoPrint = await AutoPrintAsync(id, "TARE") });
+                WeighmentStatus = "TARE_PENDING_GROSS", CreatedBy = _current.UserId
+            };
+            _db.SalePurchases.Add(record);
+            await _db.SaveChangesAsync();
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "SalePurchase tare save failed for item {ItemId}, party {PartyId}", req.ItemId, req.PartyId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError,
+                title: "SalePurchase tare could not be saved. Please contact the administrator.");
+        }
+        var savedRecord = record!;
+        try { await _audit.LogAsync("TareSave", "SalePurchase", "SalePurchase", savedRecord.Id.ToString(), newValue: new
+        { savedRecord.ItemId, savedRecord.PartyId, savedRecord.VehicleNumber, savedRecord.TareWeightQuintal, savedRecord.TareDateTime }); }
+        catch (Exception ex) { _log.LogError(ex, "SalePurchase tare {SalePurchaseId} audit failed after commit", savedRecord.Id); }
+        QueueCapture(savedRecord.Id, "TARE");
+        return Ok(new { message = $"Tare saved. SalePurchase ID: {savedRecord.Id}. Pending gross weighment.", salePurchaseId = savedRecord.Id,
+            tareWeightQuintal = tare, status = savedRecord.WeighmentStatus, autoPrint = await AutoPrintAsync(savedRecord.Id, "TARE") });
     }
 
     [HttpPost("gross")]
@@ -125,34 +142,55 @@ public class SalePurchaseWeighmentController : ControllerBase
             return Conflict(new { message = deviceError });
         if (req.Rate is < 0) return BadRequest(new { message = "Rate cannot be negative." });
 
-        // Serializable transaction makes state validation + completion atomic across two operators.
-        await using var tx = await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
-        var record = await _db.SalePurchases.FirstOrDefaultAsync(x => x.Id == req.SalePurchaseId && !x.IsDeleted);
-        if (record == null) return NotFound(new { message = $"SalePurchase ID {req.SalePurchaseId} does not exist." });
-        if (record.WeighmentStatus == "CANCELLED") return Conflict(new { message = "Cancelled SalePurchase cannot be processed." });
-        if (record.WeighmentStatus != "TARE_PENDING_GROSS") return Conflict(new { message = "Gross is already completed for this SalePurchase." });
+        SalePurchase? record = null;
+        decimal gross = 0;
+        decimal finalWeight = 0;
+        try
+        {
+            // The complete state-check and update run inside the configured retry strategy.
+            // Serializable still prevents two operators completing the same pending tare.
+            await _db.ExecuteInTransactionAsync(async () =>
+            {
+                record = await _db.SalePurchases.FirstOrDefaultAsync(x => x.Id == req.SalePurchaseId && !x.IsDeleted);
+                if (record == null) throw new SalePurchaseStateException(404, $"SalePurchase ID {req.SalePurchaseId} does not exist.");
+                if (record.WeighmentStatus == "CANCELLED") throw new SalePurchaseStateException(409, "Cancelled SalePurchase cannot be processed.");
+                if (record.WeighmentStatus != "TARE_PENDING_GROSS") throw new SalePurchaseStateException(409, "Gross is already completed for this SalePurchase.");
 
-        var gross = WeightCalculator.KgToQuintal(liveKg);
-        if (gross <= 0) return Conflict(new { message = "Live gross weight must be greater than zero." });
-        var finalWeight = WeightCalculator.R2(gross - record.TareWeightQuintal);
-        if (finalWeight < 0) return Conflict(new { message = "Gross weight cannot be less than tare weight." });
-        record.ScaleReadingGrossKg = WeightCalculator.R2(liveKg);
-        record.GrossWeightQuintal = gross;
-        record.FinalWeightQuintal = finalWeight;
-        record.GrossDateTime = DateTime.UtcNow;
-        record.GrossByUserId = _current.UserId;
-        record.GrossByUserName = _current.Username ?? "";
-        record.Rate = req.Rate.HasValue ? WeightCalculator.R2(req.Rate.Value) : null;
-        record.Amount = record.Rate.HasValue ? WeightCalculator.R2(finalWeight * record.Rate.Value) : null;
-        record.WeighmentStatus = "COMPLETED";
-        record.UpdatedAt = DateTime.UtcNow;
-        record.UpdatedBy = _current.UserId;
-        await _db.SaveChangesAsync();
-        await tx.CommitAsync();
-        await _audit.LogAsync("GrossSave", "SalePurchase", "SalePurchase", record.Id.ToString(), newValue: new
-        { record.GrossWeightQuintal, record.TareWeightQuintal, record.FinalWeightQuintal, record.Rate, record.Amount });
-        QueueCapture(record.Id, "GROSS");
-        var party = await _db.Parties.AsNoTracking().Where(x => x.Id == record.PartyId)
+                gross = WeightCalculator.KgToQuintal(liveKg);
+                var minimumError = await MinimumWeightErrorAsync(gross, applyGross: true);
+                if (minimumError != null) throw new SalePurchaseStateException(409, minimumError);
+                finalWeight = WeightCalculator.R2(gross - record.TareWeightQuintal);
+                if (finalWeight < 0) throw new SalePurchaseStateException(409, "Gross weight cannot be less than tare weight.");
+                record.ScaleReadingGrossKg = WeightCalculator.R2(liveKg);
+                record.GrossWeightQuintal = gross;
+                record.FinalWeightQuintal = finalWeight;
+                record.GrossDateTime = DateTime.UtcNow;
+                record.GrossByUserId = _current.UserId;
+                record.GrossByUserName = _current.Username ?? "";
+                record.Rate = req.Rate.HasValue ? WeightCalculator.R2(req.Rate.Value) : null;
+                record.Amount = record.Rate.HasValue ? WeightCalculator.R2(finalWeight * record.Rate.Value) : null;
+                record.WeighmentStatus = "COMPLETED";
+                record.UpdatedAt = DateTime.UtcNow;
+                record.UpdatedBy = _current.UserId;
+                await _db.SaveChangesAsync();
+            }, System.Data.IsolationLevel.Serializable);
+        }
+        catch (SalePurchaseStateException ex)
+        {
+            return StatusCode(ex.StatusCode, new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "SalePurchase gross save failed for SalePurchase {SalePurchaseId}", req.SalePurchaseId);
+            return Problem(statusCode: StatusCodes.Status500InternalServerError,
+                title: "SalePurchase gross could not be saved. Please contact the administrator.");
+        }
+        var completedRecord = record ?? throw new InvalidOperationException("SalePurchase completion did not return a record.");
+        try { await _audit.LogAsync("GrossSave", "SalePurchase", "SalePurchase", completedRecord.Id.ToString(), newValue: new
+        { completedRecord.GrossWeightQuintal, completedRecord.TareWeightQuintal, completedRecord.FinalWeightQuintal, completedRecord.Rate, completedRecord.Amount }); }
+        catch (Exception ex) { _log.LogError(ex, "SalePurchase gross {SalePurchaseId} audit failed after commit", completedRecord.Id); }
+        QueueCapture(completedRecord.Id, "GROSS");
+        var party = await _db.Parties.AsNoTracking().Where(x => x.Id == completedRecord.PartyId)
             .Select(x => new { x.PartyName, x.Mobile, x.Status, x.IsDeleted }).FirstAsync();
         var configuredRecipients = await _db.SmsConfigs.AsNoTracking().Where(x => !x.IsDeleted && x.Enabled)
             .Select(x => x.SalePurchaseRecipients).FirstOrDefaultAsync() ?? "";
@@ -160,19 +198,28 @@ public class SalePurchaseWeighmentController : ControllerBase
             .Where(x => x.Length == 10 && x.All(char.IsDigit)).Distinct().ToList();
         var placeholders = new Dictionary<string, string>
             {
-                ["SalePurchaseId"] = record.Id.ToString(), ["PartyName"] = party.PartyName, ["FinalWeight"] = finalWeight.ToString("F2"),
-                ["Amount"] = record.Amount?.ToString("F2") ?? ""
+                ["SalePurchaseId"] = completedRecord.Id.ToString(), ["PartyName"] = party.PartyName, ["FinalWeight"] = finalWeight.ToString("F2"),
+                ["Amount"] = completedRecord.Amount?.ToString("F2") ?? ""
             };
         // A Party is mandatory for the transaction; successful-event SMS is additionally gated by
         // explicit configured recipient numbers, never implicitly sent to an arbitrary party mobile.
-        var queued = party.Status && !party.IsDeleted
-            ? await Task.WhenAll(recipients.Select((mobile, index) => _sms.QueueForPartyAsync("SALE_PURCHASE_COMPLETED",
-                record.PartyId, mobile, $"SP-{record.Id}-{index}", placeholders)))
-            : Array.Empty<bool>();
+        bool[] queued;
+        try
+        {
+            queued = party.Status && !party.IsDeleted
+                ? await Task.WhenAll(recipients.Select((mobile, index) => _sms.QueueForPartyAsync("SALE_PURCHASE_COMPLETED",
+                    completedRecord.PartyId, mobile, $"SP-{completedRecord.Id}-{index}", placeholders)))
+                : Array.Empty<bool>();
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "SalePurchase {SalePurchaseId} SMS queue failed after commit", completedRecord.Id);
+            queued = Array.Empty<bool>();
+        }
         var smsQueued = queued.Any(x => x);
-        return Ok(new { message = $"SalePurchase {record.Id} completed successfully. Final Weight: {finalWeight:F2} Quintal.",
-            salePurchaseId = record.Id, grossWeightQuintal = gross, finalWeightQuintal = finalWeight,
-            amount = record.Amount, status = record.WeighmentStatus, smsQueued, autoPrint = await AutoPrintAsync(record.Id, "GROSS") });
+        return Ok(new { message = $"SalePurchase {completedRecord.Id} completed successfully. Final Weight: {finalWeight:F2} Quintal.",
+            salePurchaseId = completedRecord.Id, grossWeightQuintal = gross, finalWeightQuintal = finalWeight,
+            amount = completedRecord.Amount, status = completedRecord.WeighmentStatus, smsQueued, autoPrint = await AutoPrintAsync(completedRecord.Id, "GROSS") });
     }
 
     [HttpPost("{id:int}/cancel")]
@@ -194,9 +241,28 @@ public class SalePurchaseWeighmentController : ControllerBase
     private async Task<object?> AutoPrintAsync(int id, string stage)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
-        if (cfg == null || !cfg.AutoPrint || cfg.SalePurchaseCopies <= 0) return null;
+        if (cfg == null) return null;
         return new { printerType = cfg.PrinterType, printerName = cfg.PrinterName, copies = cfg.SalePurchaseCopies,
-            language = cfg.Language, documentUrl = $"/api/print/sale-purchase/{id}?stage={stage}&format=final" };
+            language = cfg.Language, stage, shouldAutoPrint = cfg.AutoPrint && cfg.SalePurchaseCopies > 0,
+            documentUrl = $"/api/print/sale-purchase/{id}?stage={stage}&format=final" +
+                (cfg.AutoPrint && cfg.SalePurchaseCopies > 0 ? "" : "&target=A4") };
+    }
+
+    private sealed class SalePurchaseStateException : Exception
+    {
+        public int StatusCode { get; }
+        public SalePurchaseStateException(int statusCode, string message) : base(message) => StatusCode = statusCode;
+    }
+
+    private async Task<string?> MinimumWeightErrorAsync(decimal weightQuintal, bool applyGross)
+    {
+        var rule = await _db.WeightRules.AsNoTracking().FirstOrDefaultAsync(r => !r.IsDeleted && r.Enabled);
+        if (rule == null || !rule.ApplyToSalePurchase) return null;
+        if (applyGross && !rule.ApplyToGross) return null;
+        if (!applyGross && !rule.ApplyToTare) return null;
+        return weightQuintal < rule.MinimumWeightQuintal
+            ? $"Weight {weightQuintal:F2} Qtl is below the configured minimum {rule.MinimumWeightQuintal:F2} Qtl. Please position the vehicle on the platform."
+            : null;
     }
 
     private void QueueCapture(int salePurchaseId, string stage)

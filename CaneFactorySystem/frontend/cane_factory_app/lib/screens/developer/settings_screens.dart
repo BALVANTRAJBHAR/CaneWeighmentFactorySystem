@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../core/api_client.dart';
 import '../../core/print_service.dart';
 import '../../core/file_download.dart';
@@ -289,123 +290,171 @@ class _CamerasTabState extends State<_CamerasTab> {
   }
 
   Future<void> _edit([Map<String, dynamic>? cam]) async {
+    if (cam == null && cams.length >= 6) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Only six cameras can be configured. Edit or remove an existing camera first.')));
+      return;
+    }
+    if (cam != null) {
+      final detail = await ApiClient.instance.dio
+          .get('/api/config/cameras/${cam['id']}/configuration');
+      if (!mounted) return;
+      if (detail.statusCode != 200) {
+        showResult(context, detail);
+        return;
+      }
+      cam = Map<String, dynamic>.from(detail.data);
+    }
     final c = {
       for (final k in ['ipAddress', 'username', 'password', 'model', 'rtspUrl'])
         k: TextEditingController(
             text: '${cam?[k] ?? ''}'.replaceAll('null', ''))
     };
-    int number = cam?['cameraNumber'] ?? (cams.length + 1);
+    final usedNumbers = cams.map((x) => x['cameraNumber'] as int).toSet();
+    int number = cam?['cameraNumber'] ??
+        List<int>.generate(6, (i) => i + 1)
+            .firstWhere((i) => !usedNumbers.contains(i));
     String vendor = cam?['vendor'] ?? 'Hikvision';
     String protocol = cam?['protocol'] ?? 'RTSP';
     int port = cam?['port'] ?? 554;
+    final portController = TextEditingController(text: '$port');
     bool capture = cam?['captureEnabled'] ?? true;
     bool liveView = cam?['liveViewEnabled'] ?? true;
     final ok = await showDialog<bool>(
         context: context,
         builder: (ctx) => StatefulBuilder(
             builder: (ctx, setD) => AlertDialog(
+                    insetPadding: const EdgeInsets.all(24),
+                    constraints: BoxConstraints(
+                        maxWidth: 560,
+                        maxHeight: MediaQuery.sizeOf(ctx).height - 48),
                     title: Text('Camera ${number.toString().padLeft(2, '0')}'),
                     content: SizedBox(
-                        width: 480,
-                        child: SingleChildScrollView(
-                            child: Wrap(spacing: 10, runSpacing: 10, children: [
-                          SizedBox(
-                              width: 140,
-                              child: DropdownButtonFormField<int>(
-                                  value: number,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Camera No (1-6)'),
-                                  items: [
-                                    for (var i = 1; i <= 6; i++)
-                                      DropdownMenuItem(
-                                          value: i, child: Text('Camera $i'))
-                                  ],
-                                  onChanged: (v) => number = v!)),
-                          SizedBox(
-                              width: 160,
-                              child: DropdownButtonFormField<String>(
-                                  value: vendor,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Vendor'),
-                                  items: [
-                                    for (final v in [
-                                      'Hikvision',
-                                      'CPPlus',
-                                      'Dahua',
-                                      'Uniview',
-                                      'GenericONVIF',
-                                      'GenericRTSP'
-                                    ])
-                                      DropdownMenuItem(value: v, child: Text(v))
-                                  ],
-                                  onChanged: (v) => vendor = v!)),
-                          SizedBox(
-                              width: 140,
-                              child: DropdownButtonFormField<String>(
-                                  value: protocol,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Protocol'),
-                                  items: [
-                                    for (final v in ['RTSP', 'ONVIF', 'ISAPI'])
-                                      DropdownMenuItem(value: v, child: Text(v))
-                                  ],
-                                  onChanged: (v) => protocol = v!)),
-                          SizedBox(
-                              width: 220,
-                              child: TextField(
-                                  controller: c['model'],
-                                  decoration: const InputDecoration(
-                                      labelText: 'Model',
-                                      hintText: 'Example: DS-2CD2046G2-IU'))),
-                          SizedBox(
-                              width: 220,
-                              child: TextField(
-                                  controller: c['ipAddress'],
-                                  decoration: const InputDecoration(
-                                      labelText: 'IP Address',
-                                      hintText: 'Example: 192.168.1.64'))),
-                          SizedBox(
-                              width: 120,
-                              child: TextField(
-                                  controller:
-                                      TextEditingController(text: '$port'),
-                                  decoration: const InputDecoration(
-                                      labelText: 'Port', hintText: '554'),
-                                  onChanged: (v) =>
-                                      port = int.tryParse(v) ?? 554)),
-                          SizedBox(
-                              width: 220,
-                              child: TextField(
-                                  controller: c['username'],
-                                  decoration: const InputDecoration(
-                                      labelText: 'Username',
-                                      hintText: 'Example: admin'))),
-                          SizedBox(
-                              width: 220,
-                              child: TextField(
-                                  controller: c['password'],
-                                  obscureText: true,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Password (stored encrypted)',
-                                      hintText:
-                                          'Leave blank to keep existing'))),
-                          SizedBox(
-                              width: 460,
-                              child: TextField(
-                                  controller: c['rtspUrl'],
-                                  decoration: const InputDecoration(
-                                      labelText: 'RTSP URL (optional override)',
-                                      hintText:
-                                          'rtsp://user:pass@ip:554/Streaming/Channels/101'))),
-                          SwitchListTile(
-                              title: const Text('Capture Enabled'),
-                              value: capture,
-                              onChanged: (v) => setD(() => capture = v)),
-                          SwitchListTile(
-                              title: const Text('Live View Enabled'),
-                              value: liveView,
-                              onChanged: (v) => setD(() => liveView = v)),
-                        ]))),
+                        width: 500,
+                        child: SingleChildScrollView(child:
+                            LayoutBuilder(builder: (context, constraints) {
+                          final halfWidth = (constraints.maxWidth - 10) / 2;
+                          return Wrap(spacing: 10, runSpacing: 10, children: [
+                            SizedBox(
+                                width: halfWidth,
+                                child: DropdownButtonFormField<int>(
+                                    value: number,
+                                    isExpanded: true,
+                                    decoration: const InputDecoration(
+                                        labelText: 'Camera No (1-6)'),
+                                    items: [
+                                      for (var i = 1; i <= 6; i++)
+                                        DropdownMenuItem(
+                                            value: i,
+                                            child: Text('Camera $i',
+                                                overflow:
+                                                    TextOverflow.ellipsis))
+                                    ],
+                                    onChanged: (v) => setD(() => number = v!))),
+                            SizedBox(
+                                width: halfWidth,
+                                child: DropdownButtonFormField<String>(
+                                    value: vendor,
+                                    isExpanded: true,
+                                    decoration: const InputDecoration(
+                                        labelText: 'Vendor'),
+                                    items: [
+                                      for (final v in [
+                                        'Hikvision',
+                                        'CPPlus',
+                                        'Dahua',
+                                        'Uniview',
+                                        'GenericONVIF',
+                                        'GenericRTSP'
+                                      ])
+                                        DropdownMenuItem(
+                                            value: v,
+                                            child: Text(v,
+                                                overflow:
+                                                    TextOverflow.ellipsis))
+                                    ],
+                                    onChanged: (v) => setD(() => vendor = v!))),
+                            SizedBox(
+                                width: halfWidth,
+                                child: DropdownButtonFormField<String>(
+                                    value: protocol,
+                                    isExpanded: true,
+                                    decoration: const InputDecoration(
+                                        labelText: 'Protocol'),
+                                    items: [
+                                      for (final v in [
+                                        'RTSP',
+                                        'ONVIF',
+                                        'ISAPI'
+                                      ])
+                                        DropdownMenuItem(
+                                            value: v,
+                                            child: Text(v,
+                                                overflow:
+                                                    TextOverflow.ellipsis))
+                                    ],
+                                    onChanged: (v) =>
+                                        setD(() => protocol = v!))),
+                            SizedBox(
+                                width: halfWidth,
+                                child: TextField(
+                                    controller: c['model'],
+                                    decoration: const InputDecoration(
+                                        labelText: 'Model',
+                                        hintText: 'Example: DS-2CD2046G2-IU'))),
+                            SizedBox(
+                                width: halfWidth,
+                                child: TextField(
+                                    controller: c['ipAddress'],
+                                    decoration: const InputDecoration(
+                                        labelText: 'IP Address',
+                                        hintText: 'Example: 192.168.1.64'))),
+                            SizedBox(
+                                width: halfWidth,
+                                child: TextField(
+                                    controller: portController,
+                                    decoration: const InputDecoration(
+                                        labelText: 'Port', hintText: '554'),
+                                    onChanged: (v) =>
+                                        port = int.tryParse(v) ?? 554)),
+                            SizedBox(
+                                width: halfWidth,
+                                child: TextField(
+                                    controller: c['username'],
+                                    decoration: const InputDecoration(
+                                        labelText: 'Username',
+                                        hintText:
+                                            'Leave blank to keep existing'))),
+                            SizedBox(
+                                width: halfWidth,
+                                child: TextField(
+                                    controller: c['password'],
+                                    obscureText: true,
+                                    decoration: const InputDecoration(
+                                        labelText:
+                                            'Password (stored encrypted)',
+                                        hintText:
+                                            'Leave blank to keep existing'))),
+                            SizedBox(
+                                width: constraints.maxWidth,
+                                child: TextField(
+                                    controller: c['rtspUrl'],
+                                    decoration: const InputDecoration(
+                                        labelText:
+                                            'RTSP URL (optional override)',
+                                        hintText:
+                                            'Leave blank to keep existing override'))),
+                            SwitchListTile(
+                                title: const Text('Capture Enabled'),
+                                value: capture,
+                                onChanged: (v) => setD(() => capture = v)),
+                            SwitchListTile(
+                                title: const Text('Live View Enabled'),
+                                value: liveView,
+                                onChanged: (v) => setD(() => liveView = v)),
+                          ]);
+                        }))),
                     actions: [
                       TextButton(
                           onPressed: () => Navigator.pop(ctx, false),
@@ -458,7 +507,7 @@ class _CamerasTabState extends State<_CamerasTab> {
           title: Text(
               'Camera ${cam['cameraNumber'].toString().padLeft(2, '0')} • ${cam['vendor']} ${cam['model'] ?? ''}'),
           subtitle: Text(
-              '${cam['ipAddress']}:${cam['port']} (${cam['protocol']}) • Capture: ${cam['captureEnabled'] == true ? 'ON' : 'OFF'} • Live: ${cam['liveViewEnabled'] == true ? 'ON' : 'OFF'} • Password: ${cam['hasPassword'] == true ? 'set (encrypted)' : 'not set'}'),
+              '${cam['protocol']} • Capture: ${cam['captureEnabled'] == true ? 'ON' : 'OFF'} • Live: ${cam['liveViewEnabled'] == true ? 'ON' : 'OFF'}'),
           trailing: Wrap(children: [
             TextButton(
                 onPressed: () async {
@@ -538,6 +587,7 @@ class _PrintTab extends StatefulWidget {
 
 class _PrintTabState extends State<_PrintTab> {
   Map<String, dynamic>? v;
+  List<String> _printers = const [];
   String _testTarget = 'DotMatrix';
   String _testLanguage = 'hi';
 
@@ -545,8 +595,22 @@ class _PrintTabState extends State<_PrintTab> {
   void initState() {
     super.initState();
     ApiClient.instance.dio.get('/api/config/print').then((res) {
-      if (res.statusCode == 200 && mounted)
-        setState(() => v = Map<String, dynamic>.from(res.data));
+      if (res.statusCode == 200 && mounted) {
+        final config = Map<String, dynamic>.from(res.data);
+        if ((config['dotMatrixPrinterName'] ?? '').toString().isEmpty &&
+            config['printerType'] == 'DotMatrix') {
+          config['dotMatrixPrinterName'] = config['printerName'] ?? '';
+        }
+        if ((config['a4PrinterName'] ?? '').toString().isEmpty &&
+            config['printerType'] == 'A4') {
+          config['a4PrinterName'] = config['printerName'] ?? '';
+        }
+        setState(() {
+          v = config;
+          _printers =
+              PrintService.installedPrinters().map((p) => p.name).toList();
+        });
+      }
     });
   }
 
@@ -568,12 +632,38 @@ class _PrintTabState extends State<_PrintTab> {
                 onChanged: (x) => setState(() => v!['printerType'] = x))),
         SizedBox(
             width: 280,
-            child: TextField(
-                controller: TextEditingController(text: v!['printerName']),
+            child: DropdownButtonFormField<String>(
+                value: _printers.contains(v!['dotMatrixPrinterName'])
+                    ? v!['dotMatrixPrinterName']
+                    : null,
                 decoration: const InputDecoration(
-                    labelText: 'Printer Name',
-                    hintText: 'Example: TVS MSP 270 Classic Plus'),
-                onChanged: (x) => v!['printerName'] = x)),
+                    labelText: 'Dot Matrix Printer (installed Windows queue)'),
+                hint: const Text('Select installed printer'),
+                items: [
+                  for (final name in _printers)
+                    DropdownMenuItem(
+                        value: name,
+                        child: Text(name, overflow: TextOverflow.ellipsis))
+                ],
+                onChanged: (x) =>
+                    setState(() => v!['dotMatrixPrinterName'] = x ?? ''))),
+        SizedBox(
+            width: 280,
+            child: DropdownButtonFormField<String>(
+                value: _printers.contains(v!['a4PrinterName'])
+                    ? v!['a4PrinterName']
+                    : null,
+                decoration: const InputDecoration(
+                    labelText: 'A4 Printer (installed Windows queue)'),
+                hint: const Text('Select installed printer'),
+                items: [
+                  for (final name in _printers)
+                    DropdownMenuItem(
+                        value: name,
+                        child: Text(name, overflow: TextOverflow.ellipsis))
+                ],
+                onChanged: (x) =>
+                    setState(() => v!['a4PrinterName'] = x ?? ''))),
         SizedBox(
             width: 180,
             child: DropdownButtonFormField<String>(
@@ -707,7 +797,10 @@ class _PrintTabState extends State<_PrintTab> {
   }
 
   Future<void> _printTest() async {
-    final printerName = v?['printerName'] ?? '';
+    if (v == null) return;
+    final printerName = _testTarget == 'A4'
+        ? (v!['a4PrinterName'] ?? '')
+        : (v!['dotMatrixPrinterName'] ?? '');
     final outcome = await PrintService.printDocument(
       documentUrl:
           '/api/print/test?target=$_testTarget&language=$_testLanguage&format=final',
@@ -921,85 +1014,99 @@ class _SmsTabState extends State<_SmsTab> {
             padding: const EdgeInsets.only(top: 4),
             child: Text(info!, style: const TextStyle(fontSize: 12))),
       const SizedBox(height: 10),
-      Wrap(spacing: 14, runSpacing: 14, children: [
-        SizedBox(
-            width: 240,
-            child: TextField(
-                controller: c['providerName'],
-                decoration: const InputDecoration(
-                    labelText: 'Provider Name',
-                    hintText: 'Example: your local SMS panel name'))),
-        SizedBox(
-            width: 340,
-            child: TextField(
-                controller: c['apiBaseUrl'],
-                decoration: const InputDecoration(
-                    labelText: 'API Base URL',
-                    hintText:
-                        'https://api.provider.com/send?key={ApiKey}&to={Mobile}&msg={Message}'))),
-        SizedBox(
-            width: 140,
-            child: DropdownButtonFormField<String>(
-                value: method,
-                decoration: const InputDecoration(labelText: 'HTTP Method'),
-                items: const [
-                  DropdownMenuItem(value: 'POST', child: Text('POST')),
-                  DropdownMenuItem(value: 'GET', child: Text('GET'))
-                ],
-                onChanged: (v) => setState(() => method = v!))),
-        SizedBox(
-            width: 140,
-            child: DropdownButtonFormField<String>(
-                value: language,
-                decoration: const InputDecoration(labelText: 'Language'),
-                items: const [
-                  DropdownMenuItem(value: 'hi', child: Text('Hindi (default)')),
-                  DropdownMenuItem(value: 'en', child: Text('English'))
-                ],
-                onChanged: (v) => setState(() => language = v!))),
-        SizedBox(
-            width: 240,
-            child: TextField(
-                controller: c['apiKey'],
-                obscureText: true,
-                decoration: const InputDecoration(
-                    labelText: 'API Key',
-                    hintText: 'Leave blank to keep existing'))),
-        SizedBox(
-            width: 240,
-            child: TextField(
-                controller: c['apiSecret'],
-                obscureText: true,
-                decoration: const InputDecoration(
-                    labelText: 'API Secret',
-                    hintText: 'Leave blank to keep existing'))),
-        SizedBox(
-            width: 240,
-            child: TextField(
-                controller: c['authorizationHeader'],
-                decoration: const InputDecoration(
-                    labelText: 'Authorization Header',
-                    hintText: 'Example: Bearer {ApiKey}'))),
-        SizedBox(
-            width: 180,
-            child: TextField(
-                controller: c['senderId'],
-                decoration: const InputDecoration(
-                    labelText: 'Sender ID', hintText: 'Example: FCTORY'))),
-        SizedBox(
-            width: 240,
-            child: TextField(
-                controller: c['entityId'],
-                decoration: const InputDecoration(
-                    labelText: 'DLT Entity ID', hintText: 'Where required'))),
-        SizedBox(
-            width: 200,
-            child: TextField(
-                controller: TextEditingController(text: requestContentType),
-                decoration:
-                    const InputDecoration(labelText: 'Request Content-Type'),
-                onChanged: (v) => requestContentType = v)),
-      ]),
+      LayoutBuilder(builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        return Wrap(spacing: 14, runSpacing: 14, children: [
+          SizedBox(
+              width: width < 240 ? width : 240,
+              child: TextField(
+                  controller: c['providerName'],
+                  decoration: const InputDecoration(
+                      labelText: 'Provider Name',
+                      hintText: 'Example: your local SMS panel name'))),
+          SizedBox(
+              width: width < 340 ? width : 340,
+              child: TextField(
+                  controller: c['apiBaseUrl'],
+                  decoration: const InputDecoration(
+                      labelText: 'API Base URL',
+                      hintText:
+                          'https://api.provider.com/send?key={ApiKey}&to={Mobile}&msg={Message}'))),
+          SizedBox(
+              width: width < 140 ? width : 140,
+              child: DropdownButtonFormField<String>(
+                  value: method,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'HTTP Method'),
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'POST',
+                        child: Text('POST', overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(
+                        value: 'GET',
+                        child: Text('GET', overflow: TextOverflow.ellipsis))
+                  ],
+                  onChanged: (v) => setState(() => method = v!))),
+          SizedBox(
+              width: width < 140 ? width : 140,
+              child: DropdownButtonFormField<String>(
+                  value: language,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Language'),
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'hi',
+                        child: Text('Hindi (default)',
+                            overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(
+                        value: 'en',
+                        child: Text('English', overflow: TextOverflow.ellipsis))
+                  ],
+                  onChanged: (v) => setState(() => language = v!))),
+          SizedBox(
+              width: width < 240 ? width : 240,
+              child: TextField(
+                  controller: c['apiKey'],
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                      labelText: 'API Key',
+                      hintText: 'Leave blank to keep existing'))),
+          SizedBox(
+              width: width < 240 ? width : 240,
+              child: TextField(
+                  controller: c['apiSecret'],
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                      labelText: 'API Secret',
+                      hintText: 'Leave blank to keep existing'))),
+          SizedBox(
+              width: width < 240 ? width : 240,
+              child: TextField(
+                  controller: c['authorizationHeader'],
+                  decoration: const InputDecoration(
+                      labelText: 'Authorization Header',
+                      hintText: 'Example: Bearer {ApiKey}'))),
+          SizedBox(
+              width: width < 180 ? width : 180,
+              child: TextField(
+                  controller: c['senderId'],
+                  decoration: const InputDecoration(
+                      labelText: 'Sender ID', hintText: 'Example: FCTORY'))),
+          SizedBox(
+              width: width < 240 ? width : 240,
+              child: TextField(
+                  controller: c['entityId'],
+                  decoration: const InputDecoration(
+                      labelText: 'DLT Entity ID', hintText: 'Where required'))),
+          SizedBox(
+              width: width < 200 ? width : 200,
+              child: TextField(
+                  controller: TextEditingController(text: requestContentType),
+                  decoration:
+                      const InputDecoration(labelText: 'Request Content-Type'),
+                  onChanged: (v) => requestContentType = v)),
+        ]);
+      }),
       const SizedBox(height: 10),
       TextField(
           controller: c['requestBodyTemplate'],
@@ -1009,29 +1116,32 @@ class _SmsTabState extends State<_SmsTab> {
               hintText:
                   '{"to":"{Mobile}","text":"{Message}","sender":"{SenderId}","key":"{ApiKey}"}')),
       const SizedBox(height: 10),
-      Wrap(spacing: 14, runSpacing: 14, children: [
-        SizedBox(
-            width: 240,
-            child: TextField(
-                controller: c['responseSuccessPath'],
-                decoration: const InputDecoration(
-                    labelText: 'Response Success JSON Field',
-                    hintText: 'Example: status'))),
-        SizedBox(
-            width: 240,
-            child: TextField(
-                controller: c['responseSuccessValue'],
-                decoration: const InputDecoration(
-                    labelText: 'Expected Success Value',
-                    hintText: 'Example: success'))),
-        SizedBox(
-            width: 300,
-            child: TextField(
-                controller: c['salePurchaseRecipients'],
-                decoration: const InputDecoration(
-                    labelText: 'SalePurchase SMS Recipients',
-                    hintText: 'Comma-separated 10-digit mobile numbers'))),
-      ]),
+      LayoutBuilder(builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        return Wrap(spacing: 14, runSpacing: 14, children: [
+          SizedBox(
+              width: width < 240 ? width : 240,
+              child: TextField(
+                  controller: c['responseSuccessPath'],
+                  decoration: const InputDecoration(
+                      labelText: 'Response Success JSON Field',
+                      hintText: 'Example: status'))),
+          SizedBox(
+              width: width < 240 ? width : 240,
+              child: TextField(
+                  controller: c['responseSuccessValue'],
+                  decoration: const InputDecoration(
+                      labelText: 'Expected Success Value',
+                      hintText: 'Example: success'))),
+          SizedBox(
+              width: width < 300 ? width : 300,
+              child: TextField(
+                  controller: c['salePurchaseRecipients'],
+                  decoration: const InputDecoration(
+                      labelText: 'SalePurchase SMS Recipients',
+                      hintText: 'Comma-separated 10-digit mobile numbers'))),
+        ]);
+      }),
       SwitchListTile(
           title: const Text('SMS Enabled'),
           value: enabled,
@@ -1050,22 +1160,26 @@ class _SmsTabState extends State<_SmsTab> {
               .titleSmall
               ?.copyWith(fontWeight: FontWeight.w700)),
       const SizedBox(height: 8),
-      Wrap(spacing: 14, runSpacing: 14, children: [
-        SizedBox(
-            width: 200,
-            child: TextField(
-                controller: c['testMobile'],
-                decoration: const InputDecoration(labelText: 'Mobile Number'))),
-        SizedBox(
-            width: 300,
-            child: TextField(
-                controller: c['testMessage'],
-                decoration:
-                    const InputDecoration(labelText: 'Message (optional)'))),
-        FilledButton.tonal(
-            onPressed: testing ? null : _testSend,
-            child: Text(testing ? 'Sending...' : 'Send Test SMS')),
-      ]),
+      LayoutBuilder(builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        return Wrap(spacing: 14, runSpacing: 14, children: [
+          SizedBox(
+              width: width < 200 ? width : 200,
+              child: TextField(
+                  controller: c['testMobile'],
+                  decoration:
+                      const InputDecoration(labelText: 'Mobile Number'))),
+          SizedBox(
+              width: width < 300 ? width : 300,
+              child: TextField(
+                  controller: c['testMessage'],
+                  decoration:
+                      const InputDecoration(labelText: 'Message (optional)'))),
+          FilledButton.tonal(
+              onPressed: testing ? null : _testSend,
+              child: Text(testing ? 'Sending...' : 'Send Test SMS')),
+        ]);
+      }),
       const Divider(height: 32),
       Text('Message Templates',
           style: Theme.of(context)
@@ -1337,14 +1451,36 @@ class _CompanyTab extends StatefulWidget {
 
 class _CompanyTabState extends State<_CompanyTab> {
   Map<String, dynamic>? v;
+  final _logoPath = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     ApiClient.instance.dio.get('/api/config/company').then((res) {
       if (res.statusCode == 200 && mounted)
-        setState(() => v = Map<String, dynamic>.from(res.data));
+        setState(() {
+          v = Map<String, dynamic>.from(res.data);
+          _logoPath.text = v!['logoPath']?.toString() ?? '';
+        });
     });
+  }
+
+  @override
+  void dispose() {
+    _logoPath.dispose();
+    super.dispose();
+  }
+
+  Future<void> _chooseLogo() async {
+    final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom, allowedExtensions: const ['png', 'jpg', 'jpeg']);
+    final path = picked?.files.single.path;
+    if (path != null && mounted) {
+      setState(() {
+        _logoPath.text = path;
+        v!['logoPath'] = path;
+      });
+    }
   }
 
   @override
@@ -1363,6 +1499,23 @@ class _CompanyTabState extends State<_CompanyTab> {
           decoration: const InputDecoration(labelText: 'Address'),
           maxLines: 2,
           onChanged: (x) => v!['address'] = x),
+      const SizedBox(height: 12),
+      TextField(
+          controller: _logoPath,
+          decoration: InputDecoration(
+              labelText: 'Print Logo File',
+              hintText: 'PNG/JPG logo used on all slips and reports',
+              suffixIcon: IconButton(
+                  tooltip: 'Choose logo image',
+                  icon: const Icon(Icons.folder_open_outlined),
+                  onPressed: _chooseLogo)),
+          onChanged: (x) =>
+              v!['logoPath'] = x.trim().isEmpty ? null : x.trim()),
+      const Padding(
+          padding: EdgeInsets.only(top: 4),
+          child: Text(
+              'Select a PNG/JPG stored on this factory PC. It is used by A4/PDF and Dot Matrix slips.',
+              style: TextStyle(fontSize: 12, color: Colors.grey))),
       const SizedBox(height: 12),
       DropdownButtonFormField<String>(
           value: v!['defaultLanguage'],

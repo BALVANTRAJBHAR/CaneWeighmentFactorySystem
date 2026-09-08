@@ -121,12 +121,14 @@ public class GrowersController : ControllerBase
             return UnprocessableEntity(new { message = "Possible duplicate grower.", warnings, requiresConfirmation = true });
 
         // Transaction-safe per-village GrowerSequence => GrowerCode = VillageId/Sequence
-        await using var tx = await _db.Database.BeginTransactionAsync();
-        var growerId = (int)await _seq.NextAsync("GrowerId", 1);
-        var sequence = (int)await _seq.NextAsync($"GrowerSeq:{req.VillageId}", 1);
-        var g = new Grower
+        Grower? g = null;
+        await _db.ExecuteInTransactionAsync(async () =>
         {
-            Id = growerId,
+            var growerId = (int)await _seq.NextAsync("GrowerId", 1);
+            var sequence = (int)await _seq.NextAsync($"GrowerSeq:{req.VillageId}", 1);
+            g = new Grower
+            {
+                Id = growerId,
             VillageId = req.VillageId,
             GrowerSequence = sequence,
             GrowerCode = $"{req.VillageId}/{sequence}",
@@ -137,15 +139,16 @@ public class GrowersController : ControllerBase
             AccountHolderName = Validators.Norm(req.AccountHolderName),
             Mobile = req.Mobile,
             Email = Validators.Norm(req.Email),
-            CreatedBy = _current.UserId
-        };
-        ApplyAadhaar(g, req.AadhaarNumber);
-        _db.Growers.Add(g);
-        await _db.SaveChangesAsync();
-        await tx.CommitAsync();
-        await _audit.LogAsync("Create", "Grower", "Grower", g.Id.ToString(),
-            newValue: new { g.GrowerCode, g.GrowerName, g.VillageId });
-        return Ok(new { message = $"Grower '{g.GrowerName}' account created successfully. Grower Code: {g.GrowerCode}", id = g.Id, growerCode = g.GrowerCode });
+                CreatedBy = _current.UserId
+            };
+            ApplyAadhaar(g, req.AadhaarNumber);
+            _db.Growers.Add(g);
+            await _db.SaveChangesAsync();
+        });
+        var createdGrower = g!;
+        await _audit.LogAsync("Create", "Grower", "Grower", createdGrower.Id.ToString(),
+            newValue: new { createdGrower.GrowerCode, createdGrower.GrowerName, createdGrower.VillageId });
+        return Ok(new { message = $"Grower '{createdGrower.GrowerName}' account created successfully. Grower Code: {createdGrower.GrowerCode}", id = createdGrower.Id, growerCode = createdGrower.GrowerCode });
     }
 
     [HttpPut("{id:int}")]

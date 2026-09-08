@@ -126,17 +126,24 @@ public class WeighmentController : ControllerBase
 
         // Rate snapshot at gross time
         var now = DateTime.UtcNow;
+        // Rate periods are configured as calendar dates, not instants. Comparing a local
+        // date selected in the desktop UI with UTC time made a same-day rate unavailable
+        // until its accidentally persisted clock time had passed.
+        var rateDate = now.Date;
         var rate = await _db.Rates.Where(r => r.VarietyTypeId == req.VarietyTypeId && !r.IsDeleted && r.Status
-                && r.EffectiveFrom <= now && (r.EffectiveTo == null || r.EffectiveTo >= now))
+                && r.EffectiveFrom.Date <= rateDate
+                && (r.EffectiveTo == null || r.EffectiveTo.Value.Date >= rateDate))
             .OrderByDescending(r => r.EffectiveFrom).FirstOrDefaultAsync();
         if (rate == null)
             return Conflict(new { message = "No active Rate exists for this Variety Type. Configure Rate Master first." });
 
-        await using var tx = await _db.Database.BeginTransactionAsync();
-        var purchaseId = (int)await _seq.NextAsync("PurchaseId", 1);
-        var purchase = new Purchase
+        Purchase? purchase = null;
+        await _db.ExecuteInTransactionAsync(async () =>
         {
-            Id = purchaseId,
+            var purchaseId = (int)await _seq.NextAsync("PurchaseId", 1);
+            purchase = new Purchase
+            {
+                Id = purchaseId,
             GrowerId = grower.Id,
             VillageId = grower.VillageId,
             GrowerCode = grower.GrowerCode,
@@ -155,11 +162,13 @@ public class WeighmentController : ControllerBase
             SeasonId = season.Id,
             GrossTareStatus = "GROSS_DONE",
             PaymentStatus = "NOT_ELIGIBLE",
-            CreatedBy = _current.UserId
-        };
-        _db.Purchases.Add(purchase);
-        await _db.SaveChangesAsync();
-        await tx.CommitAsync();
+                CreatedBy = _current.UserId
+            };
+            _db.Purchases.Add(purchase);
+            await _db.SaveChangesAsync();
+        });
+
+        var purchaseId = purchase!.Id;
 
         await _audit.LogAsync("GrossWeighment", "Weighment", "Purchase", purchaseId.ToString(),
             newValue: new { purchase.GrowerCode, purchase.GrossWeightQuintal, purchase.VehicleNumber, purchase.Rate });
@@ -277,16 +286,20 @@ public class WeighmentController : ControllerBase
     private async Task<object?> AutoPrintAsync(string stage, int purchaseId)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
-        if (cfg == null || !cfg.AutoPrint) return null;
+        if (cfg == null) return null;
         var copies = stage == "Gross" ? cfg.GrossCopies : cfg.TareCopies;
-        if (copies <= 0) return null;
         return new
         {
             printerType = cfg.PrinterType,
             printerName = cfg.PrinterName,
             copies,
             language = cfg.Language,
-            documentUrl = $"/api/print/purchase/{purchaseId}?stage={stage.ToUpperInvariant()}&format=final"
+            stage,
+            shouldAutoPrint = cfg.AutoPrint && copies > 0,
+            // Dot-matrix final output is ESC/P bytes, not a PDF. When physical
+            // auto-print is off the client must receive an actual A4 PDF to open.
+            documentUrl = $"/api/print/purchase/{purchaseId}?stage={stage.ToUpperInvariant()}&format=final" +
+                (cfg.AutoPrint && copies > 0 ? "" : "&target=A4")
         };
     }
 

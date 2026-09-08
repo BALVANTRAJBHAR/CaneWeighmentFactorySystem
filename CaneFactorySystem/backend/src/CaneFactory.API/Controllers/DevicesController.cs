@@ -48,6 +48,8 @@ public class DevicesController : ControllerBase
     {
         device.Id = 0;
         device.CreatedBy = _current.UserId;
+        device.DesiredConnectionState = "Disconnected";
+        device.DesiredReaderRunning = false;
         _db.WeighingDevices.Add(device);
         await _db.SaveChangesAsync();
         await LogHistory(device.Id, "Create", null, device, "Saved");
@@ -82,9 +84,19 @@ public class DevicesController : ControllerBase
         if (d == null) return NotFound(new { message = "Device not found." });
         if (d.ActiveStringProfileId == null) return Conflict(new { message = "Assign an active String Profile before activating." });
         var others = await _db.WeighingDevices.Where(x => x.Id != id && x.ActiveConfiguration).ToListAsync();
-        foreach (var o in others) o.ActiveConfiguration = false;
+        foreach (var o in others)
+        {
+            o.ActiveConfiguration = false;
+            o.DesiredConnectionState = "Disconnected";
+            o.DesiredReaderRunning = false;
+        }
+        if (_weighing.OperatingDeviceId != null && _weighing.OperatingDeviceId != id)
+            _weighing.Disconnect();
         d.ActiveConfiguration = true;
         d.IsEnabled = true;
+        // Activation selects a configuration; it never silently starts hardware.
+        d.DesiredConnectionState = "Disconnected";
+        d.DesiredReaderRunning = false;
         await _db.SaveChangesAsync();
         await LogHistory(id, "Activate", null, new { d.DeviceName }, "Activated");
         return Ok(new { message = $"Configuration for '{d.DeviceName}' is now ACTIVE." });
@@ -120,12 +132,14 @@ public class DevicesController : ControllerBase
     [HttpPost("{id:int}/connect")]
     public async Task<IActionResult> Connect(int id)
     {
+        var device = await _db.WeighingDevices.FirstOrDefaultAsync(d => d.Id == id && !d.IsDeleted);
+        if (device == null) return NotFound(new { message = "Weighing device not found." });
+        if (!device.ActiveConfiguration) return Conflict(new { message = "Activate this configuration before connecting." });
+        // Persist intent before the physical attempt so a temporary unavailable COM port is
+        // recovered after restart. Explicit Stop/Disconnect/Deactivate clear this intent.
+        device.DesiredConnectionState = "Connected";
+        await _db.SaveChangesAsync();
         var (ok, message) = await _weighing.ConnectAsync(id);
-        if (ok)
-        {
-            var device = await _db.WeighingDevices.FindAsync(id);
-            if (device != null) { device.DesiredConnectionState = "Connected"; await _db.SaveChangesAsync(); }
-        }
         await LogHistory(id, "TestConnection", null, null, ok ? "Connected" : message);
         return ok ? Ok(new { message }) : Conflict(new { message });
     }
@@ -145,12 +159,12 @@ public class DevicesController : ControllerBase
     [HttpPost("start-reading")]
     public async Task<IActionResult> StartReading()
     {
+        var active = await _db.WeighingDevices.FirstOrDefaultAsync(d => d.ActiveConfiguration && !d.IsDeleted);
+        if (active == null) return Conflict(new { message = "No active weighing device configuration is selected." });
+        active.DesiredConnectionState = "Connected";
+        active.DesiredReaderRunning = true;
+        await _db.SaveChangesAsync();
         var (ok, message) = _weighing.StartReading();
-        if (ok)
-        {
-            var active = await _db.WeighingDevices.FirstOrDefaultAsync(d => d.ActiveConfiguration);
-            if (active != null) { active.DesiredConnectionState = "Connected"; active.DesiredReaderRunning = true; await _db.SaveChangesAsync(); }
-        }
         return ok ? Ok(new { message }) : Conflict(new { message });
     }
 

@@ -70,8 +70,6 @@ class _AppShellState extends State<AppShell> {
         'SalePurchase.View', () => const SalePurchaseWeighmentScreen()),
     _NavItem(
         'Loans', Icons.savings_outlined, 'Loan.View', () => const LoanScreen()),
-    _NavItem('Loan Recovery', Icons.currency_rupee_outlined,
-        'LoanRecovery.View', () => const LoanRecoveryScreen()),
     _NavItem('Reports', Icons.summarize_outlined, 'Report.View',
         () => const ReportsScreen()),
     _NavItem('Users & Roles', Icons.group_outlined, 'User.View',

@@ -148,12 +148,15 @@ public class LoanController : ControllerBase
         var season = await _db.Seasons.FirstOrDefaultAsync(s => s.IsActive && !s.IsDeleted);
         if (season == null) return Conflict(new { message = "No ACTIVE season is configured. Ask Admin/Developer to activate a Season." });
 
-        await using var tx = await _db.Database.BeginTransactionAsync();
-        var loanId = (int)await _seq.NextAsync("LoanId", 1);
+        var loanId = 0;
         var amount = WeightCalculator.R2(req.LoanAmount);
-        var loan = new Loan
+        Loan? loan = null;
+        await _db.ExecuteInTransactionAsync(async () =>
         {
-            Id = loanId,
+            loanId = (int)await _seq.NextAsync("LoanId", 1);
+            loan = new Loan
+            {
+                Id = loanId,
             GrowerId = grower.Id,
             GrowerCode = grower.GrowerCode,
             VillageId = grower.VillageId,
@@ -167,14 +170,15 @@ public class LoanController : ControllerBase
             Remarks = req.Remarks,
             LoanStatus = "ACTIVE",
             SeasonId = season.Id,
-            CreatedBy = _current.UserId
-        };
-        _db.Loans.Add(loan);
-        await _db.SaveChangesAsync();
-        await tx.CommitAsync();
+                CreatedBy = _current.UserId
+            };
+            _db.Loans.Add(loan);
+            await _db.SaveChangesAsync();
+        });
+        var issuedLoan = loan!;
 
         await _audit.LogAsync("Issue", "Loan", "Loan", loanId.ToString(),
-            newValue: new { loan.GrowerCode, loan.LoanAmount, LoanTypeName = loanType.LoanTypeName });
+            newValue: new { issuedLoan.GrowerCode, issuedLoan.LoanAmount, LoanTypeName = loanType.LoanTypeName });
         return Ok(new
         {
             message = $"Loan issued successfully. Loan ID: {loanId}. Amount: Rs {amount:F2}.",
@@ -318,11 +322,14 @@ public class LoanRecoveryController : ControllerBase
         if (amount > loan.OutstandingAmount)
             return Conflict(new { message = $"Recovery amount (Rs {amount:F2}) cannot exceed the outstanding balance (Rs {loan.OutstandingAmount:F2})." });
 
-        await using var tx = await _db.Database.BeginTransactionAsync();
-        var lrId = (int)await _seq.NextAsync("LRId", 1);
-        var recovery = new LoanRecovery
+        var lrId = 0;
+        LoanRecovery? recovery = null;
+        await _db.ExecuteInTransactionAsync(async () =>
         {
-            Id = lrId,
+            lrId = (int)await _seq.NextAsync("LRId", 1);
+            recovery = new LoanRecovery
+            {
+                Id = lrId,
             LoanId = loan.Id,
             GrowerId = loan.GrowerId,
             GrowerCode = loan.GrowerCode,
@@ -332,19 +339,20 @@ public class LoanRecoveryController : ControllerBase
             RecoveredByUserName = _current.Username ?? "",
             Remarks = req.Remarks,
             RecoveryStatus = "ACTIVE",
-            CreatedBy = _current.UserId
-        };
-        loan.RecoveredAmount = WeightCalculator.R2(loan.RecoveredAmount + amount);
-        loan.OutstandingAmount = WeightCalculator.R2(loan.OutstandingAmount - amount);
-        if (loan.OutstandingAmount == 0) loan.LoanStatus = "CLOSED";
-        loan.UpdatedAt = DateTime.UtcNow;
-        loan.UpdatedBy = _current.UserId;
-        _db.LoanRecoveries.Add(recovery);
-        await _db.SaveChangesAsync();
-        await tx.CommitAsync();
+                CreatedBy = _current.UserId
+            };
+            loan.RecoveredAmount = WeightCalculator.R2(loan.RecoveredAmount + amount);
+            loan.OutstandingAmount = WeightCalculator.R2(loan.OutstandingAmount - amount);
+            if (loan.OutstandingAmount == 0) loan.LoanStatus = "CLOSED";
+            loan.UpdatedAt = DateTime.UtcNow;
+            loan.UpdatedBy = _current.UserId;
+            _db.LoanRecoveries.Add(recovery);
+            await _db.SaveChangesAsync();
+        });
+        var recordedRecovery = recovery!;
 
         await _audit.LogAsync("Recover", "LoanRecovery", "LoanRecovery", lrId.ToString(),
-            newValue: new { recovery.LoanId, recovery.RecoveryAmount, loan.OutstandingAmount });
+            newValue: new { recordedRecovery.LoanId, recordedRecovery.RecoveryAmount, loan.OutstandingAmount });
         return Ok(new
         {
             message = $"Recovery recorded successfully. Recovery ID: {lrId}. Remaining Outstanding: Rs {loan.OutstandingAmount:F2}.",

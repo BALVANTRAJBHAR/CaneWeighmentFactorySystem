@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
+import '../../core/file_download.dart';
 import '../../core/print_service.dart';
 import '../../core/sound_controller.dart';
 import '../../providers/live_weight_provider.dart';
+import '../../widgets/camera_live_preview_panel.dart';
 
 /// Separate non-cane SalePurchase workflow. It never uses the Payment screen/API.
 class SalePurchaseWeighmentScreen extends StatefulWidget {
@@ -21,7 +23,7 @@ class _SalePurchaseWeighmentScreenState
   final _remark = TextEditingController();
   final _id = TextEditingController();
   final _rate = TextEditingController();
-  List _items = [], _parties = [], _vehicles = [], _pending = [];
+  List _items = [], _parties = [], _vehicles = [], _pending = [], _cameras = [];
   int? _itemId, _partyId, _vehicleTypeId;
   Map<String, dynamic>? _selected;
   bool _gross = false, _saving = false;
@@ -51,7 +53,8 @@ class _SalePurchaseWeighmentScreenState
         ApiClient.instance.dio.get('/api/items'),
         ApiClient.instance.dio.get('/api/parties'),
         ApiClient.instance.dio.get('/api/vehicle-types'),
-        ApiClient.instance.dio.get('/api/sale-purchase-weighment/pending')
+        ApiClient.instance.dio.get('/api/sale-purchase-weighment/pending'),
+        ApiClient.instance.dio.get('/api/config/cameras')
       ]);
       if (!mounted) return;
       setState(() {
@@ -59,6 +62,14 @@ class _SalePurchaseWeighmentScreenState
         _parties = results[1].data['items'] ?? [];
         _vehicles = results[2].data['items'] ?? [];
         _pending = results[3].data ?? [];
+        if (results[4].statusCode == 200 && results[4].data is List) {
+          _cameras = (results[4].data as List)
+              .where((c) =>
+                  c['cameraSystemEnabled'] == true &&
+                  c['liveViewEnabled'] == true &&
+                  c['status'] == true)
+              .toList();
+        }
       });
     } catch (_) {
       _toast('Could not load SalePurchase reference data.', error: true);
@@ -95,6 +106,12 @@ class _SalePurchaseWeighmentScreenState
 
   Future<void> _print(dynamic print) async {
     if (print == null) return;
+    if (print['shouldAutoPrint'] != true) {
+      final stage = print['stage']?.toString().toLowerCase() ?? 'weighment';
+      await openPdfAfterSave(context, print['documentUrl'],
+          'sale-purchase_$stage-${DateTime.now().millisecondsSinceEpoch}.pdf');
+      return;
+    }
     final outcome = await PrintService.printDocument(
         documentUrl: print['documentUrl'],
         printerType: print['printerType'] ?? 'DotMatrix',
@@ -126,32 +143,37 @@ class _SalePurchaseWeighmentScreenState
           error: true);
     }
     setState(() => _saving = true);
-    final res = await ApiClient.instance.dio
-        .post('/api/sale-purchase-weighment/tare', data: {
-      'itemId': _itemId,
-      'partyId': _partyId,
-      'vehicleTypeId': _vehicleTypeId,
-      'vehicleNumber': _vehicle.text.trim(),
-      'driverName': _driver.text.trim(),
-      'remark': _remark.text.trim(),
-      'idempotencyKey': 'sp-tare-${DateTime.now().millisecondsSinceEpoch}'
-    });
-    if (!mounted) return;
-    setState(() => _saving = false);
-    if (res.statusCode != 200)
-      return _toast(ApiClient.errorMessage(res), error: true);
-    _toast(res.data['message']);
-    _sound.onWeighmentSaved();
-    await _print(res.data['autoPrint']);
-    setState(() {
-      _itemId = null;
-      _partyId = null;
-      _vehicleTypeId = null;
-      _vehicle.clear();
-      _driver.clear();
-      _remark.clear();
-    });
-    _load();
+    try {
+      final res = await ApiClient.instance.dio
+          .post('/api/sale-purchase-weighment/tare', data: {
+        'itemId': _itemId,
+        'partyId': _partyId,
+        'vehicleTypeId': _vehicleTypeId,
+        'vehicleNumber': _vehicle.text.trim(),
+        'driverName': _driver.text.trim(),
+        'remark': _remark.text.trim(),
+        'idempotencyKey': 'sp-tare-${DateTime.now().microsecondsSinceEpoch}'
+      });
+      if (!mounted) return;
+      if (res.statusCode != 200)
+        return _toast(ApiClient.errorMessage(res), error: true);
+      _toast(res.data['message']);
+      _sound.onWeighmentSaved();
+      await _print(res.data['autoPrint']);
+      setState(() {
+        _itemId = null;
+        _partyId = null;
+        _vehicleTypeId = null;
+        _vehicle.clear();
+        _driver.clear();
+        _remark.clear();
+      });
+      _load();
+    } catch (e) {
+      if (mounted) _toast(ApiClient.exceptionMessage(e), error: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _saveGross() async {
@@ -165,26 +187,32 @@ class _SalePurchaseWeighmentScreenState
     if (_rate.text.trim().isNotEmpty && rate == null)
       return _toast('Rate must be a valid number.', error: true);
     setState(() => _saving = true);
-    final res = await ApiClient.instance.dio
-        .post('/api/sale-purchase-weighment/gross', data: {
-      'salePurchaseId': _selected!['salePurchaseId'],
-      'rate': rate,
-      'idempotencyKey': 'sp-gross-${_selected!['salePurchaseId']}'
-    });
-    if (!mounted) return;
-    setState(() => _saving = false);
-    if (res.statusCode != 200)
-      return _toast(ApiClient.errorMessage(res), error: true);
-    _toast(res.data['message']);
-    _sound.onWeighmentSaved();
-    await _print(res.data['autoPrint']);
-    setState(() {
-      _selected = null;
-      _id.clear();
-      _rate.clear();
-      _gross = false;
-    });
-    _load();
+    try {
+      final res = await ApiClient.instance.dio
+          .post('/api/sale-purchase-weighment/gross', data: {
+        'salePurchaseId': _selected!['salePurchaseId'],
+        'rate': rate,
+        'idempotencyKey':
+            'sp-gross-${_selected!['salePurchaseId']}-${DateTime.now().microsecondsSinceEpoch}'
+      });
+      if (!mounted) return;
+      if (res.statusCode != 200)
+        return _toast(ApiClient.errorMessage(res), error: true);
+      _toast(res.data['message']);
+      _sound.onWeighmentSaved();
+      await _print(res.data['autoPrint']);
+      setState(() {
+        _selected = null;
+        _id.clear();
+        _rate.clear();
+        _gross = false;
+      });
+      _load();
+    } catch (e) {
+      if (mounted) _toast(ApiClient.exceptionMessage(e), error: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Widget _dropdown(String label, int? value, List data,
@@ -253,12 +281,18 @@ class _SalePurchaseWeighmentScreenState
               const SizedBox(height: 8),
               Expanded(
                   child: SingleChildScrollView(
-                      child: Card(
-                          child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: _gross
-                                  ? _grossForm(finalWeight)
-                                  : _tareForm())))),
+                      child: Column(children: [
+                Card(
+                    child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: _gross ? _grossForm(finalWeight) : _tareForm())),
+                if (_cameras.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                      height: 300,
+                      child: CameraLivePreviewPanel(cameras: _cameras)),
+                ],
+              ]))),
               const SizedBox(height: 8),
               SizedBox(height: 210, child: Card(child: _pendingGrid()))
             ])));

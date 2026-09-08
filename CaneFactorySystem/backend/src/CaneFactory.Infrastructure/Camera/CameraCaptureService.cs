@@ -177,6 +177,12 @@ public class CameraCaptureService : ICameraCaptureService
         if (cam == null) { result.Error = "Camera not found."; return result; }
         result.CameraNumber = cam.CameraNumber;
 
+        // Preview is operational live-view, not evidence capture: it honours the
+        // camera-system switch and per-camera live/status settings, but not
+        // ImageCaptureEnabled/CaptureEnabled.
+        if (!await SettingTrueAsync("CameraSystemEnabled")) { result.Error = "Camera system is disabled."; return result; }
+        if (!cam.Status || !cam.LiveViewEnabled) { result.Error = "Live view is disabled for this camera."; return result; }
+
         var provider = ResolveProvider(cam.Protocol);
         if (provider == null) { result.Error = $"No capture provider registered for protocol '{cam.Protocol}'."; return result; }
         var password = cam.PasswordEncrypted != null ? _protector.Unprotect(cam.PasswordEncrypted) : null;
@@ -190,7 +196,7 @@ public class CameraCaptureService : ICameraCaptureService
     private async Task<bool> SettingTrueAsync(string key)
     {
         var s = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(x => x.Key == key);
-        return s == null || string.Equals(s.Value, "true", StringComparison.OrdinalIgnoreCase);
+        return s == null || s.Value.Trim().ToUpperInvariant() is "TRUE" or "ON" or "1";
     }
 
     /// <summary>Layout: {Root}/{Season}/Images/YYYY/MM/DD/PUR-{id}/{STAGE}-CAM{NN}-{seq}.jpg (never a DB BLOB).</summary>

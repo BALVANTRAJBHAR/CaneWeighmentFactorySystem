@@ -98,11 +98,24 @@ class ApiClient {
     final data = res?.data;
     if (data is Map && data['message'] != null)
       return data['message'].toString();
+    // ASP.NET Core ProblemDetails uses title/detail rather than the application's
+    // normal message envelope. Preserve that safe server explanation for operators.
+    if (data is Map && data['detail'] != null) return data['detail'].toString();
+    if (data is Map && data['title'] != null) return data['title'].toString();
     if (data is Map && data['errors'] is Map) {
       final errs =
           (data['errors'] as Map).values.expand((v) => v is List ? v : [v]);
       return errs.join(' ');
     }
+    return fallback;
+  }
+
+  /// Converts a Dio failure into the server's safe JSON error message when it
+  /// has one. This lets operational forms distinguish a validation/server
+  /// failure from an actual connectivity problem.
+  static String exceptionMessage(Object error,
+      [String fallback = 'Could not complete the request. Please try again.']) {
+    if (error is DioException) return errorMessage(error.response, fallback);
     return fallback;
   }
 }

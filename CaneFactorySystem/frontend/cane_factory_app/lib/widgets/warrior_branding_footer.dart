@@ -8,7 +8,7 @@ class WarriorBrandingFooter extends StatelessWidget {
       {super.key, this.showTagline = false, this.compact = false});
 
   static final Uri _businessProfile =
-      Uri.parse('https://share.google/B4HHXLPuBJTF87C4n');
+      Uri.parse('https://share.google/Si334lWwKMwPexN3m');
 
   final bool showTagline;
   final bool compact;
@@ -42,7 +42,7 @@ class WarriorBrandingFooter extends StatelessWidget {
             children: [
               Text('POWERED BY',
                   style: TextStyle(
-                      fontSize: compact ? 9 : 10,
+                      fontSize: compact ? 10 : 12,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 1.1,
                       color: muted)),

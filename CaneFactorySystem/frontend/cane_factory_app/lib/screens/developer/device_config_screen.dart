@@ -101,6 +101,14 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
         const PopupMenuItem(value: 'disconnect', child: Text('Disconnect')),
       const PopupMenuDivider(),
       const PopupMenuItem(value: 'test-parser', child: Text('Test Parser')),
+      if (active) ...[
+        const PopupMenuItem(
+            value: 'simulator-start', child: Text('Start Simulator')),
+        const PopupMenuItem(
+            value: 'simulator-set-weight', child: Text('Set Simulator Weight')),
+        const PopupMenuItem(
+            value: 'simulator-stop', child: Text('Stop Simulator')),
+      ],
     ];
   }
 
@@ -111,6 +119,17 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
         return;
       case 'test-parser':
         _testParser();
+        return;
+      case 'simulator-start':
+        _post('/api/devices/simulator/start',
+            {'targetKg': double.tryParse(_simWeight.text) ?? 25000});
+        return;
+      case 'simulator-set-weight':
+        _post('/api/devices/simulator/set-weight',
+            {'kg': double.tryParse(_simWeight.text) ?? 0});
+        return;
+      case 'simulator-stop':
+        _post('/api/devices/simulator/stop');
         return;
       case 'connect':
       case 'activate':
@@ -149,131 +168,136 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setD) => AlertDialog(
           title: Text('Device: ${d['deviceName']}'),
-          content: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: 500,
-              maxHeight: MediaQuery.sizeOf(ctx).height * .62,
-            ),
+          content: SizedBox(
+            width: (MediaQuery.sizeOf(ctx).width - 64).clamp(0, 500).toDouble(),
+            height: MediaQuery.sizeOf(ctx).height * .62,
             child: SingleChildScrollView(
-              child: Wrap(spacing: 10, runSpacing: 10, children: [
-                for (final e in [
-                  ('deviceName', 'Device Name'),
-                  ('manufacturer', 'Manufacturer'),
-                  ('modelNumber', 'Model'),
-                  ('comPort', 'COM Port (Example: COM1)')
-                ])
-                  SizedBox(
-                      width: 230,
-                      child: TextField(
-                          controller: c[e.$1],
-                          decoration: InputDecoration(labelText: e.$2))),
-                SizedBox(
-                    width: 230,
-                    child: DropdownButtonFormField<String>(
-                        value: connType,
-                        isExpanded: true,
-                        decoration:
-                            const InputDecoration(labelText: 'Connection Type'),
-                        items: const [
-                          DropdownMenuItem(
-                              value: 'RS232', child: Text('RS232 Serial')),
-                          DropdownMenuItem(
-                              value: 'USB', child: Text('USB-to-Serial')),
-                          DropdownMenuItem(
-                              value: 'TCPIP', child: Text('TCP/IP (future)'))
-                        ],
-                        onChanged: (v) => connType = v!)),
-                SizedBox(
-                    width: 230,
-                    child: DropdownButtonFormField<int>(
-                        value: baud,
-                        isExpanded: true,
-                        decoration:
-                            const InputDecoration(labelText: 'Baud Rate'),
-                        items: [
-                          for (final b in [
-                            1200,
-                            2400,
-                            4800,
-                            9600,
-                            19200,
-                            38400,
-                            57600,
-                            115200
-                          ])
-                            DropdownMenuItem(value: b, child: Text('$b'))
-                        ],
-                        onChanged: (v) => baud = v!)),
-                SizedBox(
-                    width: 230,
-                    child: DropdownButtonFormField<String>(
-                        value: parity,
-                        isExpanded: true,
-                        decoration: const InputDecoration(labelText: 'Parity'),
-                        items: const [
-                          DropdownMenuItem(value: 'None', child: Text('None')),
-                          DropdownMenuItem(value: 'Even', child: Text('Even')),
-                          DropdownMenuItem(value: 'Odd', child: Text('Odd'))
-                        ],
-                        onChanged: (v) => parity = v!)),
-                SizedBox(
-                    width: 110,
-                    child: DropdownButtonFormField<int>(
-                        value: dataBits,
-                        isExpanded: true,
-                        decoration:
-                            const InputDecoration(labelText: 'Data Bits'),
-                        items: const [
-                          DropdownMenuItem(value: 7, child: Text('7')),
-                          DropdownMenuItem(value: 8, child: Text('8'))
-                        ],
-                        onChanged: (v) => dataBits = v!)),
-                SizedBox(
-                    width: 110,
-                    child: DropdownButtonFormField<int>(
-                        value: stopBits,
-                        isExpanded: true,
-                        decoration:
-                            const InputDecoration(labelText: 'Stop Bits'),
-                        items: const [
-                          DropdownMenuItem(value: 1, child: Text('1')),
-                          DropdownMenuItem(value: 2, child: Text('2'))
-                        ],
-                        onChanged: (v) => stopBits = v!)),
-                SizedBox(
-                    width: 230,
-                    child: DropdownButtonFormField<String>(
-                        value: flow,
-                        isExpanded: true,
-                        decoration:
-                            const InputDecoration(labelText: 'Flow Control'),
-                        items: const [
-                          DropdownMenuItem(value: 'None', child: Text('None')),
-                          DropdownMenuItem(
-                              value: 'XOnXOff', child: Text('XOn/XOff')),
-                          DropdownMenuItem(value: 'RTS', child: Text('RTS'))
-                        ],
-                        onChanged: (v) => flow = v!)),
-                SizedBox(
-                    width: 230,
-                    child: DropdownButtonFormField<int>(
-                        value: profileId,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                            labelText: 'Active String Profile'),
-                        items: [
-                          for (final p in _profiles)
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final e in [
+                    ('deviceName', 'Device Name'),
+                    ('manufacturer', 'Manufacturer'),
+                    ('modelNumber', 'Model'),
+                    ('comPort', 'COM Port (Example: COM1)')
+                  ])
+                    Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: TextField(
+                            controller: c[e.$1],
+                            decoration: InputDecoration(labelText: e.$2))),
+                  Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: DropdownButtonFormField<String>(
+                          value: connType,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                              labelText: 'Connection Type'),
+                          items: const [
                             DropdownMenuItem(
-                                value: p['id'] as int,
-                                child: Text(p['stringProfileName'],
-                                    overflow: TextOverflow.ellipsis))
-                        ],
-                        onChanged: (v) => profileId = v)),
-                SwitchListTile(
-                    title: const Text('Enabled'),
-                    value: enabled,
-                    onChanged: (v) => setD(() => enabled = v)),
-              ]),
+                                value: 'RS232', child: Text('RS232 Serial')),
+                            DropdownMenuItem(
+                                value: 'USB', child: Text('USB-to-Serial')),
+                            DropdownMenuItem(
+                                value: 'TCPIP', child: Text('TCP/IP (future)'))
+                          ],
+                          onChanged: (v) => connType = v!)),
+                  Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: DropdownButtonFormField<int>(
+                          value: baud,
+                          isExpanded: true,
+                          decoration:
+                              const InputDecoration(labelText: 'Baud Rate'),
+                          items: [
+                            for (final b in [
+                              1200,
+                              2400,
+                              4800,
+                              9600,
+                              19200,
+                              38400,
+                              57600,
+                              115200
+                            ])
+                              DropdownMenuItem(value: b, child: Text('$b'))
+                          ],
+                          onChanged: (v) => baud = v!)),
+                  Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: DropdownButtonFormField<String>(
+                          value: parity,
+                          isExpanded: true,
+                          decoration:
+                              const InputDecoration(labelText: 'Parity'),
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'None', child: Text('None')),
+                            DropdownMenuItem(
+                                value: 'Even', child: Text('Even')),
+                            DropdownMenuItem(value: 'Odd', child: Text('Odd'))
+                          ],
+                          onChanged: (v) => parity = v!)),
+                  Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: DropdownButtonFormField<int>(
+                          value: dataBits,
+                          isExpanded: true,
+                          decoration:
+                              const InputDecoration(labelText: 'Data Bits'),
+                          items: const [
+                            DropdownMenuItem(value: 7, child: Text('7')),
+                            DropdownMenuItem(value: 8, child: Text('8'))
+                          ],
+                          onChanged: (v) => dataBits = v!)),
+                  Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: DropdownButtonFormField<int>(
+                          value: stopBits,
+                          isExpanded: true,
+                          decoration:
+                              const InputDecoration(labelText: 'Stop Bits'),
+                          items: const [
+                            DropdownMenuItem(value: 1, child: Text('1')),
+                            DropdownMenuItem(value: 2, child: Text('2'))
+                          ],
+                          onChanged: (v) => stopBits = v!)),
+                  Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: DropdownButtonFormField<String>(
+                          value: flow,
+                          isExpanded: true,
+                          decoration:
+                              const InputDecoration(labelText: 'Flow Control'),
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'None', child: Text('None')),
+                            DropdownMenuItem(
+                                value: 'XOnXOff', child: Text('XOn/XOff')),
+                            DropdownMenuItem(value: 'RTS', child: Text('RTS'))
+                          ],
+                          onChanged: (v) => flow = v!)),
+                  Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: DropdownButtonFormField<int>(
+                          value: profileId,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                              labelText: 'Active String Profile'),
+                          items: [
+                            for (final p in _profiles)
+                              DropdownMenuItem(
+                                  value: p['id'] as int,
+                                  child: Text(p['stringProfileName'],
+                                      overflow: TextOverflow.ellipsis))
+                          ],
+                          onChanged: (v) => profileId = v)),
+                  SwitchListTile(
+                      title: const Text('Enabled'),
+                      value: enabled,
+                      onChanged: (v) => setD(() => enabled = v)),
+                ],
+              ),
             ),
           ),
           actions: [
@@ -351,7 +375,9 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                     '${_isConnected(d) ? 'Connected' : 'Disconnected'} • '
                     '${_isRunning(d) ? 'Running' : 'Stopped'} • '
                     '${d['activeConfiguration'] == true ? 'Active' : 'Inactive'} • '
-                    '${d['isEnabled'] == true ? 'Enabled' : 'Disabled'}'),
+                    '${d['isEnabled'] == true ? 'Enabled' : 'Disabled'}\n'
+                    'Recovery intent: ${d['desiredConnectionState'] ?? 'Disconnected'} • '
+                    '${d['desiredReaderRunning'] == true ? 'Reader should run' : 'Reader stopped by operator'}'),
                 trailing: canConfigure
                     ? PopupMenuButton<String>(
                         tooltip: 'Device actions',
@@ -484,7 +510,8 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
-                    'Live: ${_live!['weightQuintal']} Qtl (${_live!['weightKg']} KG) • '
+                    'Live: ${_live!['isLive'] == true ? _live!['weightQuintal'] : '--'} Qtl '
+                    '(${_live!['isLive'] == true ? _live!['weightKg'] : '--'} KG) • '
                     '${_live!['deviceConnected'] == true ? 'Connected to ${_live!['deviceName']}' : 'Disconnected'} • '
                     '${_live!['stable'] == true ? 'Stable' : 'Unstable'}'),
               ),

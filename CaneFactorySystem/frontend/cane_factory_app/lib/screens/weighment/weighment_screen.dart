@@ -4,10 +4,12 @@ import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
+import '../../core/file_download.dart';
 import '../../core/print_service.dart';
 import '../../core/sound_controller.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/live_weight_provider.dart';
+import '../../widgets/camera_live_preview_panel.dart';
 
 /// UNIFIED CANE WEIGHMENT MAIN FORM.
 /// One form with (O) GROSS / (O) TARE radio modes - the visible sections, grid and
@@ -77,7 +79,10 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         if (vart.statusCode == 200) _varietyTypes = vart.data['items'];
         if (cams.statusCode == 200 && cams.data is List) {
           _cameras = (cams.data as List)
-              .where((c) => c['liveViewEnabled'] == true && c['status'] == true)
+              .where((c) =>
+                  c['cameraSystemEnabled'] == true &&
+                  c['liveViewEnabled'] == true &&
+                  c['status'] == true)
               .toList();
         }
       });
@@ -96,6 +101,12 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   /// failures never affect the already-completed save - just a clear toast + manual Reprint option.
   Future<void> _autoPrint(dynamic autoPrint) async {
     if (autoPrint == null) return;
+    if (autoPrint['shouldAutoPrint'] != true) {
+      final stage = autoPrint['stage']?.toString().toLowerCase() ?? 'weighment';
+      await openPdfAfterSave(context, autoPrint['documentUrl'],
+          'cane_$stage-${DateTime.now().millisecondsSinceEpoch}.pdf');
+      return;
+    }
     final outcome = await PrintService.printDocument(
       documentUrl: autoPrint['documentUrl'],
       printerType: autoPrint['printerType'] ?? 'DotMatrix',
@@ -201,37 +212,46 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     if (_varietyTypeId == null || _varietyId == null)
       return _toast('Select Variety Type and Variety.', error: true);
     setState(() => _saving = true);
-    final res =
-        await ApiClient.instance.dio.post('/api/weighment/gross', data: {
-      'growerCode': _grower!['growerCode'],
-      'vehicleTypeId': _vehicleTypeId,
-      'vehicleNumber': _vehicleNumber.text.trim().toUpperCase(),
-      'varietyTypeId': _varietyTypeId,
-      'varietyId': _varietyId,
-      'cuttingPercent': double.tryParse(_cutting.text) ?? 0,
-      'taxPercent': double.tryParse(_tax.text) ?? 0,
-      'scaleReadingKg': live.weightKg,
-      'idempotencyKey':
-          'gross-${_grower!['growerCode']}-${DateTime.now().millisecondsSinceEpoch ~/ 30000}',
-    });
-    setState(() => _saving = false);
-    if (res.statusCode == 200) {
-      _toast(res.data['message']);
-      _sound.onWeighmentSaved();
-      final purchaseId = res.data['purchaseId'] as int;
-      // reset new-entry fields; keep configuration selections for fast operation
-      setState(() {
-        _grower = null;
-        _growerCode.clear();
-        _vehicleNumber.clear();
-        _capturedImages = [];
-        _lastPrintStage = 'GROSS';
+    try {
+      final res =
+          await ApiClient.instance.dio.post('/api/weighment/gross', data: {
+        'growerCode': _grower!['growerCode'],
+        'vehicleTypeId': _vehicleTypeId,
+        'vehicleNumber': _vehicleNumber.text.trim().toUpperCase(),
+        'varietyTypeId': _varietyTypeId,
+        'varietyId': _varietyId,
+        'cuttingPercent': double.tryParse(_cutting.text) ?? 0,
+        'taxPercent': double.tryParse(_tax.text) ?? 0,
+        'scaleReadingKg': live.weightKg,
+        'idempotencyKey':
+            'gross-${_grower!['growerCode']}-${DateTime.now().microsecondsSinceEpoch}',
       });
-      _loadPending();
-      _loadCapturedImages(purchaseId);
-      _autoPrint(res.data['autoPrint']);
-    } else {
-      _toast(ApiClient.errorMessage(res), error: true);
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        _toast(res.data['message']);
+        _sound.onWeighmentSaved();
+        final purchaseId = res.data['purchaseId'] as int;
+        // reset new-entry fields; keep configuration selections for fast operation
+        setState(() {
+          _grower = null;
+          _growerCode.clear();
+          _vehicleNumber.clear();
+          _capturedImages = [];
+          _lastPrintStage = 'GROSS';
+        });
+        _loadPending();
+        _loadCapturedImages(purchaseId);
+        _autoPrint(res.data['autoPrint']);
+      } else {
+        _toast(ApiClient.errorMessage(res), error: true);
+      }
+    } catch (_) {
+      if (mounted)
+        _toast(
+            'Could not save Gross. Please check the server connection and try again.',
+            error: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -242,27 +262,39 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           'Select a pending purchase (double-click a row or enter Purchase ID).',
           error: true);
     setState(() => _saving = true);
-    final res = await ApiClient.instance.dio.post('/api/weighment/tare', data: {
-      'purchaseId': _selectedPurchase!['purchaseId'],
-      'scaleReadingKg': live.weightKg,
-      'idempotencyKey': 'tare-${_selectedPurchase!['purchaseId']}',
-    });
-    setState(() => _saving = false);
-    if (res.statusCode == 200) {
-      _toast('${res.data['message']} Purchase ID: ${res.data['purchaseId']}');
-      _sound.onWeighmentSaved();
-      final purchaseId = _selectedPurchase!['purchaseId'] as int;
-      setState(() {
-        _selectedPurchase = null;
-        _purchaseIdCtl.clear();
-        _capturedImages = [];
-        _lastPrintStage = 'TARE';
+    try {
+      final res =
+          await ApiClient.instance.dio.post('/api/weighment/tare', data: {
+        'purchaseId': _selectedPurchase!['purchaseId'],
+        'scaleReadingKg': live.weightKg,
+        // A failed validation must be retryable; each distinct user click gets a new request key.
+        'idempotencyKey':
+            'tare-${_selectedPurchase!['purchaseId']}-${DateTime.now().microsecondsSinceEpoch}',
       });
-      _loadPending();
-      _loadCapturedImages(purchaseId);
-      _autoPrint(res.data['autoPrint']);
-    } else {
-      _toast(ApiClient.errorMessage(res), error: true);
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        _toast('${res.data['message']} Purchase ID: ${res.data['purchaseId']}');
+        _sound.onWeighmentSaved();
+        final purchaseId = _selectedPurchase!['purchaseId'] as int;
+        setState(() {
+          _selectedPurchase = null;
+          _purchaseIdCtl.clear();
+          _capturedImages = [];
+          _lastPrintStage = 'TARE';
+        });
+        _loadPending();
+        _loadCapturedImages(purchaseId);
+        _autoPrint(res.data['autoPrint']);
+      } else {
+        _toast(ApiClient.errorMessage(res), error: true);
+      }
+    } catch (_) {
+      if (mounted)
+        _toast(
+            'Could not save Tare. Please check the server connection and try again.',
+            error: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -276,6 +308,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     return SafeArea(
       child: LayoutBuilder(builder: (context, constraints) {
         final compactHeader = constraints.maxWidth < 1100;
+        final showCameraBesideForm = constraints.maxWidth >= 1200;
         final gridHeight = constraints.maxHeight < 700 ? 170.0 : 210.0;
         return Padding(
           padding: const EdgeInsets.all(10),
@@ -310,15 +343,26 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
             const SizedBox(height: 6),
             // ---------- CENTER: entry panel + cameras ----------
             Expanded(
-              child:
-                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(
-                    flex: 3, child: _grossMode ? _grossPanel() : _tarePanel()),
-                if (_cameras.isNotEmpty) ...[
-                  const SizedBox(width: 6),
-                  SizedBox(width: 230, child: _cameraPanel()),
-                ],
-              ]),
+              child: _cameras.isEmpty
+                  ? (_grossMode ? _grossPanel() : _tarePanel())
+                  : showCameraBesideForm
+                      ? Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                              Expanded(
+                                  flex: 3,
+                                  child: _grossMode
+                                      ? _grossPanel()
+                                      : _tarePanel()),
+                              const SizedBox(width: 6),
+                              SizedBox(width: 360, child: _cameraPanel()),
+                            ])
+                      : Column(children: [
+                          Expanded(
+                              child: _grossMode ? _grossPanel() : _tarePanel()),
+                          const SizedBox(height: 6),
+                          SizedBox(height: 220, child: _cameraPanel()),
+                        ]),
             ),
             const SizedBox(height: 6),
             // ---------- BOTTOM: pending grid ----------
@@ -698,72 +742,34 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           ]);
 
   Widget _cameraPanel() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          const Text('Live Cameras',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
-          const SizedBox(height: 6),
-          Expanded(
-            flex: 3,
-            child: ListView(children: [
-              for (final c in _cameras)
-                Container(
-                  height: 110,
-                  margin: const EdgeInsets.only(bottom: 6),
-                  decoration: BoxDecoration(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(8)),
-                  child: Stack(children: [
-                    const Center(
-                        child: Icon(Icons.videocam_outlined,
-                            color: Colors.white38, size: 34)),
-                    Positioned(
-                        left: 6,
-                        top: 4,
-                        child: Text(
-                            'Camera ${c['cameraNumber']} • ${c['vendor']}',
-                            style: const TextStyle(
-                                color: Colors.white70, fontSize: 10))),
-                    Positioned(
-                        left: 6,
-                        bottom: 4,
-                        child: Text('${c['ipAddress']} (${c['protocol']})',
-                            style: const TextStyle(
-                                color: Colors.white38, fontSize: 9))),
-                  ]),
-                ),
-            ]),
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Expanded(
+          flex: _capturedImages.isEmpty ? 1 : 3,
+          child: CameraLivePreviewPanel(cameras: _cameras, compact: true)),
+      if (_capturedImages.isNotEmpty) ...[
+        const Divider(height: 12),
+        Row(children: [
+          const Expanded(
+              child: Text('Captured Evidence',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12))),
+          TextButton.icon(
+            onPressed: () => _manualPrint(_lastPrintStage ?? 'GROSS'),
+            icon: const Icon(Icons.print, size: 16),
+            label: const Text('Reprint', style: TextStyle(fontSize: 12)),
           ),
-          if (_capturedImages.isNotEmpty) ...[
-            const Divider(height: 12),
-            Row(children: [
-              const Expanded(
-                  child: Text('Captured Evidence',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 12))),
-              TextButton.icon(
-                onPressed: () => _manualPrint(_lastPrintStage ?? 'GROSS'),
-                icon: const Icon(Icons.print, size: 16),
-                label: const Text('Reprint', style: TextStyle(fontSize: 12)),
-              ),
-            ]),
-            const SizedBox(height: 4),
-            Expanded(
-              flex: 2,
-              child: GridView.builder(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2, crossAxisSpacing: 4, mainAxisSpacing: 4),
-                itemCount: _capturedImages.length,
-                itemBuilder: (ctx, i) => _evidenceThumb(_capturedImages[i]),
-              ),
-            ),
-          ],
         ]),
-      ),
-    );
+        const SizedBox(height: 4),
+        Expanded(
+          flex: 2,
+          child: GridView.builder(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2, crossAxisSpacing: 4, mainAxisSpacing: 4),
+            itemCount: _capturedImages.length,
+            itemBuilder: (ctx, i) => _evidenceThumb(_capturedImages[i]),
+          ),
+        ),
+      ],
+    ]);
   }
 
   Widget _evidenceThumb(Map img) {

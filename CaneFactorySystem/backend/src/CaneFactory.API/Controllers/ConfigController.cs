@@ -101,17 +101,46 @@ public class ConfigController : ControllerBase
     }
 
     // ---------------------------------------------------------------- CAMERAS (1-6, vendor-abstracted)
-    [HasPermission("Camera.View")]
+    /// <summary>
+    /// Safe operational camera catalogue.  This is deliberately usable by weighing
+    /// operators, but never includes a host, username, password, or RTSP URL.
+    /// Those values are configuration secrets, not live-view data.
+    /// </summary>
+    [HasPermission("Camera.ViewCamera")]
     [HttpGet("cameras")]
-    public async Task<IActionResult> GetCameras() =>
-        Ok(await _db.Cameras.Where(c => !c.IsDeleted).OrderBy(c => c.CameraNumber)
+    public async Task<IActionResult> GetCameras()
+    {
+        var cameraSystemEnabled = await SettingTrueAsync("CameraSystemEnabled");
+        var cameras = await _db.Cameras.AsNoTracking().Where(c => !c.IsDeleted).OrderBy(c => c.CameraNumber)
             .Select(c => new
             {
-                c.Id, c.CameraNumber, c.Vendor, c.Model, c.Protocol, c.IpAddress, c.Port, c.Username,
-                HasPassword = c.PasswordEncrypted != null, // password itself is never returned
-                c.Channel, c.StreamType, c.RtspUrl, c.Resolution, c.Fps,
+                c.Id, c.CameraNumber, c.Vendor, c.Model, c.Protocol, c.Resolution, c.Fps,
                 c.CaptureEnabled, c.LiveViewEnabled, c.RetentionDays, c.Status
-            }).ToListAsync());
+            }).ToListAsync();
+        return Ok(cameras.Select(c => new
+        {
+            c.Id, c.CameraNumber, c.Vendor, c.Model, c.Protocol, c.Resolution, c.Fps,
+            c.CaptureEnabled, c.LiveViewEnabled, c.RetentionDays, c.Status, cameraSystemEnabled
+        }));
+    }
+
+    /// <summary>Technical edit details, deliberately excluding stored credentials and RTSP overrides.</summary>
+    [HasPermission("Camera.Configure")]
+    [HttpGet("cameras/{id:int}/configuration")]
+    public async Task<IActionResult> GetCameraConfiguration(int id)
+    {
+        var camera = await _db.Cameras.AsNoTracking().Where(c => c.Id == id && !c.IsDeleted)
+            .Select(c => new
+            {
+                c.Id, c.CameraNumber, c.Vendor, c.Model, c.Protocol, c.IpAddress, c.Port,
+                c.Channel, c.StreamType, c.Resolution, c.Fps, c.CaptureEnabled, c.LiveViewEnabled,
+                c.RetentionDays, c.Status,
+                HasUsername = c.Username != null,
+                HasPassword = c.PasswordEncrypted != null,
+                HasRtspOverride = c.RtspUrl != null
+            }).FirstOrDefaultAsync();
+        return camera == null ? NotFound(new { message = "Camera not found." }) : Ok(camera);
+    }
 
     [HasPermission("Camera.Configure")]
     [HttpPost("cameras")]
@@ -125,9 +154,12 @@ public class ConfigController : ControllerBase
         var isNew = cam == null;
         cam ??= new CameraConfig { CameraNumber = req.CameraNumber, CreatedBy = _current.UserId };
         cam.Vendor = req.Vendor; cam.Model = req.Model; cam.Protocol = req.Protocol;
-        cam.IpAddress = req.IpAddress; cam.Port = req.Port; cam.Username = req.Username;
+        cam.IpAddress = req.IpAddress; cam.Port = req.Port;
+        // Empty credentials from an edit form mean "keep the encrypted configuration".
+        if (!string.IsNullOrWhiteSpace(req.Username)) cam.Username = req.Username;
         if (!string.IsNullOrEmpty(req.Password)) cam.PasswordEncrypted = _protector.Protect(req.Password);
-        cam.Channel = req.Channel; cam.StreamType = req.StreamType; cam.RtspUrl = req.RtspUrl;
+        cam.Channel = req.Channel; cam.StreamType = req.StreamType;
+        if (!string.IsNullOrWhiteSpace(req.RtspUrl)) cam.RtspUrl = req.RtspUrl;
         cam.Resolution = req.Resolution; cam.Fps = req.Fps;
         cam.CaptureEnabled = req.CaptureEnabled; cam.LiveViewEnabled = req.LiveViewEnabled;
         cam.RetentionDays = req.RetentionDays; cam.Status = req.Status;
@@ -162,7 +194,7 @@ public class ConfigController : ControllerBase
 
     /// <summary>Live snapshot preview (Phase 6) - captures one real frame right now via the configured
     /// protocol (RTSP/ONVIF/ISAPI) and streams it back; never persisted as a purchase evidence image.</summary>
-    [HasPermission("Camera.Configure")]
+    [HasPermission("Camera.ViewCamera")]
     [HttpGet("cameras/{id:int}/snapshot")]
     public async Task<IActionResult> Snapshot(int id, [FromServices] ICameraCaptureService capture, CancellationToken ct)
     {
@@ -170,6 +202,12 @@ public class ConfigController : ControllerBase
         if (!result.Success || result.ImageBytes == null)
             return Conflict(new { message = result.Error ?? "Snapshot capture failed." });
         return File(result.ImageBytes, "image/jpeg");
+    }
+
+    private async Task<bool> SettingTrueAsync(string key)
+    {
+        var setting = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(x => x.Key == key);
+        return setting == null || setting.Value.Trim().ToUpperInvariant() is "TRUE" or "ON" or "1";
     }
 
     // ---------------------------------------------------------------- PRINT
@@ -182,8 +220,14 @@ public class ConfigController : ControllerBase
     public async Task<IActionResult> UpdatePrint([FromBody] PrintConfig src)
     {
         var p = await _db.PrintConfigs.FirstAsync(x => !x.IsDeleted);
-        var old = new { p.PrinterType, p.PrinterName, p.AutoPrint, p.GrossCopies, p.TareCopies };
-        p.PrinterType = src.PrinterType; p.PrinterName = src.PrinterName; p.PaperType = src.PaperType;
+        if (src.PrinterType is not ("DotMatrix" or "A4")) return BadRequest(new { message = "PrinterType must be DotMatrix or A4." });
+        var old = new { p.PrinterType, p.PrinterName, p.DotMatrixPrinterName, p.A4PrinterName, p.AutoPrint, p.GrossCopies, p.TareCopies };
+        p.PrinterType = src.PrinterType;
+        p.DotMatrixPrinterName = src.DotMatrixPrinterName?.Trim() ?? "";
+        p.A4PrinterName = src.A4PrinterName?.Trim() ?? "";
+        // PrinterName remains the active-profile value for all existing auto-print contracts.
+        p.PrinterName = p.PrinterType == "A4" ? p.A4PrinterName : p.DotMatrixPrinterName;
+        p.PaperType = src.PaperType;
         p.AutoPrint = src.AutoPrint;
         p.GrossCopies = Math.Clamp(src.GrossCopies, 0, 5);
         p.TareCopies = Math.Clamp(src.TareCopies, 0, 5);
@@ -329,6 +373,9 @@ public class ConfigController : ControllerBase
     public async Task<IActionResult> UpdateCompany([FromBody] CompanyConfig src)
     {
         if (string.IsNullOrWhiteSpace(src.CompanyName)) return BadRequest(new { message = "Company Name is required." });
+        if (!string.IsNullOrWhiteSpace(src.LogoPath) &&
+            (!System.IO.File.Exists(src.LogoPath) || Path.GetExtension(src.LogoPath).ToLowerInvariant() is not (".png" or ".jpg" or ".jpeg")))
+            return BadRequest(new { message = "Logo must be an existing PNG or JPG file on the factory server/PC." });
         var c = await _db.CompanyConfigs.FirstAsync(x => !x.IsDeleted);
         var old = new { c.CompanyName, c.Address, c.DefaultLanguage, c.ThemeColor };
         c.CompanyName = src.CompanyName.Trim();
@@ -418,4 +465,3 @@ public class SmsTestSendRequest
     public string MobileNumber { get; set; } = string.Empty;
     public string? Message { get; set; }
 }
-

@@ -68,6 +68,7 @@ class _RootGateState extends State<RootGate> {
   }
 
   Future<void> _startup() async {
+    final startedAt = DateTime.now();
     setState(() {
       _checking = true;
       _apiError = false;
@@ -82,6 +83,8 @@ class _RootGateState extends State<RootGate> {
 
     final urlError = ApiClient.configurationError;
     if (urlError != null) {
+      await _ensureMinimumSplashTime(startedAt);
+      if (!mounted) return;
       setState(() {
         _apiError = true;
         _status = urlError;
@@ -97,6 +100,7 @@ class _RootGateState extends State<RootGate> {
       if (res.statusCode != 200)
         throw Exception('Server responded with ${res.statusCode}');
     } catch (_) {
+      await _ensureMinimumSplashTime(startedAt);
       if (!mounted) return;
       setState(() {
         _apiError = true;
@@ -109,6 +113,7 @@ class _RootGateState extends State<RootGate> {
     try {
       final license = await ApiClient.instance.dio.get('/api/license/status');
       if (license.statusCode != 200 || license.data['isValid'] != true) {
+        await _ensureMinimumSplashTime(startedAt);
         if (!mounted) return;
         setState(() {
           _apiError = true;
@@ -126,6 +131,7 @@ class _RootGateState extends State<RootGate> {
         });
       }
     } catch (_) {
+      await _ensureMinimumSplashTime(startedAt);
       if (!mounted) return;
       setState(() {
         _apiError = true;
@@ -138,8 +144,17 @@ class _RootGateState extends State<RootGate> {
     setState(() => _status = 'Checking your session...');
     await context.read<AuthProvider>().tryRestoreSession();
 
+    await _ensureMinimumSplashTime(startedAt);
     if (!mounted) return;
     setState(() => _checking = false);
+  }
+
+  Future<void> _ensureMinimumSplashTime(DateTime startedAt) async {
+    const minimum = Duration(seconds: 15);
+    final remaining = minimum - DateTime.now().difference(startedAt);
+    if (!remaining.isNegative && remaining > Duration.zero) {
+      await Future<void>.delayed(remaining);
+    }
   }
 
   @override

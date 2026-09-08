@@ -85,11 +85,12 @@ public abstract class MasterControllerBase<TEntity> : ControllerBase where TEnti
 
         if (UseSequenceId)
         {
-            await using var tx = await Db.Database.BeginTransactionAsync();
-            entity.Id = (int)await Sequences.NextAsync(SequenceName, SequenceStart);
-            Db.Set<TEntity>().Add(entity);
-            await Db.SaveChangesAsync();
-            await tx.CommitAsync();
+            await Db.ExecuteInTransactionAsync(async () =>
+            {
+                entity.Id = (int)await Sequences.NextAsync(SequenceName, SequenceStart);
+                Db.Set<TEntity>().Add(entity);
+                await Db.SaveChangesAsync();
+            });
         }
         else
         {

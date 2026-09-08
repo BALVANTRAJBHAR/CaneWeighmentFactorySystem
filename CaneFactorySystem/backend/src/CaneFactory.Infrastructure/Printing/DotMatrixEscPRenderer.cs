@@ -55,6 +55,20 @@ public class DotMatrixEscPRenderer : IPrintRenderer
         using var shaperRegular = new SKShaper(regular);
 
         var y = 8;
+        if (!string.IsNullOrWhiteSpace(doc.LogoPath) && File.Exists(doc.LogoPath))
+        {
+            try
+            {
+                using var logo = SKBitmap.Decode(doc.LogoPath);
+                if (logo != null)
+                {
+                    var scale = Math.Min(52f / logo.Width, 52f / logo.Height);
+                    var destination = new SKRect(10, 4, 10 + logo.Width * scale, 4 + logo.Height * scale);
+                    canvas.DrawBitmap(logo, destination, new SKSamplingOptions(SKFilterMode.Linear));
+                }
+            }
+            catch { /* logo is optional; a bad image must never stop operational printing */ }
+        }
         DrawCentered(canvas, doc.CompanyName, shaperBold, titleFont, paint, WidthPx, ref y, 30);
         if (!string.IsNullOrWhiteSpace(doc.Address))
             DrawCentered(canvas, doc.Address, shaperRegular, subFont, paint, WidthPx, ref y, 22);

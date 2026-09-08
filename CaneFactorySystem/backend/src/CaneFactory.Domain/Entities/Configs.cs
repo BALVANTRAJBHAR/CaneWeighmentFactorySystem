@@ -28,6 +28,8 @@ public class PrintConfig : BaseEntity
 {
     public string PrinterType { get; set; } = "DotMatrix";
     public string PrinterName { get; set; } = string.Empty;
+    public string DotMatrixPrinterName { get; set; } = string.Empty;
+    public string A4PrinterName { get; set; } = string.Empty;
     public string PaperType { get; set; } = "Continuous";
     public bool AutoPrint { get; set; } = true;
     public int GrossCopies { get; set; } = 1;

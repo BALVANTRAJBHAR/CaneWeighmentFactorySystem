@@ -89,7 +89,7 @@ public class PaymentController : ControllerBase
         var q = _db.Purchases.Where(p => p.GrowerId == growerId && !p.IsDeleted
             && p.GrossTareStatus == "TARE_DONE" && p.PaymentStatus == "PENDING" && p.LockStatus == "UNLOCKED");
         if (mode == "SINGLE") return q.Where(p => p.Id == purchaseId!.Value);
-        if (mode == "DATE_RANGE")
+        if (mode is "DATE_RANGE" or "FARMER")
         {
             if (from.HasValue) q = q.Where(p => p.TareDateTime >= from);
             if (to.HasValue) q = q.Where(p => p.TareDateTime <= to);
@@ -155,8 +155,21 @@ public class PaymentController : ControllerBase
         if (mode == "SINGLE" && !purchaseId.HasValue)
             return BadRequest(new { message = "purchaseId is required for SINGLE selection mode." });
 
-        var grower = await _db.Growers.FirstOrDefaultAsync(g => g.GrowerCode == growerCode.Trim() && !g.IsDeleted);
-        if (grower == null) return NotFound(new { message = $"No grower found with code '{growerCode}'. Example: 101/1" });
+        Grower? grower;
+        try { grower = await ResolveSelectionGrowerAsync(mode, growerCode, purchaseId, fromDate, toDate); }
+        catch (PaymentSelectionException ex) { return Conflict(new { message = ex.Message }); }
+        if (grower == null) return NotFound(new { message = mode == "SINGLE"
+            ? $"Purchase ID {purchaseId} does not exist." : "No eligible grower was found for the selected criteria." });
+
+        if (mode == "SINGLE")
+        {
+            var selected = await _db.Purchases.AsNoTracking().FirstAsync(p => p.Id == purchaseId && !p.IsDeleted);
+            if (selected.PaymentStatus == "PAID")
+                return Ok(new { growerCode = grower.GrowerCode, eligiblePurchases = Array.Empty<object>(),
+                    outstandingLoans = Array.Empty<object>(), totalPurchaseAmount = 0m, totalOutstandingLoan = 0m,
+                    estimatedLoanDeduction = 0m, estimatedNetPayable = 0m, alreadyPaid = true,
+                    statusMessage = $"Payment already done for Purchase ID {purchaseId}." });
+        }
 
         var eligible = await EligiblePurchasesQuery(mode, grower.Id, purchaseId, fromDate, toDate)
             .OrderBy(p => p.GrossDateTime)
@@ -191,9 +204,11 @@ public class PaymentController : ControllerBase
         if (mode == "SINGLE" && !req.PurchaseId.HasValue)
             return BadRequest(new { message = "purchaseId is required for SINGLE selection mode." });
 
-        var grower = await _db.Growers.Include(g => g.Village)
-            .FirstOrDefaultAsync(g => g.GrowerCode == req.GrowerCode.Trim() && !g.IsDeleted);
-        if (grower == null) return NotFound(new { message = $"No grower found with code '{req.GrowerCode}'. Example: 101/1" });
+        Grower? grower;
+        try { grower = await ResolveSelectionGrowerAsync(mode, req.GrowerCode, req.PurchaseId, req.FromDate, req.ToDate, includeVillage: true); }
+        catch (PaymentSelectionException ex) { return Conflict(new { message = ex.Message }); }
+        if (grower == null) return NotFound(new { message = mode == "SINGLE"
+            ? $"Purchase ID {req.PurchaseId} does not exist." : "No eligible grower was found for the selected criteria." });
 
         var paymentMode = await _db.PaymentModes.FirstOrDefaultAsync(m => m.Id == req.PaymentModeId && !m.IsDeleted && m.Status);
         if (paymentMode == null) return BadRequest(new { message = "Selected Payment Mode does not exist or is inactive." });
@@ -206,13 +221,18 @@ public class PaymentController : ControllerBase
 
         var totalPurchaseAmount = WeightCalculator.R2(eligible.Sum(p => p.PurchaseAmount ?? 0));
 
-        await using var tx = await _db.Database.BeginTransactionAsync();
-        var paymentId = (int)await _seq.NextAsync("PaymentId", 1);
-        var adviceNumber = (int)await _seq.NextAsync("AdviceNumber", 1);
+        int paymentId = 0;
+        int adviceNumber = 0;
+        decimal totalDeducted = 0;
+        decimal netPayable = 0;
+        Payment? payment = null;
+        await _db.ExecuteInTransactionAsync(async () =>
+        {
+        paymentId = (int)await _seq.NextAsync("PaymentId", 1);
+        adviceNumber = (int)await _seq.NextAsync("AdviceNumber", 1);
 
         // Automatic Loan deduction - FIFO (oldest ACTIVE loan first), never exceeding the payable amount.
         var remaining = totalPurchaseAmount;
-        decimal totalDeducted = 0;
         var activeLoans = await _db.Loans.Where(l => l.GrowerCode == grower.GrowerCode && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
             .OrderBy(l => l.IssueDate).ToListAsync();
         foreach (var loan in activeLoans)
@@ -245,9 +265,9 @@ public class PaymentController : ControllerBase
             totalDeducted += deduct;
         }
         totalDeducted = WeightCalculator.R2(totalDeducted);
-        var netPayable = WeightCalculator.R2(totalPurchaseAmount - totalDeducted);
+        netPayable = WeightCalculator.R2(totalPurchaseAmount - totalDeducted);
 
-        var payment = new Payment
+        payment = new Payment
         {
             Id = paymentId,
             AdviceNumber = adviceNumber,
@@ -266,7 +286,7 @@ public class PaymentController : ControllerBase
             SeasonId = season.Id,
             CreatedBy = _current.UserId
         };
-        _db.Payments.Add(payment);
+        _db.Payments.Add(payment!);
 
         foreach (var p in eligible)
         {
@@ -279,10 +299,10 @@ public class PaymentController : ControllerBase
         }
 
         await _db.SaveChangesAsync();
-        await tx.CommitAsync();
+        });
 
         await _audit.LogAsync("Pay", "Payment", "Payment", paymentId.ToString(),
-            newValue: new { payment.GrowerCode, payment.AdviceNumber, payment.TotalPurchaseAmount, payment.LoanDeductedAmount, payment.NetPayableAmount, purchaseCount = eligible.Count });
+            newValue: new { payment!.GrowerCode, payment.AdviceNumber, payment.TotalPurchaseAmount, payment.LoanDeductedAmount, payment.NetPayableAmount, purchaseCount = eligible.Count });
 
         var isCash = paymentMode.ModeCode == "CASH";
         if (isCash) QueueCapture(paymentId);
@@ -316,6 +336,42 @@ public class PaymentController : ControllerBase
             captureQueued = isCash,
             smsQueued
         });
+    }
+
+    /// <summary>Resolves the owner of a payment selection without trusting a grower code for a single purchase.</summary>
+    private async Task<Grower?> ResolveSelectionGrowerAsync(string mode, string? growerCode, int? purchaseId,
+        DateTime? fromDate, DateTime? toDate, bool includeVillage = false)
+    {
+        if (mode == "SINGLE")
+        {
+            var purchase = await _db.Purchases.AsNoTracking().FirstOrDefaultAsync(p => p.Id == purchaseId && !p.IsDeleted);
+            if (purchase == null) return null;
+            return includeVillage
+                ? await _db.Growers.Include(g => g.Village).FirstOrDefaultAsync(g => g.Id == purchase.GrowerId && !g.IsDeleted)
+                : await _db.Growers.FirstOrDefaultAsync(g => g.Id == purchase.GrowerId && !g.IsDeleted);
+        }
+
+        if (!string.IsNullOrWhiteSpace(growerCode))
+            return includeVillage
+                ? await _db.Growers.Include(g => g.Village).FirstOrDefaultAsync(g => g.GrowerCode == growerCode.Trim() && !g.IsDeleted)
+                : await _db.Growers.FirstOrDefaultAsync(g => g.GrowerCode == growerCode.Trim() && !g.IsDeleted);
+
+        if (mode != "DATE_RANGE") return null;
+        var candidates = _db.Purchases.AsNoTracking().Where(p => !p.IsDeleted && p.GrossTareStatus == "TARE_DONE"
+            && p.PaymentStatus == "PENDING" && p.LockStatus == "UNLOCKED");
+        if (fromDate.HasValue) candidates = candidates.Where(p => p.TareDateTime >= fromDate.Value.Date);
+        if (toDate.HasValue) candidates = candidates.Where(p => p.TareDateTime < toDate.Value.Date.AddDays(1));
+        var growerIds = await candidates.Select(p => p.GrowerId).Distinct().Take(2).ToListAsync();
+        if (growerIds.Count == 0) return null;
+        if (growerIds.Count > 1) throw new PaymentSelectionException("The selected date range has payable purchases for multiple growers. Use Farmer-wise to pay one grower at a time.");
+        return includeVillage
+            ? await _db.Growers.Include(g => g.Village).FirstOrDefaultAsync(g => g.Id == growerIds[0] && !g.IsDeleted)
+            : await _db.Growers.FirstOrDefaultAsync(g => g.Id == growerIds[0] && !g.IsDeleted);
+    }
+
+    private sealed class PaymentSelectionException : Exception
+    {
+        public PaymentSelectionException(string message) : base(message) { }
     }
 
     /// <summary>Reverses a COMPLETED Payment: the Purchases it covered become payable again (new

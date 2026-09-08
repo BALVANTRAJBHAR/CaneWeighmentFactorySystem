@@ -39,6 +39,7 @@ public class WeighingService
     public bool Reading => _readCts != null;
     public bool Connected => _port?.IsOpen == true;
     public bool IsOperatingDevice(int deviceId) => _device?.Id == deviceId && (_port?.IsOpen == true || Reading);
+    public int? OperatingDeviceId => _device?.Id;
 
     public bool TryGetUsableWeight(out decimal weightKg, out string reason)
     {
@@ -159,25 +160,24 @@ public class WeighingService
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Serial read error");
-                UpdateState(d => d.Error = ex.Message);
-                if (_device?.AutoReconnect == true) await TryReconnectAsync(ct);
+                // A serial failure invalidates the measurement immediately. Recovery is deliberately
+                // owned by WeighingRecoveryService so an explicit Stop/Disconnect cannot be undone
+                // by a stale reader task retrying in the background.
+                if (!ct.IsCancellationRequested)
+                    _log.LogWarning(ex, "Serial read error; device marked disconnected");
+                ClosePortAfterFailure(ex.Message);
+                break;
             }
             await Task.Delay(intervalMs, ct).ContinueWith(_ => { });
         }
     }
 
-    private async Task TryReconnectAsync(CancellationToken ct)
+    private void ClosePortAfterFailure(string error)
     {
-        for (var i = 0; i < (_device?.ReconnectAttempts ?? 3) && !ct.IsCancellationRequested; i++)
-        {
-            await Task.Delay(1000, ct).ContinueWith(_ => { });
-            try
-            {
-                if (_port is { IsOpen: false }) { _port.Open(); UpdateState(d => { d.DeviceConnected = true; d.Error = null; }); return; }
-            }
-            catch { /* keep retrying */ }
-        }
+        try { _port?.Close(); _port?.Dispose(); } catch { /* port is already unavailable */ }
+        _port = null;
+        _readCts = null;
+        ClearLiveState("DISCONNECTED", error);
     }
 
     /// <summary>Assemble frames from the byte stream using configured start/end bytes (or LF fallback). Malformed/noisy data is safely skipped.</summary>

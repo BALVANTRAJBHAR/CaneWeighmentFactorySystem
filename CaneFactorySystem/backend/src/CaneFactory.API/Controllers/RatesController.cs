@@ -45,9 +45,10 @@ public class RatesController : ControllerBase
     public async Task<IActionResult> Current(int varietyTypeId)
     {
         if (Deny("View") is { } d) return d;
-        var now = DateTime.UtcNow;
+        var today = DateTime.UtcNow.Date;
         var rate = await _db.Rates.Where(r => r.VarietyTypeId == varietyTypeId && !r.IsDeleted && r.Status
-                && r.EffectiveFrom <= now && (r.EffectiveTo == null || r.EffectiveTo >= now))
+                && r.EffectiveFrom.Date <= today
+                && (r.EffectiveTo == null || r.EffectiveTo.Value.Date >= today))
             .OrderByDescending(r => r.EffectiveFrom).FirstOrDefaultAsync();
         return rate == null
             ? NotFound(new { message = "No active rate exists for this Variety Type. Please configure Rate Master first." })
@@ -61,13 +62,15 @@ public class RatesController : ControllerBase
         if (req.Rate <= 0) return BadRequest(new { message = "Rate must be greater than 0. Example: 375.00" });
         if (!await _db.VarietyTypes.AnyAsync(v => v.Id == req.VarietyTypeId && !v.IsDeleted && v.Status))
             return BadRequest(new { message = "Selected Variety Type does not exist or is inactive." });
-        if (req.EffectiveTo.HasValue && req.EffectiveTo < req.EffectiveFrom)
+        var effectiveFrom = req.EffectiveFrom.Date;
+        var effectiveTo = req.EffectiveTo?.Date;
+        if (effectiveTo.HasValue && effectiveTo < effectiveFrom)
             return BadRequest(new { message = "Effective To cannot be before Effective From." });
 
         // No overlapping active period for same VarietyType
         var overlap = await _db.Rates.AnyAsync(r => r.VarietyTypeId == req.VarietyTypeId && !r.IsDeleted && r.Status
-            && r.EffectiveFrom <= (req.EffectiveTo ?? DateTime.MaxValue)
-            && (r.EffectiveTo ?? DateTime.MaxValue) >= req.EffectiveFrom);
+            && r.EffectiveFrom.Date <= (effectiveTo ?? DateTime.MaxValue.Date)
+            && (r.EffectiveTo == null || r.EffectiveTo.Value.Date >= effectiveFrom));
         if (overlap)
             return Conflict(new { message = "An active rate already overlaps this effective period for the selected Variety Type. Close the previous rate first." });
 
@@ -75,8 +78,8 @@ public class RatesController : ControllerBase
         {
             VarietyTypeId = req.VarietyTypeId,
             Rate = WeightCalculator.R2(req.Rate),
-            EffectiveFrom = req.EffectiveFrom,
-            EffectiveTo = req.EffectiveTo,
+            EffectiveFrom = effectiveFrom,
+            EffectiveTo = effectiveTo,
             CreatedBy = _current.UserId
         };
         _db.Rates.Add(rate);
@@ -92,7 +95,7 @@ public class RatesController : ControllerBase
         if (Deny("Edit") is { } d) return d;
         var rate = await _db.Rates.FirstOrDefaultAsync(r => r.Id == id && !r.IsDeleted);
         if (rate == null) return NotFound(new { message = "Rate not found." });
-        var to = body.GetValueOrDefault("effectiveTo", DateTime.UtcNow);
+        var to = body.GetValueOrDefault("effectiveTo", DateTime.UtcNow).Date;
         var old = new { rate.EffectiveTo };
         rate.EffectiveTo = to;
         rate.UpdatedAt = DateTime.UtcNow;
