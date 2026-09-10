@@ -15,7 +15,7 @@ class MastersHubScreen extends StatelessWidget {
         title: 'Zone', module: 'Zone', endpoint: '/api/zones',
         fields: [
           FieldSpec('zoneCode', 'Zone Code', hint: 'Example: Z1', required: false, maxLength: 20),
-          FieldSpec('zoneName', 'Zone Name', hint: 'Example: North Zone', maxLength: 100),
+          FieldSpec('zoneName', 'Zone Name', hint: 'Example: North Zone', maxLength: 100, hindiKey: 'zoneNameHi'),
           FieldSpec('description', 'Description', hint: 'Optional description', required: false, maxLength: 250),
         ],
         columns: [ColumnSpec('id', 'Zone ID'), ColumnSpec('zoneCode', 'Code'), ColumnSpec('zoneName', 'Zone Name')],
@@ -24,7 +24,7 @@ class MastersHubScreen extends StatelessWidget {
         title: 'Village', module: 'Village', endpoint: '/api/villages',
         fields: [
           FieldSpec('zoneId', 'Zone', type: FieldType.dropdown, optionsEndpoint: '/api/zones', optionLabelKey: 'zoneName'),
-          FieldSpec('villageName', 'Village Name', hint: 'Example: Rampur', maxLength: 100),
+          FieldSpec('villageName', 'Village Name', hint: 'Example: Rampur', maxLength: 100, hindiKey: 'villageNameHi'),
           FieldSpec('pradhanName', 'Pradhan Name', hint: 'Example: Suresh Singh', required: false, maxLength: 100),
           FieldSpec('mobile', 'Mobile', hint: 'Example: 9876543210', type: FieldType.mobile, required: false),
           FieldSpec('email', 'Email', hint: 'Example: pradhan@gmail.com', type: FieldType.email, required: false),
@@ -52,7 +52,7 @@ class MastersHubScreen extends StatelessWidget {
       ),
       'Vehicle Types': const MasterCrudScreen(
         title: 'Vehicle Type', module: 'Vehicle', endpoint: '/api/vehicle-types',
-        fields: [FieldSpec('vehicleTypeName', 'Vehicle Type Name', hint: 'Example: Truck', maxLength: 50)],
+        fields: [FieldSpec('vehicleTypeName', 'Vehicle Type Name', hint: 'Example: Truck', maxLength: 50, hindiKey: 'vehicleTypeNameHi')],
         columns: [ColumnSpec('id', 'ID'), ColumnSpec('vehicleTypeName', 'Vehicle Type')],
       ),
       'Variety Types': const MasterCrudScreen(
@@ -72,13 +72,13 @@ class MastersHubScreen extends StatelessWidget {
       'Rates': const RateScreen(),
       'Items': const MasterCrudScreen(
         title: 'Item', module: 'Item', endpoint: '/api/items',
-        fields: [FieldSpec('itemName', 'Item Name', hint: 'Example: Sugar', maxLength: 50)],
+        fields: [FieldSpec('itemName', 'Item Name', hint: 'Example: Sugar', maxLength: 50, hindiKey: 'itemNameHi')],
         columns: [ColumnSpec('id', 'ID'), ColumnSpec('itemName', 'Item')],
       ),
       'Parties': const MasterCrudScreen(
         title: 'Party', module: 'Party', endpoint: '/api/parties',
         fields: [
-          FieldSpec('partyName', 'Party Name', hint: 'Example: Gupta Traders', maxLength: 100),
+          FieldSpec('partyName', 'Party Name', hint: 'Example: Gupta Traders', maxLength: 100, hindiKey: 'partyNameHi'),
           FieldSpec('mobile', 'Mobile', hint: 'Example: 9876543210', type: FieldType.mobile),
           FieldSpec('email', 'Email', hint: 'Example: party@gmail.com', type: FieldType.email, required: false),
           FieldSpec('address', 'Address', required: false, maxLength: 250),

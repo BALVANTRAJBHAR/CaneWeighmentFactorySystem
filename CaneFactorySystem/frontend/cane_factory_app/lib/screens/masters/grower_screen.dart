@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
+import '../../core/hindi_transliteration.dart';
 import '../../providers/auth_provider.dart';
 
 /// Grower Master: per-village auto grower code (101/1), Aadhaar (masked, encrypted server-side),
@@ -140,7 +141,7 @@ class _GrowerFormState extends State<_GrowerForm> {
   @override
   void initState() {
     super.initState();
-    for (final k in ['growerName', 'fatherName', 'mobile', 'email', 'bankAccountNumber', 'accountHolderName', 'aadhaarNumber']) {
+    for (final k in ['growerName', 'growerNameHi', 'fatherName', 'fatherNameHi', 'mobile', 'email', 'bankAccountNumber', 'accountHolderName', 'aadhaarNumber']) {
       _c[k] = TextEditingController(text: widget.existing?[k]?.toString() ?? '');
     }
     _villageId = widget.existing?['villageId'];
@@ -168,7 +169,9 @@ class _GrowerFormState extends State<_GrowerForm> {
     final data = {
       'villageId': _villageId,
       'growerName': _c['growerName']!.text,
+      'growerNameHi': _c['growerNameHi']!.text,
       'fatherName': _c['fatherName']!.text,
+      'fatherNameHi': _c['fatherNameHi']!.text,
       'mobile': _c['mobile']!.text,
       'email': _c['email']!.text.isEmpty ? null : _c['email']!.text,
       'bankId': _bankId,
@@ -213,8 +216,8 @@ class _GrowerFormState extends State<_GrowerForm> {
                 onChanged: widget.existing == null ? (v) => setState(() => _villageId = v) : null,
               ),
               const SizedBox(height: 10),
-              _text('growerName', 'Grower Name', 'Example: Ramesh Kumar'),
-              _text('fatherName', 'Father Name', 'Example: Mahesh Kumar'),
+              _bilingual('growerName', 'Grower Name', 'Example: Ramesh Kumar'),
+              _bilingual('fatherName', 'Father Name', 'Example: Mahesh Kumar'),
               _text('mobile', 'Mobile', 'Example: 9876543210', digits: true, maxLen: 10,
                   validator: (v) => v!.length != 10 ? 'Mobile must be exactly 10 digits' : null),
               _text('email', 'Email (optional)', 'Example: farmer@gmail.com', required: false),
@@ -276,5 +279,28 @@ class _GrowerFormState extends State<_GrowerForm> {
         },
       ),
     );
+  }
+
+  Widget _bilingual(String key, String label, String hint) {
+    var auto = true;
+    var manuallyEdited = false;
+    void sync(String value) {
+      if (!auto || manuallyEdited) return;
+      final translated = HindiTransliterator.transliterate(value);
+      _c['${key}Hi']!.value = TextEditingValue(text: translated, selection: TextSelection.collapsed(offset: translated.length));
+    }
+    return StatefulBuilder(builder: (context, setLocal) => Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(children: [
+        Expanded(child: TextFormField(controller: _c[key], onChanged: sync,
+          decoration: InputDecoration(labelText: label, hintText: hint, counterText: ''),
+          validator: (v) => v == null || v.trim().isEmpty ? '$label is required' : null)),
+        const SizedBox(width: 10),
+        Expanded(child: TextFormField(controller: _c['${key}Hi'], onChanged: (_) => manuallyEdited = true,
+          decoration: InputDecoration(labelText: '$label (Hindi)', suffixIcon: IconButton(
+            tooltip: auto ? 'Switch to manual Hindi' : 'Enable transliteration', icon: Icon(auto ? Icons.auto_awesome : Icons.edit),
+            onPressed: () => setLocal(() => auto = !auto))))),
+      ]),
+    ));
   }
 }

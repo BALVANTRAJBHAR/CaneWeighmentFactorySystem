@@ -67,6 +67,7 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.Username).IsUnique();
             e.Property(x => x.Username).HasMaxLength(50);
             e.Property(x => x.FullName).HasMaxLength(100);
+            e.Property(x => x.FullNameHi).HasMaxLength(100);
             e.Property(x => x.Mobile).HasMaxLength(10);
             e.Property(x => x.Email).HasMaxLength(100);
         });
@@ -84,6 +85,7 @@ public class AppDbContext : DbContext
             e.Property(x => x.Id).ValueGeneratedNever(); // business serial via NumberSequence
             e.HasIndex(x => x.ZoneName).IsUnique();
             e.Property(x => x.ZoneName).HasMaxLength(100);
+            e.Property(x => x.ZoneNameHi).HasMaxLength(100);
             e.Property(x => x.ZoneCode).HasMaxLength(20);
         });
         b.Entity<Village>(e =>
@@ -91,6 +93,7 @@ public class AppDbContext : DbContext
             e.Property(x => x.Id).ValueGeneratedNever(); // starts at 101 via NumberSequence
             e.HasIndex(x => new { x.ZoneId, x.VillageName }).IsUnique();
             e.Property(x => x.VillageName).HasMaxLength(100);
+            e.Property(x => x.VillageNameHi).HasMaxLength(100);
             e.Property(x => x.Mobile).HasMaxLength(10);
         });
         b.Entity<Bank>(e =>
@@ -107,10 +110,12 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.AadhaarHash).IsUnique().HasFilter(null);
             e.HasIndex(x => x.Mobile);
             e.Property(x => x.GrowerCode).HasMaxLength(20);
+            e.Property(x => x.GrowerNameHi).HasMaxLength(100);
+            e.Property(x => x.FatherNameHi).HasMaxLength(100);
             e.Property(x => x.Mobile).HasMaxLength(10);
             e.HasOne(x => x.Bank).WithMany().HasForeignKey(x => x.BankId).OnDelete(DeleteBehavior.Restrict);
         });
-        b.Entity<VehicleType>().HasIndex(x => x.VehicleTypeName).IsUnique();
+        b.Entity<VehicleType>(e => { e.HasIndex(x => x.VehicleTypeName).IsUnique(); e.Property(x => x.VehicleTypeNameHi).HasMaxLength(50); });
         b.Entity<VarietyType>().HasIndex(x => x.VarietyTypeName).IsUnique();
         b.Entity<Variety>().HasIndex(x => new { x.VarietyTypeId, x.VarietyName }).IsUnique();
         b.Entity<RateMaster>(e =>
@@ -118,12 +123,13 @@ public class AppDbContext : DbContext
             e.Property(x => x.Rate).HasPrecision(12, 2);
             e.HasIndex(x => new { x.VarietyTypeId, x.EffectiveFrom });
         });
-        b.Entity<Item>().HasIndex(x => x.ItemName).IsUnique();
+        b.Entity<Item>(e => { e.HasIndex(x => x.ItemName).IsUnique(); e.Property(x => x.ItemNameHi).HasMaxLength(50); });
         b.Entity<Party>(e =>
         {
             e.HasIndex(x => x.PartyName);
             e.HasIndex(x => x.Mobile);
             e.Property(x => x.Mobile).HasMaxLength(10);
+            e.Property(x => x.PartyNameHi).HasMaxLength(100);
         });
         b.Entity<PaymentModeMaster>().HasIndex(x => x.ModeCode).IsUnique();
 

@@ -6,6 +6,7 @@ public class Zone : BaseEntity
 {
     public string ZoneCode { get; set; } = string.Empty;
     public string ZoneName { get; set; } = string.Empty;
+    public string? ZoneNameHi { get; set; }
     public string? Description { get; set; }
 }
 
@@ -14,6 +15,7 @@ public class Village : BaseEntity
     public int ZoneId { get; set; }
     public Zone Zone { get; set; } = null!;
     public string VillageName { get; set; } = string.Empty;
+    public string? VillageNameHi { get; set; }
     public string? PradhanName { get; set; }
     public string? Mobile { get; set; }
     public string? Email { get; set; }
@@ -37,7 +39,9 @@ public class Grower : BaseEntity
     public int GrowerSequence { get; set; }
     public string GrowerCode { get; set; } = string.Empty;
     public string GrowerName { get; set; } = string.Empty;
+    public string? GrowerNameHi { get; set; }
     public string FatherName { get; set; } = string.Empty;
+    public string? FatherNameHi { get; set; }
     public int? BankId { get; set; }
     public Bank? Bank { get; set; }
     public string? BankAccountNumber { get; set; }
@@ -52,6 +56,7 @@ public class Grower : BaseEntity
 public class VehicleType : BaseEntity
 {
     public string VehicleTypeName { get; set; } = string.Empty;
+    public string? VehicleTypeNameHi { get; set; }
 }
 
 public class VarietyType : BaseEntity
@@ -78,11 +83,13 @@ public class RateMaster : BaseEntity
 public class Item : BaseEntity
 {
     public string ItemName { get; set; } = string.Empty;
+    public string? ItemNameHi { get; set; }
 }
 
 public class Party : BaseEntity
 {
     public string PartyName { get; set; } = string.Empty;
+    public string? PartyNameHi { get; set; }
     public string Mobile { get; set; } = string.Empty;
     public string? Email { get; set; }
     public string? Address { get; set; }
@@ -106,7 +113,9 @@ public class PaymentModeMaster : BaseEntity
 public class CompanyConfig : BaseEntity
 {
     public string CompanyName { get; set; } = string.Empty;
+    public string? CompanyNameHi { get; set; }
     public string? Address { get; set; }
+    public string? AddressHi { get; set; }
     public string? LogoPath { get; set; }
     public string DefaultLanguage { get; set; } = "en";
     public string? ThemeColor { get; set; }

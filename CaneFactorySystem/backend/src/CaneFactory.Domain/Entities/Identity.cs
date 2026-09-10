@@ -6,6 +6,7 @@ public class User : BaseEntity
 {
     public string Username { get; set; } = string.Empty;
     public string FullName { get; set; } = string.Empty;
+    public string? FullNameHi { get; set; }
     public string Mobile { get; set; } = string.Empty;
     public string? Email { get; set; }
     public string PasswordHash { get; set; } = string.Empty;

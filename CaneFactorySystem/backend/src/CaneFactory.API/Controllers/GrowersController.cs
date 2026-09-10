@@ -14,7 +14,9 @@ public class GrowerRequest
 {
     public int VillageId { get; set; }
     public string GrowerName { get; set; } = string.Empty;
+    public string? GrowerNameHi { get; set; }
     public string FatherName { get; set; } = string.Empty;
+    public string? FatherNameHi { get; set; }
     public int? BankId { get; set; }
     public string? BankAccountNumber { get; set; }
     public string? AccountHolderName { get; set; }
@@ -50,7 +52,7 @@ public class GrowersController : ControllerBase
     private object ToDto(Grower g, string villageName, string? bankName) => new
     {
         g.Id, g.VillageId, VillageName = villageName, g.GrowerSequence, g.GrowerCode,
-        g.GrowerName, g.FatherName, g.BankId, BankName = bankName,
+        g.GrowerName, g.GrowerNameHi, g.FatherName, g.FatherNameHi, g.BankId, BankName = bankName,
         AccountMasked = Mask(g.BankAccountNumber), g.AccountHolderName,
         AadhaarMasked = g.AadhaarLast4 == null ? null : $"XXXX-XXXX-{g.AadhaarLast4}",
         g.Mobile, g.Email, g.Status, g.CreatedAt
@@ -133,7 +135,9 @@ public class GrowersController : ControllerBase
             GrowerSequence = sequence,
             GrowerCode = $"{req.VillageId}/{sequence}",
             GrowerName = Validators.Norm(req.GrowerName),
+            GrowerNameHi = string.IsNullOrWhiteSpace(req.GrowerNameHi) ? null : req.GrowerNameHi.Trim(),
             FatherName = Validators.Norm(req.FatherName),
+            FatherNameHi = string.IsNullOrWhiteSpace(req.FatherNameHi) ? null : req.FatherNameHi.Trim(),
             BankId = req.BankId,
             BankAccountNumber = Validators.Norm(req.BankAccountNumber),
             AccountHolderName = Validators.Norm(req.AccountHolderName),
@@ -162,7 +166,9 @@ public class GrowersController : ControllerBase
 
         var old = new { g.GrowerName, g.FatherName, g.Mobile, g.BankId, g.Status };
         g.GrowerName = Validators.Norm(req.GrowerName);
+        g.GrowerNameHi = string.IsNullOrWhiteSpace(req.GrowerNameHi) ? null : req.GrowerNameHi.Trim();
         g.FatherName = Validators.Norm(req.FatherName);
+        g.FatherNameHi = string.IsNullOrWhiteSpace(req.FatherNameHi) ? null : req.FatherNameHi.Trim();
         g.BankId = req.BankId;
         g.BankAccountNumber = Validators.Norm(req.BankAccountNumber);
         g.AccountHolderName = Validators.Norm(req.AccountHolderName);

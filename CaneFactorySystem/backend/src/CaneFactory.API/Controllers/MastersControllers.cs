@@ -25,6 +25,7 @@ public class ZonesController : MasterControllerBase<Zone>
     protected override async Task<string?> ValidateAsync(Zone e, int? id)
     {
         e.ZoneName = Validators.Norm(e.ZoneName);
+        e.ZoneNameHi = string.IsNullOrWhiteSpace(e.ZoneNameHi) ? null : e.ZoneNameHi.Trim();
         if (e.ZoneName.Length == 0) return "Zone Name is required.";
         if (e.ZoneName.Length > 100) return "Zone Name must be at most 100 characters.";
         if (await Db.Zones.AnyAsync(z => !z.IsDeleted && z.Id != id && z.ZoneName.ToLower() == e.ZoneName.ToLower()))
@@ -34,7 +35,7 @@ public class ZonesController : MasterControllerBase<Zone>
 
     protected override void ApplyUpdate(Zone t, Zone s)
     {
-        t.ZoneCode = s.ZoneCode; t.ZoneName = s.ZoneName; t.Description = s.Description;
+        t.ZoneCode = s.ZoneCode; t.ZoneName = s.ZoneName; t.ZoneNameHi = s.ZoneNameHi; t.Description = s.Description;
     }
 
     protected override async Task<string?> InUseReasonAsync(int id) =>
@@ -60,13 +61,14 @@ public class VillagesController : MasterControllerBase<Village>
     protected override async Task<object> ProjectListAsync(IQueryable<Village> q) =>
         await q.Select(v => new
         {
-            v.Id, v.ZoneId, ZoneName = v.Zone.ZoneName, v.VillageName, v.PradhanName,
+            v.Id, v.ZoneId, ZoneName = v.Zone.ZoneName, v.VillageName, v.VillageNameHi, v.PradhanName,
             v.Mobile, v.Email, v.Status, v.CreatedAt
         }).ToListAsync();
 
     protected override async Task<string?> ValidateAsync(Village e, int? id)
     {
         e.VillageName = Validators.Norm(e.VillageName);
+        e.VillageNameHi = string.IsNullOrWhiteSpace(e.VillageNameHi) ? null : e.VillageNameHi.Trim();
         if (e.VillageName.Length == 0) return "Village Name is required.";
         if (!await Db.Zones.AnyAsync(z => z.Id == e.ZoneId && !z.IsDeleted && z.Status))
             return "Selected Zone does not exist or is inactive.";
@@ -81,7 +83,7 @@ public class VillagesController : MasterControllerBase<Village>
 
     protected override void ApplyUpdate(Village t, Village s)
     {
-        t.ZoneId = s.ZoneId; t.VillageName = s.VillageName; t.PradhanName = s.PradhanName;
+        t.ZoneId = s.ZoneId; t.VillageName = s.VillageName; t.VillageNameHi = s.VillageNameHi; t.PradhanName = s.PradhanName;
         t.Mobile = s.Mobile; t.Email = s.Email;
     }
 
@@ -146,7 +148,7 @@ public class VehicleTypesController : MasterControllerBase<VehicleType>
 
     protected override async Task<string?> ValidateAsync(VehicleType e, int? id)
     {
-        e.VehicleTypeName = Validators.Norm(e.VehicleTypeName);
+        e.VehicleTypeName = Validators.Norm(e.VehicleTypeName); e.VehicleTypeNameHi = string.IsNullOrWhiteSpace(e.VehicleTypeNameHi) ? null : e.VehicleTypeNameHi.Trim();
         if (e.VehicleTypeName.Length == 0) return "Vehicle Type Name is required.";
         if (await Db.VehicleTypes.AnyAsync(v => !v.IsDeleted && v.Id != id
                 && v.VehicleTypeName.ToLower() == e.VehicleTypeName.ToLower()))
@@ -154,7 +156,7 @@ public class VehicleTypesController : MasterControllerBase<VehicleType>
         return null;
     }
 
-    protected override void ApplyUpdate(VehicleType t, VehicleType s) => t.VehicleTypeName = s.VehicleTypeName;
+    protected override void ApplyUpdate(VehicleType t, VehicleType s) { t.VehicleTypeName = s.VehicleTypeName; t.VehicleTypeNameHi = s.VehicleTypeNameHi; }
 
     protected override async Task<string?> InUseReasonAsync(int id) =>
         await Db.Purchases.AnyAsync(p => p.VehicleTypeId == id)
@@ -255,14 +257,14 @@ public class ItemsController : MasterControllerBase<Item>
 
     protected override async Task<string?> ValidateAsync(Item e, int? id)
     {
-        e.ItemName = Validators.Norm(e.ItemName);
+        e.ItemName = Validators.Norm(e.ItemName); e.ItemNameHi = string.IsNullOrWhiteSpace(e.ItemNameHi) ? null : e.ItemNameHi.Trim();
         if (e.ItemName.Length == 0) return "Item Name is required.";
         if (await Db.Items.AnyAsync(i => !i.IsDeleted && i.Id != id && i.ItemName.ToLower() == e.ItemName.ToLower()))
             return $"Item '{e.ItemName}' already exists.";
         return null;
     }
 
-    protected override void ApplyUpdate(Item t, Item s) => t.ItemName = s.ItemName;
+    protected override void ApplyUpdate(Item t, Item s) { t.ItemName = s.ItemName; t.ItemNameHi = s.ItemNameHi; }
 }
 
 [Route("api/parties")]
@@ -279,7 +281,7 @@ public class PartiesController : MasterControllerBase<Party>
 
     protected override async Task<string?> ValidateAsync(Party e, int? id)
     {
-        e.PartyName = Validators.Norm(e.PartyName);
+        e.PartyName = Validators.Norm(e.PartyName); e.PartyNameHi = string.IsNullOrWhiteSpace(e.PartyNameHi) ? null : e.PartyNameHi.Trim();
         if (e.PartyName.Length == 0) return "Party Name is required.";
         if (!Validators.IsMobile(e.Mobile)) return "Mobile must be exactly 10 numeric digits. Example: 9876543210";
         if (!Validators.IsEmail(e.Email)) return "Email format is invalid.";
@@ -292,7 +294,7 @@ public class PartiesController : MasterControllerBase<Party>
 
     protected override void ApplyUpdate(Party t, Party s)
     {
-        t.PartyName = s.PartyName; t.Mobile = s.Mobile; t.Email = s.Email; t.Address = s.Address; t.Gst = s.Gst;
+        t.PartyName = s.PartyName; t.PartyNameHi = s.PartyNameHi; t.Mobile = s.Mobile; t.Email = s.Email; t.Address = s.Address; t.Gst = s.Gst;
     }
 
     /// <summary>Client-side duplicate warning support (name OR mobile matches).</summary>

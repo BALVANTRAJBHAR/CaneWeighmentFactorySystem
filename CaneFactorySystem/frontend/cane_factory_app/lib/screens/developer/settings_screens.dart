@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import '../../core/api_client.dart';
 import '../../core/print_service.dart';
 import '../../core/file_download.dart';
+import '../../core/hindi_transliteration.dart';
 
 /// Developer Configuration hub: Weight Rules, Sound/TTS, Cameras, Print, SMS, Backup, Company.
 class DeveloperSettingsScreen extends StatelessWidget {
@@ -1452,6 +1453,10 @@ class _CompanyTab extends StatefulWidget {
 class _CompanyTabState extends State<_CompanyTab> {
   Map<String, dynamic>? v;
   final _logoPath = TextEditingController();
+  final _companyNameHi = TextEditingController();
+  final _addressHi = TextEditingController();
+  bool _companyNameHiManual = false;
+  bool _addressHiManual = false;
 
   @override
   void initState() {
@@ -1461,6 +1466,8 @@ class _CompanyTabState extends State<_CompanyTab> {
         setState(() {
           v = Map<String, dynamic>.from(res.data);
           _logoPath.text = v!['logoPath']?.toString() ?? '';
+          _companyNameHi.text = v!['companyNameHi']?.toString() ?? '';
+          _addressHi.text = v!['addressHi']?.toString() ?? '';
         });
     });
   }
@@ -1468,6 +1475,8 @@ class _CompanyTabState extends State<_CompanyTab> {
   @override
   void dispose() {
     _logoPath.dispose();
+    _companyNameHi.dispose();
+    _addressHi.dispose();
     super.dispose();
   }
 
@@ -1492,13 +1501,30 @@ class _CompanyTabState extends State<_CompanyTab> {
           decoration: const InputDecoration(
               labelText: 'Company Name',
               hintText: 'Printed on all slips/reports'),
-          onChanged: (x) => v!['companyName'] = x),
+          onChanged: (x) {
+            v!['companyName'] = x;
+            if (!_companyNameHiManual) _companyNameHi.text = HindiTransliterator.transliterate(x);
+          }),
+      const SizedBox(height: 12),
+      TextField(
+          controller: _companyNameHi,
+          decoration: const InputDecoration(labelText: 'Company Name (Hindi)'),
+          onChanged: (x) { _companyNameHiManual = true; v!['companyNameHi'] = x; }),
       const SizedBox(height: 12),
       TextField(
           controller: TextEditingController(text: v!['address']),
           decoration: const InputDecoration(labelText: 'Address'),
           maxLines: 2,
-          onChanged: (x) => v!['address'] = x),
+          onChanged: (x) {
+            v!['address'] = x;
+            if (!_addressHiManual) _addressHi.text = HindiTransliterator.transliterate(x);
+          }),
+      const SizedBox(height: 12),
+      TextField(
+          controller: _addressHi,
+          decoration: const InputDecoration(labelText: 'Address (Hindi)'),
+          maxLines: 2,
+          onChanged: (x) { _addressHiManual = true; v!['addressHi'] = x; }),
       const SizedBox(height: 12),
       TextField(
           controller: _logoPath,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../core/hindi_transliteration.dart';
 import '../../core/api_client.dart';
 import '../../providers/auth_provider.dart';
 
@@ -38,10 +39,12 @@ class _UsersScreenState extends State<UsersScreen> {
     final c = {
       'username': TextEditingController(text: existing?['username'] ?? ''),
       'fullName': TextEditingController(text: existing?['fullName'] ?? ''),
+      'fullNameHi': TextEditingController(text: existing?['fullNameHi'] ?? ''),
       'mobile': TextEditingController(text: existing?['mobile'] ?? ''),
       'email': TextEditingController(text: existing?['email'] ?? ''),
       'password': TextEditingController(),
     };
+    var fullNameHiEdited = false;
     final selectedRoles = <int>{...List<int>.from(existing?['roleIds'] ?? [])};
     bool status = existing?['status'] ?? true;
 
@@ -67,7 +70,17 @@ class _UsersScreenState extends State<UsersScreen> {
                     controller: c['fullName'],
                     decoration: const InputDecoration(
                         labelText: 'Full Name',
-                        hintText: 'Example: Ram Prasad')),
+                        hintText: 'Example: Ram Prasad'),
+                    onChanged: (value) {
+                      if (!fullNameHiEdited) {
+                        c['fullNameHi']!.text = HindiTransliterator.transliterate(value);
+                      }
+                    }),
+                const SizedBox(height: 10),
+                TextField(
+                    controller: c['fullNameHi'],
+                    decoration: const InputDecoration(labelText: 'Full Name (Hindi)', suffixIcon: Icon(Icons.translate)),
+                    onChanged: (_) => fullNameHiEdited = true),
                 const SizedBox(height: 10),
                 TextField(
                     controller: c['mobile'],
@@ -131,6 +144,7 @@ class _UsersScreenState extends State<UsersScreen> {
         ? await ApiClient.instance.dio.post('/api/users', data: {
             'username': c['username']!.text,
             'fullName': c['fullName']!.text,
+            'fullNameHi': c['fullNameHi']!.text,
             'mobile': c['mobile']!.text,
             'email': c['email']!.text.isEmpty ? null : c['email']!.text,
             'temporaryPassword': c['password']!.text,
@@ -139,6 +153,7 @@ class _UsersScreenState extends State<UsersScreen> {
         : await ApiClient.instance.dio
             .put('/api/users/${existing['id']}', data: {
             'fullName': c['fullName']!.text,
+            'fullNameHi': c['fullNameHi']!.text,
             'mobile': c['mobile']!.text,
             'email': c['email']!.text.isEmpty ? null : c['email']!.text,
             'status': status,

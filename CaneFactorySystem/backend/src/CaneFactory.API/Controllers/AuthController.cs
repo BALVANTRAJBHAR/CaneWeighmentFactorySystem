@@ -103,7 +103,7 @@ public class AuthController : ControllerBase
         {
             Id = user.Id,
             Username = user.Username,
-            FullName = user.FullName,
+            FullName = user.FullName, FullNameHi = user.FullNameHi,
             Mobile = user.Mobile,
             Email = user.Email,
             Roles = roles,
@@ -204,7 +204,7 @@ public class AuthController : ControllerBase
             .Select(rp => rp.Permission.Code).Distinct().ToListAsync();
         return Ok(new UserInfo
         {
-            Id = user.Id, Username = user.Username, FullName = user.FullName,
+            Id = user.Id, Username = user.Username, FullName = user.FullName, FullNameHi = user.FullNameHi,
             Mobile = user.Mobile, Email = user.Email,
             Roles = user.UserRoles.Select(ur => ur.Role.Name).ToList(),
             Permissions = perms, MustChangePassword = user.MustChangePassword,

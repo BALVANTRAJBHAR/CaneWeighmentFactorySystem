@@ -377,9 +377,11 @@ public class ConfigController : ControllerBase
             (!System.IO.File.Exists(src.LogoPath) || Path.GetExtension(src.LogoPath).ToLowerInvariant() is not (".png" or ".jpg" or ".jpeg")))
             return BadRequest(new { message = "Logo must be an existing PNG or JPG file on the factory server/PC." });
         var c = await _db.CompanyConfigs.FirstAsync(x => !x.IsDeleted);
-        var old = new { c.CompanyName, c.Address, c.DefaultLanguage, c.ThemeColor };
+        var old = new { c.CompanyName, c.CompanyNameHi, c.Address, c.AddressHi, c.DefaultLanguage, c.ThemeColor };
         c.CompanyName = src.CompanyName.Trim();
+        c.CompanyNameHi = string.IsNullOrWhiteSpace(src.CompanyNameHi) ? null : src.CompanyNameHi.Trim();
         c.Address = src.Address;
+        c.AddressHi = string.IsNullOrWhiteSpace(src.AddressHi) ? null : src.AddressHi.Trim();
         c.LogoPath = src.LogoPath;
         c.DefaultLanguage = src.DefaultLanguage;
         c.ThemeColor = src.ThemeColor;

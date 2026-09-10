@@ -58,13 +58,13 @@ public class UsersController : ControllerBase
         var pageRows = await q.OrderBy(u => u.Username).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(u => new
             {
-                u.Id, u.Username, u.FullName, u.Mobile, u.Email, u.Status, u.MustChangePassword,
+                u.Id, u.Username, u.FullName, u.FullNameHi, u.Mobile, u.Email, u.Status, u.MustChangePassword,
                 u.LastLoginAt,
                 RoleAssignments = u.UserRoles.Select(r => new { r.RoleId, RoleName = r.Role.Name }).ToList()
             }).ToListAsync();
         var items = pageRows.Select(u => new
         {
-            u.Id, u.Username, u.FullName, u.Mobile, u.Email, u.Status, u.MustChangePassword, u.LastLoginAt,
+            u.Id, u.Username, u.FullName, u.FullNameHi, u.Mobile, u.Email, u.Status, u.MustChangePassword, u.LastLoginAt,
             Roles = u.RoleAssignments.Select(r => r.RoleName).ToList(),
             RoleIds = u.RoleAssignments.Select(r => r.RoleId).ToList()
         });
@@ -91,6 +91,7 @@ public class UsersController : ControllerBase
         {
             Username = username,
             FullName = Validators.Norm(req.FullName),
+            FullNameHi = string.IsNullOrWhiteSpace(req.FullNameHi) ? null : req.FullNameHi.Trim(),
             Mobile = req.Mobile,
             Email = Validators.Norm(req.Email),
             MustChangePassword = true
@@ -121,6 +122,7 @@ public class UsersController : ControllerBase
 
         var old = new { user.FullName, user.Mobile, user.Email, user.Status, Roles = user.UserRoles.Select(r => r.RoleId).ToList() };
         user.FullName = Validators.Norm(req.FullName);
+        user.FullNameHi = string.IsNullOrWhiteSpace(req.FullNameHi) ? null : req.FullNameHi.Trim();
         user.Mobile = req.Mobile;
         user.Email = Validators.Norm(req.Email);
         var deactivated = user.Status && !req.Status;

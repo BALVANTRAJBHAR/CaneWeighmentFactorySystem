@@ -26,7 +26,7 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleHindi = "गन्ना क्रय पर्ची - सकल तौल";
         doc.TitleEnglish = "Cane Purchase Slip - Gross";
         doc.QrValue = p.Id;
-        doc.Rows = GrossRows(p);
+        doc.Rows = GrossRows(p, doc.Language);
         return doc;
     }
 
@@ -37,7 +37,7 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleHindi = "गन्ना क्रय पर्ची - अंतिम तौल";
         doc.TitleEnglish = "Cane Purchase Slip - Final";
         doc.QrValue = p.Id;
-        doc.Rows = GrossRows(p).Concat(TareRows(p)).ToList();
+        doc.Rows = GrossRows(p, doc.Language).Concat(TareRows(p)).ToList();
         return doc;
     }
 
@@ -48,7 +48,7 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleHindi = "ऋण पर्ची";
         doc.TitleEnglish = "Loan Issue Slip";
         doc.QrValue = l.Id;
-        doc.Rows = LoanRows(l);
+        doc.Rows = LoanRows(l, doc.Language);
         return doc;
     }
 
@@ -59,7 +59,7 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleHindi = "ऋण वसूली पर्ची";
         doc.TitleEnglish = "Loan Recovery Slip";
         doc.QrValue = r.Id;
-        doc.Rows = LoanRecoveryRows(r);
+        doc.Rows = LoanRecoveryRows(r, doc.Language);
         return doc;
     }
 
@@ -72,7 +72,7 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleHindi = "भुगतान पर्ची";
         doc.TitleEnglish = "Payment Slip";
         doc.QrValue = p.Id;
-        doc.Rows = PaymentRows(p, purchaseIds);
+        doc.Rows = PaymentRows(p, purchaseIds, doc.Language);
         return doc;
     }
 
@@ -89,7 +89,7 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleHindi = stage == "TARE" ? "बिक्री/खरीद तौल पर्ची - टेयर" : "बिक्री/खरीद तौल पर्ची - अंतिम";
         doc.TitleEnglish = stage == "TARE" ? "Sale/Purchase Weighment Slip - Tare" : "Sale/Purchase Weighment Slip - Final";
         doc.QrValue = p.Id;
-        doc.Rows = SalePurchaseRows(p, stage);
+        doc.Rows = SalePurchaseRows(p, stage, doc.Language);
         return doc;
     }
 
@@ -164,9 +164,9 @@ public class PrintEngineService : IPrintEngineService
         var company = await _db.CompanyConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
         return new PrintDocument
         {
-            Language = cfg.Language,
-            CompanyName = company?.CompanyName ?? "Cane Factory",
-            Address = company?.Address,
+            Language = string.Equals(cfg.Language, "hi", StringComparison.OrdinalIgnoreCase) ? "hi" : "en",
+            CompanyName = string.Equals(cfg.Language, "hi", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(company?.CompanyNameHi) ? company.CompanyNameHi : company?.CompanyName ?? "Cane Factory",
+            Address = string.Equals(cfg.Language, "hi", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(company?.AddressHi) ? company.AddressHi : company?.Address,
             LogoPath = company?.LogoPath,
             SeasonName = seasonName,
             GeneratedByUserName = generatedByUserName,
@@ -174,15 +174,18 @@ public class PrintEngineService : IPrintEngineService
         };
     }
 
-    private static List<PrintRow> GrossRows(Purchase p) => new()
+    private static string Text(string? english, string? hindi, string language) =>
+        language == "hi" && !string.IsNullOrWhiteSpace(hindi) ? hindi! : english ?? "-";
+
+    private static List<PrintRow> GrossRows(Purchase p, string language) => new()
     {
         new("क्रय क्रमांक", "Purchase ID", p.Id.ToString()),
         new("किसान कोड", "Grower Code", p.GrowerCode),
-        new("किसान का नाम", "Grower Name", p.Grower.GrowerName),
-        new("पिता का नाम", "Father's Name", p.Grower.FatherName),
-        new("गाँव", "Village", p.Grower.Village.VillageName),
+        new("किसान का नाम", "Grower Name", Text(p.Grower.GrowerName, p.Grower.GrowerNameHi, language)),
+        new("पिता का नाम", "Father's Name", Text(p.Grower.FatherName, p.Grower.FatherNameHi, language)),
+        new("गाँव", "Village", Text(p.Grower.Village.VillageName, p.Grower.Village.VillageNameHi, language)),
         new("वाहन क्रमांक", "Vehicle Number", p.VehicleNumber),
-        new("वाहन प्रकार", "Vehicle Type", p.VehicleType.VehicleTypeName),
+        new("वाहन प्रकार", "Vehicle Type", Text(p.VehicleType.VehicleTypeName, p.VehicleType.VehicleTypeNameHi, language)),
         new("प्रजाति", "Variety", p.Variety.VarietyName),
         new("सकल वजन (क्विंटल)", "Gross Weight (Qtl)", p.GrossWeightQuintal.ToString("F2")),
         new("सकल तिथि/समय", "Gross Date/Time", p.GrossDateTime.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
@@ -204,13 +207,13 @@ public class PrintEngineService : IPrintEngineService
         new("कुल राशि (₹)", "Purchase Amount (Rs)", p.PurchaseAmount?.ToString("F2") ?? "-"),
     };
 
-    private static List<PrintRow> LoanRows(Loan l) => new()
+    private static List<PrintRow> LoanRows(Loan l, string language) => new()
     {
         new("ऋण क्रमांक", "Loan ID", l.Id.ToString()),
         new("किसान कोड", "Grower Code", l.GrowerCode),
-        new("किसान का नाम", "Grower Name", l.Grower.GrowerName),
-        new("पिता का नाम", "Father's Name", l.Grower.FatherName),
-        new("गाँव", "Village", l.Grower.Village.VillageName),
+        new("किसान का नाम", "Grower Name", Text(l.Grower.GrowerName, l.Grower.GrowerNameHi, language)),
+        new("पिता का नाम", "Father's Name", Text(l.Grower.FatherName, l.Grower.FatherNameHi, language)),
+        new("गाँव", "Village", Text(l.Grower.Village.VillageName, l.Grower.Village.VillageNameHi, language)),
         new("ऋण प्रकार", "Loan Type", l.LoanType.LoanTypeName),
         new("ऋण राशि (₹)", "Loan Amount (Rs)", l.LoanAmount.ToString("F2")),
         new("ऋण तिथि", "Issue Date", l.IssueDate.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
@@ -219,25 +222,25 @@ public class PrintEngineService : IPrintEngineService
         new("बकाया राशि (₹)", "Outstanding (Rs)", l.OutstandingAmount.ToString("F2")),
     };
 
-    private static List<PrintRow> LoanRecoveryRows(LoanRecovery r) => new()
+    private static List<PrintRow> LoanRecoveryRows(LoanRecovery r, string language) => new()
     {
         new("वसूली क्रमांक", "Recovery ID", r.Id.ToString()),
         new("ऋण क्रमांक", "Loan ID", r.LoanId.ToString()),
         new("किसान कोड", "Grower Code", r.GrowerCode),
-        new("किसान का नाम", "Grower Name", r.Loan.Grower.GrowerName),
+        new("किसान का नाम", "Grower Name", Text(r.Loan.Grower.GrowerName, r.Loan.Grower.GrowerNameHi, language)),
         new("वसूली राशि (₹)", "Recovery Amount (Rs)", r.RecoveryAmount.ToString("F2")),
         new("वसूली तिथि", "Recovery Date", r.RecoveryDate.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
         new("वसूली कर्ता", "Recovered By", r.RecoveredByUserName),
         new("बकाया शेष (₹)", "Remaining Outstanding (Rs)", r.Loan.OutstandingAmount.ToString("F2")),
     };
 
-    private static List<PrintRow> PaymentRows(Payment p, List<int> purchaseIds) => new()
+    private static List<PrintRow> PaymentRows(Payment p, List<int> purchaseIds, string language) => new()
     {
         new("भुगतान क्रमांक", "Payment ID", p.Id.ToString()),
         new("अग्रिम क्रमांक", "Advice Number", p.AdviceNumber.ToString()),
         new("किसान कोड", "Grower Code", p.GrowerCode),
-        new("किसान का नाम", "Grower Name", p.Grower.GrowerName),
-        new("गाँव", "Village", p.Grower.Village.VillageName),
+        new("किसान का नाम", "Grower Name", Text(p.Grower.GrowerName, p.Grower.GrowerNameHi, language)),
+        new("गाँव", "Village", Text(p.Grower.Village.VillageName, p.Grower.Village.VillageNameHi, language)),
         new("क्रय क्रमांक", "Purchase IDs", purchaseIds.Count == 0 ? "-" : string.Join(", ", purchaseIds)),
         new("कुल क्रय राशि (₹)", "Total Purchase Amount (Rs)", p.TotalPurchaseAmount.ToString("F2")),
         new("ऋण कटौती (₹)", "Loan Deducted (Rs)", p.LoanDeductedAmount.ToString("F2")),
@@ -248,14 +251,14 @@ public class PrintEngineService : IPrintEngineService
         new("भुगतान कर्ता", "Paid By", p.PaidByUserName),
     };
 
-    private static List<PrintRow> SalePurchaseRows(SalePurchase p, string stage)
+    private static List<PrintRow> SalePurchaseRows(SalePurchase p, string stage, string language)
     {
         var rows = new List<PrintRow>
         {
             new("बिक्री/खरीद क्रमांक", "SalePurchase ID", p.Id.ToString()),
-            new("वस्तु", "Item", p.Item.ItemName),
-            new("पार्टी", "Party", p.Party.PartyName),
-            new("वाहन प्रकार", "Vehicle Type", p.VehicleType.VehicleTypeName),
+            new("वस्तु", "Item", Text(p.Item.ItemName, p.Item.ItemNameHi, language)),
+            new("पार्टी", "Party", Text(p.Party.PartyName, p.Party.PartyNameHi, language)),
+            new("वाहन प्रकार", "Vehicle Type", Text(p.VehicleType.VehicleTypeName, p.VehicleType.VehicleTypeNameHi, language)),
             new("वाहन क्रमांक", "Vehicle Number", p.VehicleNumber),
             new("चालक", "Driver", p.DriverName),
             new("टिप्पणी", "Remark", p.Remark ?? "-"),

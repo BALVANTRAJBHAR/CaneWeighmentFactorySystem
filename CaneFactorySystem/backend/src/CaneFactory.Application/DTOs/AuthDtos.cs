@@ -14,6 +14,7 @@ public class UserInfo
     public int Id { get; set; }
     public string Username { get; set; } = string.Empty;
     public string FullName { get; set; } = string.Empty;
+    public string? FullNameHi { get; set; }
     public string Mobile { get; set; } = string.Empty;
     public string? Email { get; set; }
     public List<string> Roles { get; set; } = new();
@@ -28,6 +29,7 @@ public class CreateUserRequest
 {
     public string Username { get; set; } = string.Empty;
     public string FullName { get; set; } = string.Empty;
+    public string? FullNameHi { get; set; }
     public string Mobile { get; set; } = string.Empty;
     public string? Email { get; set; }
     public string TemporaryPassword { get; set; } = string.Empty;
@@ -37,6 +39,7 @@ public class CreateUserRequest
 public class UpdateUserRequest
 {
     public string FullName { get; set; } = string.Empty;
+    public string? FullNameHi { get; set; }
     public string Mobile { get; set; } = string.Empty;
     public string? Email { get; set; }
     public bool Status { get; set; } = true;

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../core/api_client.dart';
 import '../providers/auth_provider.dart';
+import '../core/hindi_transliteration.dart';
 
 enum FieldType { text, number, decimal, mobile, email, dropdown, toggle, date }
 
@@ -17,6 +18,7 @@ class FieldSpec {
   final String optionValueKey;
   final String optionLabelKey;
   final String? dependsOn; // reload options when this field changes (cascade)
+  final String? hindiKey;
   const FieldSpec(this.key, this.label,
       {this.hint,
       this.type = FieldType.text,
@@ -25,7 +27,7 @@ class FieldSpec {
       this.optionsEndpoint,
       this.optionValueKey = 'id',
       this.optionLabelKey = 'name',
-      this.dependsOn});
+      this.dependsOn, this.hindiKey});
 }
 
 class ColumnSpec {
@@ -245,6 +247,7 @@ class _MasterFormDialog extends StatefulWidget {
 class _MasterFormDialogState extends State<_MasterFormDialog> {
   final _formKey = GlobalKey<FormState>();
   final Map<String, dynamic> _values = {};
+  final Map<String, TextEditingController> _controllers = {};
   final Map<String, List<Map<String, dynamic>>> _options = {};
   bool _busy = false;
   String? _error;
@@ -255,11 +258,21 @@ class _MasterFormDialogState extends State<_MasterFormDialog> {
     for (final f in widget.fields) {
       _values[f.key] = widget.existing?[f.key];
       if (f.type == FieldType.toggle) _values[f.key] = widget.existing?[f.key] ?? true;
+      if (f.hindiKey != null) {
+        _controllers[f.key] = TextEditingController(text: widget.existing?[f.key]?.toString() ?? '');
+        _controllers[f.hindiKey!] = TextEditingController(text: widget.existing?[f.hindiKey!]?.toString() ?? '');
+      }
     }
     _values['status'] = widget.existing?['status'] ?? true;
     for (final f in widget.fields.where((f) => f.optionsEndpoint != null)) {
       _loadOptions(f);
     }
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _controllers.values) controller.dispose();
+    super.dispose();
   }
 
   Future<void> _loadOptions(FieldSpec f) async {
@@ -336,6 +349,7 @@ class _MasterFormDialogState extends State<_MasterFormDialog> {
   }
 
   Widget _buildField(FieldSpec f) {
+    if (f.hindiKey != null) return _buildBilingualField(f);
     switch (f.type) {
       case FieldType.dropdown:
         final opts = _options[f.key] ?? [];
@@ -402,5 +416,46 @@ class _MasterFormDialogState extends State<_MasterFormDialog> {
           },
         );
     }
+  }
+
+  Widget _buildBilingualField(FieldSpec f) {
+    final english = _controllers[f.key]!;
+    final hindi = _controllers[f.hindiKey!]!;
+    var auto = true;
+    var hindiEdited = false;
+    return StatefulBuilder(builder: (context, setLocal) {
+      void sync(String value) {
+        if (!auto || hindiEdited) return;
+        final translated = HindiTransliterator.transliterate(value);
+        hindi.value = hindi.value.copyWith(text: translated, selection: TextSelection.collapsed(offset: translated.length));
+      }
+      final englishField = TextFormField(
+        controller: english,
+        maxLength: f.maxLength,
+        decoration: InputDecoration(labelText: f.label, hintText: f.hint, counterText: ''),
+        validator: (v) => f.required && (v ?? '').trim().isEmpty ? '${f.label} is required' : null,
+        onChanged: sync,
+        onSaved: (v) => _values[f.key] = (v ?? '').trim(),
+      );
+      final hindiField = TextFormField(
+        controller: hindi,
+        maxLength: f.maxLength,
+        decoration: InputDecoration(
+          labelText: '${f.label} (Hindi)', counterText: '',
+          suffixIcon: IconButton(tooltip: auto ? 'Switch to manual Hindi' : 'Enable transliteration',
+            icon: Icon(auto ? Icons.auto_awesome : Icons.edit), onPressed: () => setLocal(() => auto = !auto)),
+        ),
+        onChanged: (_) => hindiEdited = true,
+        onSaved: (v) => _values[f.hindiKey!] = (v ?? '').trim().isEmpty ? null : (v ?? '').trim(),
+      );
+      return Shortcuts(
+        shortcuts: <ShortcutActivator, Intent>{
+          const SingleActivator(LogicalKeyboardKey.keyG, control: true): const ActivateIntent(),
+        },
+        child: Actions(actions: <Type, Action<Intent>>{
+          ActivateIntent: CallbackAction<Intent>(onInvoke: (_) { setLocal(() => auto = !auto); return null; }),
+        }, child: Row(children: [Expanded(child: englishField), const SizedBox(width: 10), Expanded(child: hindiField)])),
+      );
+    });
   }
 }
