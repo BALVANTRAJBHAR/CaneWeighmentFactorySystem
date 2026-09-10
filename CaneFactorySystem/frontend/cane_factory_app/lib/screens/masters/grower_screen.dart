@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
 import '../../providers/auth_provider.dart';
@@ -77,6 +78,7 @@ class _GrowerScreenState extends State<GrowerScreen> {
                         DataColumn(label: Text('Father Name')),
                         DataColumn(label: Text('Village')),
                         DataColumn(label: Text('Mobile')),
+                        DataColumn(label: Text('Created Date')),
                         DataColumn(label: Text('Bank')),
                         DataColumn(label: Text('Account')),
                         DataColumn(label: Text('Aadhaar')),
@@ -90,6 +92,7 @@ class _GrowerScreenState extends State<GrowerScreen> {
                             DataCell(Text('${g['fatherName']}')),
                             DataCell(Text('${g['villageName']}')),
                             DataCell(Text('${g['mobile']}')),
+                            DataCell(Text(g['createdAt'] == null ? '-' : DateFormat('dd-MM-yyyy').format(DateTime.parse(g['createdAt'].toString()).toLocal()))),
                             DataCell(Text('${g['bankName'] ?? '-'}')),
                             DataCell(Text('${g['accountMasked'] ?? '-'}')),
                             DataCell(Text('${g['aadhaarMasked'] ?? '-'}')),

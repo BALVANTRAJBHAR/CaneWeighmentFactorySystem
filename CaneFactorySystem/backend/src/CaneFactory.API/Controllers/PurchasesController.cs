@@ -40,26 +40,36 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] string? growerCode, [FromQuery] string? status,
+    public async Task<IActionResult> List([FromQuery] string? growerCode, [FromQuery] string? search, [FromQuery] string? status,
         [FromQuery] DateTime? from, [FromQuery] DateTime? to,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         if (Deny("View") is { } d) return d;
         var q = await ScopedQueryAsync();
         if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(p => p.GrowerCode == growerCode.Trim());
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim();
+            q = q.Where(p => p.GrowerCode.Contains(term)
+                || p.Grower.GrowerName.Contains(term)
+                || p.Grower.FatherName.Contains(term)
+                || p.Grower.Village.VillageName.Contains(term)
+                || p.Grower.Mobile.Contains(term));
+        }
         if (!string.IsNullOrWhiteSpace(status)) q = q.Where(p => p.GrossTareStatus == status);
-        if (from.HasValue) q = q.Where(p => p.GrossDateTime >= from);
-        if (to.HasValue) q = q.Where(p => p.GrossDateTime <= to);
+        if (from.HasValue) q = q.Where(p => p.TareDateTime >= from.Value.Date || (p.TareDateTime == null && p.GrossDateTime >= from.Value.Date));
+        if (to.HasValue) q = q.Where(p => p.TareDateTime < to.Value.Date.AddDays(1) || (p.TareDateTime == null && p.GrossDateTime < to.Value.Date.AddDays(1)));
         var total = await q.CountAsync();
         var items = await q.OrderByDescending(p => p.Id).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(p => new
             {
                 purchaseId = p.Id, p.GrowerCode, GrowerName = p.Grower.GrowerName,
-                FatherName = p.Grower.FatherName, VillageName = p.Grower.Village.VillageName,
+                FatherName = p.Grower.FatherName, p.Grower.Mobile, VillageName = p.Grower.Village.VillageName,
                 p.VehicleNumber, VehicleTypeName = p.VehicleType.VehicleTypeName,
                 VarietyName = p.Variety.VarietyName,
                 p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName,
                 p.TareWeightQuintal, p.TareDateTime, p.TareByUserName,
+                PurchaseDate = p.TareDateTime ?? p.GrossDateTime,
                 p.NetWeightQuintal, p.CuttingPercent, p.CuttingWeightQuintal,
                 p.TaxPercent, p.TaxWeightQuintal, p.FinalWeightQuintal,
                 p.Rate, p.PurchaseAmount, p.GrossTareStatus, p.PaymentStatus, p.LockStatus, p.AdviceNumber,

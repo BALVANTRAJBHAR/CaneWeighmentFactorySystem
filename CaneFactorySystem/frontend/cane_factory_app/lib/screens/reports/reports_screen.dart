@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../core/api_client.dart';
 import '../../core/file_download.dart';
+import '../../core/report_format.dart';
 
 /// Phase 11: Reports hub - Purchases (covers Daily Weighment, Gross/Tare/Net, Village-wise,
 /// Grower-wise, Date-range, Rate-wise, Variety-wise, Vehicle-wise, Pending Payment, Lock report),
@@ -45,8 +46,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   Map<String, dynamic> _query({String? format}) {
     final q = <String, dynamic>{
-      if (_fromDate != null) 'fromDate': _fromDate!.toIso8601String(),
-      if (_toDate != null) 'toDate': _toDate!.toIso8601String(),
+      if (_fromDate != null) 'fromDate': DateFormat('yyyy-MM-dd').format(_fromDate!),
+      if (_toDate != null) 'toDate': DateFormat('yyyy-MM-dd').format(_toDate!),
       if (format != null) 'format': format,
     };
     if (_reportType == 'sale-purchases') {
@@ -126,6 +127,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
       case 'sale-purchases':
         return [
           'salePurchaseId',
+          'tareDateTime',
+          'grossDateTime',
           'item',
           'party',
           'vehicleNumber',
@@ -142,10 +145,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
       default:
         return [
           'purchaseId',
+          'purchaseDate',
           'growerCode',
           'growerName',
           'villageName',
           'vehicleNumber',
+          'cuttingWeightQuintal',
           'finalWeightQuintal',
           'purchaseAmount',
           'paymentStatus'
@@ -272,7 +277,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                 for (final item in _items)
                                   DataRow(cells: [
                                     for (final c in _columns)
-                                      DataCell(Text('${item[c] ?? ''}',
+                                      DataCell(Text(formatReportCell(c, item[c]),
                                           overflow: TextOverflow.ellipsis)),
                                   ]),
                               ],

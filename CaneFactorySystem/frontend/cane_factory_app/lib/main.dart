@@ -150,7 +150,7 @@ class _RootGateState extends State<RootGate> {
   }
 
   Future<void> _ensureMinimumSplashTime(DateTime startedAt) async {
-    const minimum = Duration(seconds: 15);
+    const minimum = Duration(seconds: 4);
     final remaining = minimum - DateTime.now().difference(startedAt);
     if (!remaining.isNegative && remaining > Duration.zero) {
       await Future<void>.delayed(remaining);

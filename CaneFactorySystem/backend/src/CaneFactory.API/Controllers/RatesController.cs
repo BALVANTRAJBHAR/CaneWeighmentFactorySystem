@@ -67,24 +67,53 @@ public class RatesController : ControllerBase
         if (effectiveTo.HasValue && effectiveTo < effectiveFrom)
             return BadRequest(new { message = "Effective To cannot be before Effective From." });
 
-        // No overlapping active period for same VarietyType
-        var overlap = await _db.Rates.AnyAsync(r => r.VarietyTypeId == req.VarietyTypeId && !r.IsDeleted && r.Status
-            && r.EffectiveFrom.Date <= (effectiveTo ?? DateTime.MaxValue.Date)
-            && (r.EffectiveTo == null || r.EffectiveTo.Value.Date >= effectiveFrom));
-        if (overlap)
-            return Conflict(new { message = "An active rate already overlaps this effective period for the selected Variety Type. Close the previous rate first." });
-
-        var rate = new RateMaster
+        // A rate is historical financial data.  A change must create a new period, not mutate a
+        // previous amount.  For a revision beginning today/future, close the currently-open
+        // period on the preceding day atomically and insert the replacement period.
+        RateMaster? rate = null;
+        List<RateMaster> closed = [];
+        try
         {
-            VarietyTypeId = req.VarietyTypeId,
-            Rate = WeightCalculator.R2(req.Rate),
-            EffectiveFrom = effectiveFrom,
-            EffectiveTo = effectiveTo,
-            CreatedBy = _current.UserId
-        };
-        _db.Rates.Add(rate);
-        await _db.SaveChangesAsync();
-        await _audit.LogAsync("RateModification", "Rate", "RateMaster", rate.Id.ToString(), newValue: rate);
+            await _db.ExecuteInTransactionAsync(async () =>
+            {
+                var conflicts = await _db.Rates.Where(r => r.VarietyTypeId == req.VarietyTypeId && !r.IsDeleted && r.Status
+                        && r.EffectiveFrom.Date <= (effectiveTo ?? DateTime.MaxValue.Date)
+                        && (r.EffectiveTo == null || r.EffectiveTo.Value.Date >= effectiveFrom))
+                    .OrderBy(r => r.EffectiveFrom).ToListAsync();
+
+                // Do not silently rewrite history or a separately scheduled future rate.
+                if (conflicts.Any(r => r.EffectiveFrom.Date >= effectiveFrom))
+                    throw new RatePeriodException("A rate already starts on or after this Effective From date. Choose a later date or close that scheduled period first.");
+
+                foreach (var previous in conflicts)
+                {
+                    previous.EffectiveTo = effectiveFrom.AddDays(-1);
+                    previous.UpdatedAt = DateTime.UtcNow;
+                    previous.UpdatedBy = _current.UserId;
+                    closed.Add(previous);
+                }
+
+                rate = new RateMaster
+                {
+                    VarietyTypeId = req.VarietyTypeId,
+                    Rate = WeightCalculator.R2(req.Rate),
+                    EffectiveFrom = effectiveFrom,
+                    EffectiveTo = effectiveTo,
+                    CreatedBy = _current.UserId
+                };
+                _db.Rates.Add(rate);
+                await _db.SaveChangesAsync();
+            });
+        }
+        catch (RatePeriodException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+
+        foreach (var previous in closed)
+            await _audit.LogAsync("RatePeriodClosed", "Rate", "RateMaster", previous.Id.ToString(),
+                newValue: new { previous.EffectiveTo, reason = $"Revised by rate {rate!.Id}" });
+        await _audit.LogAsync("RatePeriodCreated", "Rate", "RateMaster", rate!.Id.ToString(), newValue: rate);
         return Ok(new { message = $"Rate {rate.Rate:F2} saved successfully (effective from {rate.EffectiveFrom:dd-MM-yyyy}).", id = rate.Id });
     }
 
@@ -148,4 +177,6 @@ public class RatesController : ControllerBase
     private IQueryable<Purchase> UnpaidQuery(int varietyTypeId) =>
         _db.Purchases.Where(p => p.VarietyTypeId == varietyTypeId && !p.IsDeleted
             && p.PaymentFlag == "N" && p.LockStatus == "UNLOCKED" && p.GrossTareStatus != "CANCELLED");
+
+    private sealed class RatePeriodException(string message) : Exception(message);
 }

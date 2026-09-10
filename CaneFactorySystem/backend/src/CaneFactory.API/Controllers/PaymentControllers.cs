@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
+using System.Security.Cryptography;
 
 namespace CaneFactory.API.Controllers;
 
@@ -71,14 +72,17 @@ public class PaymentController : ControllerBase
     private async Task<object?> AutoPrintAsync(int paymentId)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
-        if (cfg == null || !cfg.AutoPrint || cfg.PaymentCopies <= 0) return null;
+        if (cfg == null) return null;
         return new
         {
             printerType = cfg.PrinterType,
             printerName = cfg.PrinterName,
             copies = cfg.PaymentCopies,
             language = cfg.Language,
-            documentUrl = $"/api/print/payment/{paymentId}?format=final"
+            shouldAutoPrint = cfg.AutoPrint && cfg.PaymentCopies > 0,
+            // When physical printing is disabled, always return an A4 PDF URL for the operator.
+            documentUrl = $"/api/print/payment/{paymentId}?format=final" +
+                (cfg.AutoPrint && cfg.PaymentCopies > 0 ? "" : "&target=A4")
         };
     }
 
@@ -91,8 +95,9 @@ public class PaymentController : ControllerBase
         if (mode == "SINGLE") return q.Where(p => p.Id == purchaseId!.Value);
         if (mode is "DATE_RANGE" or "FARMER")
         {
-            if (from.HasValue) q = q.Where(p => p.TareDateTime >= from);
-            if (to.HasValue) q = q.Where(p => p.TareDateTime <= to);
+            if (from.HasValue) q = q.Where(p => p.TareDateTime >= from.Value.Date);
+            // Use an exclusive next-day boundary: SQL datetime values later on To Date must be included.
+            if (to.HasValue) q = q.Where(p => p.TareDateTime < to.Value.Date.AddDays(1));
         }
         return q;
     }
@@ -103,7 +108,11 @@ public class PaymentController : ControllerBase
     {
         if (Deny("View") is { } d) return d;
         var q = await ScopedQueryAsync();
-        if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(p => p.GrowerCode == growerCode.Trim());
+        if (!string.IsNullOrWhiteSpace(growerCode))
+        {
+            var search = growerCode.Trim();
+            q = q.Where(p => p.GrowerCode.Contains(search) || p.Grower.GrowerName.Contains(search));
+        }
         if (!string.IsNullOrWhiteSpace(status)) q = q.Where(p => p.PaymentStatus == status);
         if (adviceNumber.HasValue) q = q.Where(p => p.AdviceNumber == adviceNumber);
         var total = await q.CountAsync();
@@ -145,7 +154,7 @@ public class PaymentController : ControllerBase
     /// total amount, and estimated loan deduction/net-payable a POST with the same criteria would
     /// produce. Lets the Flutter UI show the operator a confirmation screen first.</summary>
     [HttpGet("eligible-purchases")]
-    public async Task<IActionResult> EligiblePurchases([FromQuery] string selectionMode, [FromQuery] string growerCode,
+    public async Task<IActionResult> EligiblePurchases([FromQuery] string selectionMode, [FromQuery] string? growerCode,
         [FromQuery] int? purchaseId, [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate)
     {
         if (Deny("View") is { } d) return d;
@@ -176,6 +185,7 @@ public class PaymentController : ControllerBase
             .Select(p => new { purchaseId = p.Id, p.VehicleNumber, p.FinalWeightQuintal, p.Rate, p.PurchaseAmount, p.TareDateTime })
             .ToListAsync();
         var totalPurchaseAmount = WeightCalculator.R2(eligible.Sum(p => p.PurchaseAmount ?? 0));
+        var totalFinalWeight = WeightCalculator.R2(eligible.Sum(p => p.FinalWeightQuintal ?? 0));
         var outstandingLoans = await _db.Loans.Where(l => l.GrowerCode == grower.GrowerCode && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
             .OrderBy(l => l.IssueDate)
             .Select(l => new { loanId = l.Id, l.OutstandingAmount }).ToListAsync();
@@ -184,6 +194,8 @@ public class PaymentController : ControllerBase
         {
             growerCode = grower.GrowerCode,
             eligiblePurchases = eligible,
+            purchaseCount = eligible.Count,
+            totalFinalWeight,
             totalPurchaseAmount,
             outstandingLoans,
             totalOutstandingLoan = outstandingLoans.Sum(l => l.OutstandingAmount),
@@ -352,9 +364,18 @@ public class PaymentController : ControllerBase
         }
 
         if (!string.IsNullOrWhiteSpace(growerCode))
-            return includeVillage
-                ? await _db.Growers.Include(g => g.Village).FirstOrDefaultAsync(g => g.GrowerCode == growerCode.Trim() && !g.IsDeleted)
-                : await _db.Growers.FirstOrDefaultAsync(g => g.GrowerCode == growerCode.Trim() && !g.IsDeleted);
+        {
+            var text = growerCode.Trim();
+            var matches = await _db.Growers.Where(g => !g.IsDeleted
+                    && (g.GrowerCode == text || g.GrowerName.Contains(text) || g.Mobile == text))
+                .OrderBy(g => g.GrowerCode).Take(2).ToListAsync();
+            if (matches.Count > 1)
+                throw new PaymentSelectionException("More than one grower matches this name. Enter the Grower Code or full mobile number.");
+            if (matches.Count == 0) return null;
+            if (!includeVillage) return matches[0];
+            return await _db.Growers.Include(g => g.Village)
+                .FirstOrDefaultAsync(g => g.Id == matches[0].Id && !g.IsDeleted);
+        }
 
         if (mode != "DATE_RANGE") return null;
         var candidates = _db.Purchases.AsNoTracking().Where(p => !p.IsDeleted && p.GrossTareStatus == "TARE_DONE"
@@ -463,6 +484,41 @@ public class PaymentController : ControllerBase
                 : $"Captured {okCount} of {results.Count} camera(s) for Cash Evidence.",
             results
         });
+    }
+
+    [HttpPost("{id:int}/images/upload")]
+    [RequestSizeLimit(10_000_000)]
+    public async Task<IActionResult> UploadImage(int id, IFormFile image, CancellationToken ct)
+    {
+        if (!_current.HasPermission("CashEvidence.Create"))
+            return StatusCode(403, new { message = "You do not have 'CashEvidence.Create' permission." });
+        if (image == null || image.Length == 0 || image.Length > 10_000_000)
+            return BadRequest(new { message = "Select an image up to 10 MB." });
+        var extension = Path.GetExtension(image.FileName).ToLowerInvariant();
+        if (extension is not (".jpg" or ".jpeg" or ".png"))
+            return BadRequest(new { message = "Only JPG, JPEG or PNG evidence images are allowed." });
+        var payment = await _db.Payments.Include(p => p.Season)
+            .FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
+        if (payment == null) return NotFound(new { message = "Payment not found." });
+        var setting = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot", ct);
+        var root = string.IsNullOrWhiteSpace(setting?.Value)
+            ? Path.Combine(Path.GetTempPath(), "CanePaymentData") : setting.Value;
+        var now = DateTime.Now;
+        var folder = Path.Combine(root, payment.Season?.SeasonName ?? "Default", "PaymentImages",
+            now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"PAY-{id}");
+        Directory.CreateDirectory(folder);
+        var imageName = $"CASH-UPLOAD-{now:HHmmssfff}-{Guid.NewGuid():N}{extension}";
+        var filePath = Path.Combine(folder, imageName);
+        await using (var output = System.IO.File.Create(filePath))
+            await image.CopyToAsync(output, ct);
+        var bytes = await System.IO.File.ReadAllBytesAsync(filePath, ct);
+        var record = new PaymentImage { PaymentId = id, CameraId = 0, ImageName = imageName, FilePath = filePath,
+            FileHash = Convert.ToHexString(SHA256.HashData(bytes)), CapturedAt = DateTime.UtcNow, CapturedBy = _current.UserId };
+        _db.PaymentImages.Add(record);
+        await _db.SaveChangesAsync(ct);
+        await _audit.LogAsync("ImageUploaded", "CashEvidence", "Payment", id.ToString(), newValue: new { record.Id, imageName });
+        return Ok(new { message = "Cash evidence uploaded.", imageId = record.Id, imageName });
     }
 
     private bool IsDuplicateRequest(string? key, out IActionResult? result)

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../core/api_client.dart';
 import '../../widgets/master_crud.dart';
 import '../loans/loan_screens.dart';
@@ -150,22 +151,28 @@ class _RateScreenState extends State<RateScreen> {
     if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _newRate() async {
-    int? typeId;
-    final rateCtl = TextEditingController();
+  String _date(dynamic value) {
+    if (value == null) return 'Open';
+    return DateFormat('dd-MM-yyyy').format(DateTime.parse(value.toString()).toLocal());
+  }
+
+  Future<void> _newRate({Map<String, dynamic>? revisionOf}) async {
+    int? typeId = revisionOf?['varietyTypeId'] as int?;
+    final rateCtl = TextEditingController(
+        text: revisionOf == null ? '' : '${revisionOf['rate']}');
     DateTime from = DateTime.now();
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setD) => AlertDialog(
-          title: const Text('New Rate Period'),
+          title: Text(revisionOf == null ? 'New Rate Period' : 'Revise Rate Period'),
           content: SizedBox(
             width: 400,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               DropdownButtonFormField<int>(
                 decoration: const InputDecoration(labelText: 'Variety Type', hintText: 'Select Variety Type'),
                 items: [for (final v in _varietyTypes) DropdownMenuItem(value: v['id'] as int, child: Text(v['varietyTypeName']))],
-                onChanged: (v) => typeId = v,
+                onChanged: revisionOf == null ? (v) => typeId = v : null,
               ),
               const SizedBox(height: 12),
               TextField(
@@ -174,7 +181,7 @@ class _RateScreenState extends State<RateScreen> {
                   decoration: const InputDecoration(labelText: 'Rate (per Quintal)', hintText: 'Example: 375.00')),
               const SizedBox(height: 12),
               Row(children: [
-                Expanded(child: Text('Effective From: ${from.toString().substring(0, 10)}')),
+                Expanded(child: Text('Effective From: ${DateFormat('dd-MM-yyyy').format(from)}')),
                 TextButton(
                     onPressed: () async {
                       final d = await showDatePicker(
@@ -187,7 +194,7 @@ class _RateScreenState extends State<RateScreen> {
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(revisionOf == null ? 'Save' : 'Save Revision')),
           ],
         ),
       ),
@@ -221,22 +228,31 @@ class _RateScreenState extends State<RateScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : SingleChildScrollView(
-                    child: DataTable(columns: const [
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(columns: const [
                       DataColumn(label: Text('ID')),
                       DataColumn(label: Text('Variety Type')),
                       DataColumn(label: Text('Rate')),
                       DataColumn(label: Text('Effective From')),
                       DataColumn(label: Text('Effective To')),
+                      DataColumn(label: Text('Action')),
                     ], rows: [
                       for (final r in _items)
                         DataRow(cells: [
                           DataCell(Text('${r['id']}')),
                           DataCell(Text('${r['varietyTypeName']}')),
                           DataCell(Text((r['rate'] as num).toStringAsFixed(2))),
-                          DataCell(Text('${r['effectiveFrom']}'.substring(0, 10))),
-                          DataCell(Text(r['effectiveTo'] == null ? 'Open' : '${r['effectiveTo']}'.substring(0, 10))),
+                          DataCell(Text(_date(r['effectiveFrom']))),
+                          DataCell(Text(_date(r['effectiveTo']))),
+                          DataCell(TextButton.icon(
+                            onPressed: () => _newRate(revisionOf: Map<String, dynamic>.from(r)),
+                            icon: const Icon(Icons.edit_calendar_outlined, size: 16),
+                            label: const Text('Revise'),
+                          )),
                         ]),
                     ]),
+                    ),
                   ),
           ),
         ),

@@ -11,7 +11,9 @@ public class PurchaseReportRow
     public string VarietyName { get; set; } = string.Empty;
     public decimal GrossWeightQuintal { get; set; }
     public DateTime GrossDateTime { get; set; }
+    public DateTime? PurchaseDate { get; set; }
     public decimal? TareWeightQuintal { get; set; }
+    public decimal? CuttingWeightQuintal { get; set; }
     public decimal? NetWeightQuintal { get; set; }
     public decimal? FinalWeightQuintal { get; set; }
     public decimal Rate { get; set; }

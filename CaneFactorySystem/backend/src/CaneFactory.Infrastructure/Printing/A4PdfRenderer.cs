@@ -33,25 +33,7 @@ public class A4PdfRenderer : IPrintRenderer
 
                 page.Header().Column(col =>
                 {
-                    col.Item().Row(row =>
-                    {
-                        row.ConstantItem(70).Height(60).Element(e =>
-                        {
-                            if (logo != null) e.Image(logo).FitArea();
-                            else e.Border(1).BorderColor(Colors.Grey.Medium).AlignCenter().AlignMiddle()
-                                  .Text("LOGO").FontSize(8).FontColor(Colors.Grey.Medium);
-                        });
-                        row.RelativeItem().Column(c =>
-                        {
-                            c.Item().AlignCenter().Text(doc.CompanyName).FontSize(16).Bold().FontColor(Colors.Blue.Darken2);
-                            if (!string.IsNullOrWhiteSpace(doc.Address))
-                                c.Item().AlignCenter().Text(doc.Address).FontSize(9);
-                        });
-                        row.ConstantItem(70).Height(70).Element(e =>
-                        {
-                            if (qr != null) e.AlignRight().Image(qr).FitArea();
-                        });
-                    });
+                    col.Item().Element(e => CompanyPrintHeader.Compose(e, doc.CompanyName, doc.Address, logo, qr));
                     col.Item().PaddingTop(6).LineHorizontal(1).LineColor(Colors.Blue.Darken2);
                     col.Item().PaddingTop(4).Row(row =>
                     {
