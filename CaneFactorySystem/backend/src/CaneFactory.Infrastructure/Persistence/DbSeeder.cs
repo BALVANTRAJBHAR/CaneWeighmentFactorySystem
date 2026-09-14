@@ -52,6 +52,7 @@ public static class DbSeeder
         admin.AddRange(Codes(new[] { "Weighment" }, "View", "Create", "Edit", "Print"));
         admin.AddRange(Codes(new[] { "SalePurchase" }, "View", "Create", "Edit", "Cancel", "Export", "Print"));
         admin.AddRange(Codes(new[] { "Loan", "LoanRecovery", "Payment" }, "View", "Export", "Print"));
+        admin.AddRange(Codes(new[] { "Expense" }, "View", "Create", "Edit", "Delete", "Export", "Print"));
         admin.AddRange(Codes(new[] { "Report" }, "View", "Export", "Print"));
         admin.AddRange(Codes(new[] { "Camera" }, "ViewCamera"));
         admin.AddRange(Codes(new[] { "Image", "CashEvidence" }, "View"));
@@ -62,12 +63,14 @@ public static class DbSeeder
 
         var subAdmin = Codes(Modules.Masters, "View", "Create", "Edit");
         subAdmin.AddRange(Codes(new[] { "Purchase", "Weighment", "Report" }, "View"));
+        subAdmin.AddRange(Codes(new[] { "Expense" }, "View", "Create", "Edit", "Delete"));
         subAdmin.AddRange(new[] { "Report.Export", "Report.Print", "Dashboard.View", "Health.View", "UserGuide.View", "Camera.ViewCamera", "Backup.View" });
 
         var accountant = Codes(new[] { "Loan", "LoanRecovery" }, "View", "Create", "Cancel", "Reverse", "Export", "Print");
         accountant.AddRange(Codes(new[] { "Payment" }, "View", "Create", "Pay", "Cancel", "Reverse", "Export", "Print"));
         accountant.AddRange(Codes(new[] { "CashEvidence" }, "View", "Create"));
         accountant.AddRange(Codes(new[] { "Report" }, "View", "Export", "Print"));
+        accountant.AddRange(Codes(new[] { "Expense" }, "View", "Create", "Edit", "Delete", "Export", "Print"));
         accountant.AddRange(new[] { "Purchase.View", "Grower.View", "Village.View", "Bank.View", "LoanType.View",
             "Dashboard.View", "Health.View", "UserGuide.View" });
 
@@ -75,6 +78,7 @@ public static class DbSeeder
         {
             "Weighment.View", "Weighment.Create", "Weighment.Edit", "Weighment.Print",
             "Purchase.View", "Purchase.Create", "Purchase.Edit",
+            "Expense.View", "Expense.Create", "Expense.Edit",
             "Grower.View", "Village.View", "Zone.View", "Vehicle.View", "Vehicle.Create",
             "VarietyType.View", "Variety.View", "Rate.View",
             "Report.View", "Report.Print", "Camera.ViewCamera", "Image.Create",
@@ -257,6 +261,11 @@ public static class DbSeeder
                 new SoundMessage { EventCode = "WEIGHMENT_COMPLETED", LanguageCode = "en", MessageText = "Weighment completed, please move the vehicle off the platform." });
         }
 
+        if (!await db.SoundMessages.AnyAsync(m => m.EventCode == "IMAGE_CAPTURED" && m.LanguageCode == "hi"))
+            db.SoundMessages.Add(new SoundMessage { EventCode = "IMAGE_CAPTURED", LanguageCode = "hi", MessageText = "तौल की तस्वीरें सुरक्षित हो गई हैं।" });
+        if (!await db.SoundMessages.AnyAsync(m => m.EventCode == "IMAGE_CAPTURED" && m.LanguageCode == "en"))
+            db.SoundMessages.Add(new SoundMessage { EventCode = "IMAGE_CAPTURED", LanguageCode = "en", MessageText = "Weighment images have been captured and saved." });
+
         if (!await db.PrintConfigs.AnyAsync())
             db.PrintConfigs.Add(new PrintConfig { PrinterName = "TVS MSP 270 Classic Plus" });
 
@@ -298,7 +307,9 @@ public static class DbSeeder
         {
             ["CameraSystemEnabled"] = "true",
             ["ImageCaptureEnabled"] = "true",
-            ["ImageStorageRoot"] = @"D:\CanePaymentData",
+            // Blank means the capture service selects the ready C:/D:/E: drive
+            // with the most free space and creates WeighmentImage there.
+            ["ImageStorageRoot"] = "",
             ["Health.Cpu.Warning"] = "70",
             ["Health.Cpu.Critical"] = "90",
             ["Health.Ram.Warning"] = "70",

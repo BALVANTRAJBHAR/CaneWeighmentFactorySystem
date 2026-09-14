@@ -6,14 +6,19 @@ import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
 
-/// Credential-safe, periodically refreshed real camera frames.  Providers remain
-/// server-side; the app receives only an authenticated JPEG response.
+/// Credential-safe continuous camera preview. The backend owns RTSP and ffmpeg;
+/// Flutter receives one multipart MJPEG stream per camera and renders frames as
+/// they arrive. No timer or HTTP snapshot polling is used here.
 class CameraLivePreviewPanel extends StatefulWidget {
   const CameraLivePreviewPanel(
-      {super.key, required this.cameras, this.compact = false});
+      {super.key,
+      required this.cameras,
+      this.compact = false,
+      this.squareCards = false});
 
   final List cameras;
   final bool compact;
+  final bool squareCards;
 
   @override
   State<CameraLivePreviewPanel> createState() => _CameraLivePreviewPanelState();
@@ -22,81 +27,170 @@ class CameraLivePreviewPanel extends StatefulWidget {
 class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
   final Map<int, Uint8List> _frames = {};
   final Map<int, String> _errors = {};
-  final Set<int> _loading = {};
-  Timer? _timer;
+  final Map<int, CancelToken> _cancelTokens = {};
+  final Set<int> _active = {};
 
   @override
   void initState() {
     super.initState();
-    _refresh();
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _refresh());
+    _startStreams();
   }
 
   @override
   void didUpdateWidget(covariant CameraLivePreviewPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.cameras != widget.cameras) _refresh();
+    _startStreams();
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    for (final token in _cancelTokens.values) {
+      token.cancel('Live preview closed');
+    }
+    _cancelTokens.clear();
     super.dispose();
   }
 
-  Future<void> _refresh() async {
-    await Future.wait(
-        widget.cameras.take(6).map((camera) => _refreshOne(camera)));
-  }
-
-  Future<void> _refreshOne(dynamic camera) async {
-    final id = camera['id'] as int?;
-    if (id == null || _loading.contains(id)) return;
-    _loading.add(id);
-    try {
-      final response = await ApiClient.instance.dio.get(
-        '/api/config/cameras/$id/snapshot',
-        options: Options(
-            responseType: ResponseType.bytes,
-            validateStatus: (s) => s != null && s < 500),
-      );
-      if (!mounted) return;
-      if (response.statusCode == 200 && response.data is List<int>) {
-        setState(() {
-          _frames[id] = Uint8List.fromList(response.data as List<int>);
-          _errors.remove(id);
-        });
-      } else {
-        setState(() => _errors[id] = _message(response));
+  void _startStreams() {
+    for (final camera in widget.cameras.take(6)) {
+      final id = camera['id'] as int?;
+      if (id != null && _active.add(id)) {
+        unawaited(_runStream(id, camera));
       }
-    } catch (_) {
-      if (mounted) setState(() => _errors[id] = 'Connection Error');
-    } finally {
-      _loading.remove(id);
     }
   }
 
-  String _message(Response response) {
-    if (response.statusCode == 409 || response.statusCode == 404)
-      return 'Camera Offline';
+  Future<void> _runStream(int id, dynamic camera) async {
+    final cancelToken = CancelToken();
+    _cancelTokens[id] = cancelToken;
+    var backoffSeconds = 1;
+
+    try {
+      while (mounted && !cancelToken.isCancelled) {
+        try {
+          _setError(id, _frames[id] == null ? 'Connecting…' : 'Reconnecting…');
+          final response = await ApiClient.instance.dio.get<ResponseBody>(
+            '/api/config/cameras/$id/live',
+            cancelToken: cancelToken,
+            options: Options(
+              responseType: ResponseType.stream,
+              validateStatus: (s) => s != null && s < 500,
+            ),
+          );
+
+          if (response.statusCode != 200 || response.data == null) {
+            throw _StreamStatusException(_message(response.statusCode));
+          }
+
+          backoffSeconds = 1;
+          _setError(id, null);
+          await _consumeMjpeg(id, response.data!.stream, cancelToken);
+          if (cancelToken.isCancelled || !mounted) break;
+          throw const _StreamStatusException('Stream disconnected');
+        } on DioException catch (error) {
+          if (cancelToken.isCancelled || !mounted) break;
+          _setError(id, _message(error.response?.statusCode));
+        } on _StreamStatusException catch (error) {
+          if (cancelToken.isCancelled || !mounted) break;
+          _setError(id, error.message);
+        } catch (_) {
+          if (cancelToken.isCancelled || !mounted) break;
+          _setError(id, 'Connection Error');
+        }
+
+        if (!mounted || cancelToken.isCancelled) break;
+        await Future<void>.delayed(Duration(seconds: backoffSeconds));
+        backoffSeconds = (backoffSeconds * 2).clamp(1, 10);
+      }
+    } finally {
+      _cancelTokens.remove(id);
+      _active.remove(id);
+    }
+  }
+
+  Future<void> _consumeMjpeg(
+      int id, Stream<Uint8List> chunks, CancelToken cancelToken) async {
+    final buffer = <int>[];
+    await for (final chunk in chunks) {
+      if (cancelToken.isCancelled) return;
+      buffer.addAll(chunk);
+
+      Uint8List? latestFrame;
+
+      while (true) {
+        final start = _findMarker(buffer, 0, 0xff, 0xd8);
+        if (start < 0) {
+          if (buffer.length > 1) {
+            buffer.removeRange(0, buffer.length - 1);
+          }
+          break;
+        }
+        if (start > 0) buffer.removeRange(0, start);
+        final end = _findMarker(buffer, 2, 0xff, 0xd9);
+        if (end < 0) break;
+
+        latestFrame = Uint8List.fromList(buffer.sublist(0, end + 2));
+        buffer.removeRange(0, end + 2);
+      }
+
+      // If the network delivered several frames in one chunk, render only
+      // the newest one. This prevents a slow UI decode from displaying a
+      // backlog several frames behind the camera.
+      if (latestFrame != null && latestFrame.length > 100 && mounted) {
+        setState(() {
+          _frames[id] = latestFrame!;
+          _errors.remove(id);
+        });
+      }
+    }
+  }
+
+  int _findMarker(List<int> bytes, int from, int first, int second) {
+    for (var i = from; i + 1 < bytes.length; i++) {
+      if (bytes[i] == first && bytes[i + 1] == second) return i;
+    }
+    return -1;
+  }
+
+  void _setError(int id, String? error) {
+    if (!mounted) return;
+    setState(() {
+      if (error == null) {
+        _errors.remove(id);
+      } else {
+        _errors[id] = error;
+      }
+    });
+  }
+
+  String _message(int? statusCode) {
+    if (statusCode == 401 || statusCode == 403) return 'Authentication Failed';
+    if (statusCode == 404 || statusCode == 409) return 'Camera Offline';
     return 'Connection Error';
   }
 
   @override
   Widget build(BuildContext context) {
-    if (widget.cameras.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    if (widget.cameras.isEmpty) return const SizedBox.shrink();
     return Card(
       clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.all(8),
         child: LayoutBuilder(builder: (context, constraints) {
+          final configured = widget.cameras.length.clamp(1, 6);
           final columns = constraints.maxWidth < 330
               ? 1
-              : constraints.maxWidth < 700
-                  ? 2
-                  : 3;
+              : configured == 1
+                  ? 1
+                  : configured <= 4
+                      ? 2
+                      : 3;
+          final cardWidth = columns == 1
+              ? constraints.maxWidth
+              : (constraints.maxWidth - ((columns - 1) * 8)) / columns;
+          final cardExtent = widget.squareCards
+              ? cardWidth + 52
+              : (widget.compact ? 205.0 : 230.0);
           return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -112,7 +206,7 @@ class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
                         crossAxisCount: columns,
                         crossAxisSpacing: 8,
                         mainAxisSpacing: 8,
-                        childAspectRatio: widget.compact ? 1.55 : 1.7),
+                        mainAxisExtent: cardExtent),
                     itemBuilder: (_, index) =>
                         _cameraCard(widget.cameras[index]),
                   ),
@@ -179,4 +273,9 @@ class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
       ]),
     );
   }
+}
+
+class _StreamStatusException implements Exception {
+  const _StreamStatusException(this.message);
+  final String message;
 }

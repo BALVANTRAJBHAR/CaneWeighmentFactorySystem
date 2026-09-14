@@ -186,6 +186,15 @@ public class CameraCaptureService : ICameraCaptureService
         var provider = ResolveProvider(cam.Protocol);
         if (provider == null) { result.Error = $"No capture provider registered for protocol '{cam.Protocol}'."; return result; }
         var password = cam.PasswordEncrypted != null ? _protector.Unprotect(cam.PasswordEncrypted) : null;
+        // Live preview is a frequent snapshot request, so use the camera's
+        // low-latency sub-stream. Purchase/payment evidence capture continues
+        // to use the configured Main stream through the other methods above.
+        if (cam.Protocol.Equals("RTSP", StringComparison.OrdinalIgnoreCase)
+            && cam.RtspUrl == null
+            && cam.Vendor is "CPPlus" or "Dahua")
+        {
+            cam.StreamType = "Sub";
+        }
         var (ok, bytes, error) = await provider.CaptureAsync(cam, password, ct);
         result.Success = ok;
         result.Error = error;
@@ -199,26 +208,20 @@ public class CameraCaptureService : ICameraCaptureService
         return s == null || s.Value.Trim().ToUpperInvariant() is "TRUE" or "ON" or "1";
     }
 
-    /// <summary>Layout: {Root}/{Season}/Images/YYYY/MM/DD/PUR-{id}/{STAGE}-CAM{NN}-{seq}.jpg (never a DB BLOB).</summary>
+    /// <summary>Layout: {Root}/WeighmentImage/Cane Weighment/YYYY/MM/DD/PUR-{id}/{STAGE}-yyyyMMdd-HHmmssfff-CAM{NN}-{seq}.jpg.</summary>
     private async Task<(int imageId, string imageName)> SaveImageAsync(byte[] bytes, Purchase purchase, string stage,
         CameraConfig cam, int? capturedByUserId, CancellationToken ct)
     {
-        var root = _config["Storage:ImageRoot"];
-        if (string.IsNullOrWhiteSpace(root))
-        {
-            var setting = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot", ct);
-            root = string.IsNullOrWhiteSpace(setting?.Value) ? Path.Combine(Path.GetTempPath(), "CanePaymentData") : setting!.Value;
-        }
+        var root = await ResolveWeighmentImageRootAsync(ct);
         var stageTag = stage.ToUpperInvariant();
-        var seasonFolder = SanitizeFolder(purchase.Season?.SeasonName ?? "Default");
         var now = DateTime.Now;
-        var folder = Path.Combine(root, seasonFolder, "Images", now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"PUR-{purchase.Id}");
+        var folder = Path.Combine(root, "Cane Weighment", now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"PUR-{purchase.Id}");
         Directory.CreateDirectory(folder);
 
         var existingCount = await _db.PurchaseImages.CountAsync(i =>
             i.PurchaseId == purchase.Id && i.CameraId == cam.Id && i.CaptureStage == stageTag, ct);
         var seq = existingCount + 1;
-        var fileName = $"{stageTag}-CAM{cam.CameraNumber:D2}-{seq:D2}.jpg";
+        var fileName = $"{stageTag}-{now:yyyyMMdd-HHmmssfff}-CAM{cam.CameraNumber:D2}-{seq:D2}.jpg";
         var fullPath = Path.Combine(folder, fileName);
         await File.WriteAllBytesAsync(fullPath, bytes, ct);
         var hash = Convert.ToHexString(SHA256.HashData(bytes));
@@ -244,16 +247,11 @@ public class CameraCaptureService : ICameraCaptureService
         return (image.Id, fileName);
     }
 
-    /// <summary>Layout: {Root}/{Season}/PaymentImages/YYYY/MM/DD/PAY-{id}/CASH-CAM{NN}-{seq}.jpg (never a DB BLOB).</summary>
+    /// <summary>Payment evidence keeps its existing folder contract.</summary>
     private async Task<(int imageId, string imageName)> SavePaymentImageAsync(byte[] bytes, Payment payment,
         CameraConfig cam, int? capturedByUserId, CancellationToken ct)
     {
-        var root = _config["Storage:ImageRoot"];
-        if (string.IsNullOrWhiteSpace(root))
-        {
-            var setting = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot", ct);
-            root = string.IsNullOrWhiteSpace(setting?.Value) ? Path.Combine(Path.GetTempPath(), "CanePaymentData") : setting!.Value;
-        }
+        var root = await ResolveConfiguredImageRootAsync(ct);
         var seasonFolder = SanitizeFolder(payment.Season?.SeasonName ?? "Default");
         var now = DateTime.Now;
         var folder = Path.Combine(root, seasonFolder, "PaymentImages", now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"PAY-{payment.Id}");
@@ -287,23 +285,44 @@ public class CameraCaptureService : ICameraCaptureService
     private async Task<(int imageId, string imageName)> SaveSalePurchaseImageAsync(byte[] bytes, int salePurchaseId, string stage,
         CameraConfig cam, int? capturedByUserId, CancellationToken ct)
     {
-        var root = _config["Storage:ImageRoot"];
-        if (string.IsNullOrWhiteSpace(root))
-        {
-            var setting = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot", ct);
-            root = string.IsNullOrWhiteSpace(setting?.Value) ? Path.Combine(Path.GetTempPath(), "CanePaymentData") : setting!.Value;
-        }
+        var root = await ResolveWeighmentImageRootAsync(ct);
         var now = DateTime.Now; var stageTag = stage.ToUpperInvariant();
-        var folder = Path.Combine(root, "SalePurchaseImages", now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"SP-{salePurchaseId}");
+        var folder = Path.Combine(root, "SalePurchase Weighment", now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"SP-{salePurchaseId}");
         Directory.CreateDirectory(folder);
         var seq = await _db.SalePurchaseImages.CountAsync(i => i.SalePurchaseId == salePurchaseId && i.CameraId == cam.Id && i.CaptureStage == stageTag, ct) + 1;
-        var fileName = $"{stageTag}-CAM{cam.CameraNumber:D2}-{seq:D2}.jpg"; var fullPath = Path.Combine(folder, fileName);
+        var fileName = $"{stageTag}-{now:yyyyMMdd-HHmmssfff}-CAM{cam.CameraNumber:D2}-{seq:D2}.jpg"; var fullPath = Path.Combine(folder, fileName);
         await File.WriteAllBytesAsync(fullPath, bytes, ct);
         var image = new SalePurchaseImage { SalePurchaseId = salePurchaseId, CameraId = cam.Id, CaptureStage = stageTag,
             ImageName = fileName, FilePath = fullPath, FileHash = Convert.ToHexString(SHA256.HashData(bytes)), CapturedAt = DateTime.UtcNow, CapturedBy = capturedByUserId };
         _db.SalePurchaseImages.Add(image); await _db.SaveChangesAsync(ct);
         await _audit.LogAsync("ImageCaptured", "Image", "SalePurchaseImage", image.Id.ToString(), newValue: new { salePurchaseId, cam.CameraNumber, stageTag, fileName });
         return (image.Id, fileName);
+    }
+
+    private async Task<string> ResolveConfiguredImageRootAsync(CancellationToken ct)
+    {
+        var configured = _config["Storage:ImageRoot"];
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            var setting = await _db.SystemSettings.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot", ct);
+            configured = setting?.Value;
+        }
+        return string.IsNullOrWhiteSpace(configured)
+            ? WeighmentImagePathResolver.DetectDefaultDrive()
+            : WeighmentImagePathResolver.NormalizeConfiguredPath(configured);
+    }
+
+    private async Task<string> ResolveWeighmentImageRootAsync(CancellationToken ct)
+    {
+        var configured = _config["Storage:ImageRoot"];
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            var setting = await _db.SystemSettings.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot", ct);
+            configured = setting?.Value;
+        }
+        return WeighmentImagePathResolver.ResolveRoot(configured);
     }
 
     private static string SanitizeFolder(string name)

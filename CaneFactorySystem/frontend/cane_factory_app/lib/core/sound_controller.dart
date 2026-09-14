@@ -7,7 +7,13 @@ import '../core/api_client.dart';
 /// WEIGHING_IN_PROGRESS -> WEIGHMENT_COMPLETED.
 /// Uses local/offline system TTS. Voice never overlaps and never blocks
 /// live weight, camera, save or print operations.
-enum SoundState { noVehicle, belowMinimum, aboveMinimumWaiting, weighingInProgress, completed }
+enum SoundState {
+  noVehicle,
+  belowMinimum,
+  aboveMinimumWaiting,
+  weighingInProgress,
+  completed
+}
 
 class SoundController {
   final FlutterTts _tts = FlutterTts();
@@ -27,8 +33,11 @@ class SoundController {
   int _playCount = 0;
   bool _speaking = false;
   String? _activeEvent;
+  Future<void>? _configFuture;
 
-  Future<void> loadConfig() async {
+  Future<void> loadConfig() => _configFuture ??= _loadConfig();
+
+  Future<void> _loadConfig() async {
     try {
       final res = await ApiClient.instance.dio.get('/api/weighment/rules');
       if (res.statusCode == 200) {
@@ -43,7 +52,8 @@ class SoundController {
         }
         final rules = res.data['weightRules'];
         if (rules != null) {
-          minimumWeightQuintal = ((rules['minimumWeightQuintal'] ?? 10) as num).toDouble();
+          minimumWeightQuintal =
+              ((rules['minimumWeightQuintal'] ?? 10) as num).toDouble();
           rulesEnabled = rules['enabled'] == true;
         }
         for (final m in (res.data['soundMessages'] as List? ?? [])) {
@@ -70,11 +80,25 @@ class SoundController {
     }
   }
 
-  void onWeighmentSaved() {
+  Future<void> onWeighmentSaved() async {
+    await loadConfig();
     _setState(SoundState.completed);
     Timer(const Duration(seconds: 8), () {
       if (state == SoundState.completed) _setState(SoundState.noVehicle);
     });
+  }
+
+  /// Plays a configured one-time event after an asynchronous operation such as
+  /// camera evidence capture has actually completed.
+  Future<void> playConfiguredEvent(String event) async {
+    await loadConfig();
+    if (!enabled) return;
+    for (var i = 0; i < 50 && _speaking; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    _stopRepeat();
+    _speaking = false;
+    _startEvent(event, overrideMode: repeatMode == 'OFF' ? 'OFF' : 'ONCE');
   }
 
   /// Changing Gross/Tare mode or leaving the screen stops any repeating message.
@@ -97,7 +121,8 @@ class SoundController {
         _startEvent('WEIGHING_ACTIVE');
         break;
       case SoundState.completed:
-        _startEvent('WEIGHMENT_COMPLETED', overrideMode: repeatMode == 'OFF' ? 'OFF' : 'ONCE');
+        _startEvent('WEIGHMENT_COMPLETED',
+            overrideMode: repeatMode == 'OFF' ? 'OFF' : 'ONCE');
         break;
       default:
         break;
@@ -112,7 +137,8 @@ class SoundController {
     _speakEvent(event);
     final maxPlays = mode == 'ONCE' ? 1 : (mode == 'TWICE' ? 2 : -1);
     if (maxPlays == 1) return;
-    _repeatTimer = Timer.periodic(Duration(seconds: repeatIntervalSeconds), (t) {
+    _repeatTimer =
+        Timer.periodic(Duration(seconds: repeatIntervalSeconds), (t) {
       if (maxPlays > 0 && _playCount >= maxPlays) {
         t.cancel();
         return;

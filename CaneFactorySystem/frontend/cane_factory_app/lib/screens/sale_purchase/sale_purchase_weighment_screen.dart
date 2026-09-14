@@ -120,6 +120,24 @@ class _SalePurchaseWeighmentScreenState
     if (mounted && !outcome.success) _toast(outcome.message, error: true);
   }
 
+  Future<void> _waitForCapturedImages(int salePurchaseId, String stage) async {
+    for (var attempt = 0; attempt < 24; attempt++) {
+      if (attempt > 0) await Future.delayed(const Duration(milliseconds: 250));
+      try {
+        final res = await ApiClient.instance.dio
+            .get('/api/sale-purchase-weighment/$salePurchaseId/images');
+        if (res.statusCode == 200 && res.data is List) {
+          final hasStage =
+              (res.data as List).any((image) => image['captureStage'] == stage);
+          if (hasStage) {
+            await _sound.playConfiguredEvent('IMAGE_CAPTURED');
+            return;
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
   bool _validLive() {
     final l = context.read<LiveWeightProvider>().current;
     if (!l.deviceConnected || !l.readerRunning || !l.isLive) {
@@ -158,8 +176,10 @@ class _SalePurchaseWeighmentScreenState
       if (res.statusCode != 200)
         return _toast(ApiClient.errorMessage(res), error: true);
       _toast(res.data['message']);
-      _sound.onWeighmentSaved();
+      await _sound.onWeighmentSaved();
+      final salePurchaseId = res.data['salePurchaseId'] as int;
       await _print(res.data['autoPrint']);
+      await _waitForCapturedImages(salePurchaseId, 'TARE');
       setState(() {
         _itemId = null;
         _partyId = null;
@@ -199,8 +219,10 @@ class _SalePurchaseWeighmentScreenState
       if (res.statusCode != 200)
         return _toast(ApiClient.errorMessage(res), error: true);
       _toast(res.data['message']);
-      _sound.onWeighmentSaved();
+      await _sound.onWeighmentSaved();
+      final salePurchaseId = res.data['salePurchaseId'] as int;
       await _print(res.data['autoPrint']);
+      await _waitForCapturedImages(salePurchaseId, 'GROSS');
       setState(() {
         _selected = null;
         _id.clear();
@@ -244,55 +266,69 @@ class _SalePurchaseWeighmentScreenState
         child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(children: [
-              Card(
-                  child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Wrap(
-                          spacing: 20,
-                          runSpacing: 8,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            SegmentedButton<bool>(
-                                segments: const [
-                                  ButtonSegment(
-                                      value: false, label: Text('TARE FIRST')),
-                                  ButtonSegment(
-                                      value: true, label: Text('GROSS'))
-                                ],
-                                selected: {
-                                  _gross
-                                },
-                                onSelectionChanged: (v) =>
-                                    setState(() => _gross = v.first)),
-                            Text('${live.weightQuintal.toStringAsFixed(2)} Qtl',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .headlineMedium
-                                    ?.copyWith(
-                                        fontWeight: FontWeight.bold,
-                                        color: live.isLive
-                                            ? Colors.green
-                                            : Colors.red)),
-                            Text(
-                                '${live.deviceConnected ? 'Connected' : 'Disconnected'} • ${live.readerState} • ${live.stable ? 'Stable' : 'Unstable'}'),
-                            if (live.lastReceivedAt != null)
-                              Text('Last: ${live.lastReceivedAt!.toLocal()}')
-                          ]))),
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Card(
+                    child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: SegmentedButton<bool>(
+                            segments: const [
+                              ButtonSegment(
+                                  value: false, label: Text('TARE FIRST')),
+                              ButtonSegment(value: true, label: Text('GROSS'))
+                            ],
+                            selected: {
+                              _gross
+                            },
+                            onSelectionChanged: (v) =>
+                                setState(() => _gross = v.first)))),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: Card(
+                        child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 18, vertical: 7),
+                            child: Row(children: [
+                              Text(
+                                  '${live.weightQuintal.toStringAsFixed(2)} Qtl',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineMedium
+                                      ?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                          color: live.isLive
+                                              ? Colors.green
+                                              : Colors.red)),
+                              const SizedBox(width: 18),
+                              Text(
+                                  '${live.deviceConnected ? 'Connected' : 'Disconnected'} • ${live.readerState} • ${live.stable ? 'Stable' : 'Unstable'}'),
+                              if (live.lastReceivedAt != null)
+                                Text('Last: ${live.lastReceivedAt!.toLocal()}')
+                            ]))))
+              ]),
               const SizedBox(height: 8),
               Expanded(
                   child: SingleChildScrollView(
-                      child: Column(children: [
-                Card(
-                    child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: _gross ? _grossForm(finalWeight) : _tareForm())),
-                if (_cameras.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                      height: 300,
-                      child: CameraLivePreviewPanel(cameras: _cameras)),
-                ],
-              ]))),
+                      child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                    Expanded(
+                        flex: 3,
+                        child: Card(
+                            child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: _gross
+                                    ? _grossForm(finalWeight)
+                                    : _tareForm()))),
+                    if (_cameras.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      Expanded(
+                          flex: 1,
+                          child: SizedBox(
+                              height: 235,
+                              child:
+                                  CameraLivePreviewPanel(cameras: _cameras))),
+                    ],
+                  ]))),
               const SizedBox(height: 8),
               SizedBox(height: 210, child: Card(child: _pendingGrid()))
             ])));

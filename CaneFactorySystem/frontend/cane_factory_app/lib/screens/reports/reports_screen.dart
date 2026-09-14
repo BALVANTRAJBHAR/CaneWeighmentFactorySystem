@@ -21,6 +21,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     'sale-purchases': 'SalePurchase Weighment Report',
     'loans': 'Loan Report',
     'daily-collection': 'Daily Collection Report',
+    'profit-loss': 'Profit / Loss Report',
   };
 
   String _reportType = 'purchases';
@@ -46,11 +47,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   Map<String, dynamic> _query({String? format}) {
     final q = <String, dynamic>{
-      if (_fromDate != null) 'fromDate': DateFormat('yyyy-MM-dd').format(_fromDate!),
+      if (_fromDate != null)
+        'fromDate': DateFormat('yyyy-MM-dd').format(_fromDate!),
       if (_toDate != null) 'toDate': DateFormat('yyyy-MM-dd').format(_toDate!),
       if (format != null) 'format': format,
     };
-    if (_reportType == 'sale-purchases') {
+    if (_reportType == 'profit-loss') {
+      // Profit/loss has only the date-range filters.
+    } else if (_reportType == 'sale-purchases') {
       if (_growerCode.text.trim().isNotEmpty)
         q['vehicleNumber'] = _growerCode.text.trim();
       if (_statusCtrl.text.trim().isNotEmpty)
@@ -142,6 +146,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ];
       case 'daily-collection':
         return ['date', 'vehicleCount', 'finalWeightQuintal', 'purchaseAmount'];
+      case 'profit-loss':
+        return [
+          'expenseDate',
+          'expenseName',
+          'quantity',
+          'unitCharge',
+          'totalAmount',
+          'remarks'
+        ];
       default:
         return [
           'purchaseId',
@@ -205,7 +218,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   label:
                       Text(_toDate == null ? 'To Date' : df.format(_toDate!)),
                 ),
-                if (_reportType != 'daily-collection')
+                if (_reportType != 'daily-collection' &&
+                    _reportType != 'profit-loss')
                   SizedBox(
                       width: 160,
                       child: TextField(
@@ -217,7 +231,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                               hintText: _reportType == 'sale-purchases'
                                   ? 'UP32AB1234'
                                   : '101/1'))),
-                if (_reportType != 'daily-collection')
+                if (_reportType != 'daily-collection' &&
+                    _reportType != 'profit-loss')
                   SizedBox(
                       width: 160,
                       child: TextField(
@@ -277,7 +292,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                 for (final item in _items)
                                   DataRow(cells: [
                                     for (final c in _columns)
-                                      DataCell(Text(formatReportCell(c, item[c]),
+                                      DataCell(Text(
+                                          formatReportCell(c, item[c]),
                                           overflow: TextOverflow.ellipsis)),
                                   ]),
                               ],

@@ -1,11 +1,16 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.Net;
 using System.Net.Http;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
+using System.Security;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using CaneFactory.Application.Interfaces;
 using CaneFactory.Domain.Entities;
+using Microsoft.Extensions.Logging;
 
 namespace CaneFactory.Infrastructure.Camera;
 
@@ -49,8 +54,17 @@ public class IsapiCaptureProvider : ICameraCaptureProvider
 }
 
 /// <summary>Standard ONVIF Profile S: WS-Security PasswordDigest GetSnapshotUri call, then HTTP GET of the returned URI.</summary>
-public class OnvifCaptureProvider : ICameraCaptureProvider
+public class OnvifCaptureProvider : ICameraCaptureProvider, ICameraContinuousStreamProvider
 {
+    private readonly RtspCaptureProvider _rtsp;
+    private readonly ILogger<OnvifCaptureProvider> _log;
+
+    public OnvifCaptureProvider(RtspCaptureProvider rtsp, ILogger<OnvifCaptureProvider> log)
+    {
+        _rtsp = rtsp;
+        _log = log;
+    }
+
     public string Protocol => "ONVIF";
 
     public async Task<(bool success, byte[]? jpegBytes, string? error)> CaptureAsync(CameraConfig camera, string? plainPassword, CancellationToken ct)
@@ -89,6 +103,208 @@ public class OnvifCaptureProvider : ICameraCaptureProvider
             return (false, null, $"ONVIF capture failed: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// ONVIF is used for discovery only. Once a stream URI is discovered, the
+    /// same persistent RTSP decoder used by the RTSP provider renders it.
+    /// </summary>
+    public async IAsyncEnumerable<byte[]> StreamAsync(
+        CameraConfig camera, string? plainPassword,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        // Explicit user override always wins; ONVIF discovery is only needed
+        // when no complete RTSP URL was supplied.
+        var discovered = string.IsNullOrWhiteSpace(camera.RtspUrl)
+            ? await TryDiscoverStreamUriAsync(camera, plainPassword, ct)
+            : null;
+        var urls = new List<string>();
+        if (!string.IsNullOrWhiteSpace(camera.RtspUrl))
+            urls.Add(camera.RtspUrl!);
+        if (!string.IsNullOrWhiteSpace(discovered))
+            urls.Add(NormalizeDiscoveredUri(discovered!));
+        urls.AddRange(RtspCaptureProvider.BuildRtspUrls(camera, plainPassword));
+
+        foreach (var url in urls.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (ct.IsCancellationRequested) yield break;
+            await foreach (var frame in _rtsp.StreamExternalUrlAsync(camera, url, plainPassword, ct))
+                yield return frame;
+        }
+    }
+
+    private async Task<string?> TryDiscoverStreamUriAsync(
+        CameraConfig camera, string? plainPassword, CancellationToken ct)
+    {
+        try
+        {
+            var settings = ReadOnvifSettings(camera.OnvifSettings);
+            var mediaUrl = settings.mediaServiceUrl;
+
+            if (string.IsNullOrWhiteSpace(mediaUrl))
+            {
+                foreach (var deviceUrl in DeviceServiceCandidates(camera, settings.deviceServiceUrl))
+                {
+                    try
+                    {
+                        var capabilities = await SendSoapAsync(
+                            deviceUrl,
+                            BuildGetCapabilitiesEnvelope(camera.Username ?? "", plainPassword ?? ""),
+                            camera, ct);
+                        mediaUrl = ExtractMediaXAddr(capabilities);
+                        if (!string.IsNullOrWhiteSpace(mediaUrl)) break;
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+                    {
+                        _log.LogDebug("ONVIF capabilities probe failed for camera {CameraNumber} at {Host}: {Error}",
+                            camera.CameraNumber, camera.IpAddress, ex.Message);
+                    }
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(mediaUrl)) return null;
+
+            var profilesXml = await SendSoapAsync(
+                mediaUrl,
+                BuildGetProfilesEnvelope(camera.Username ?? "", plainPassword ?? ""),
+                camera, ct);
+            var profileToken = settings.profileToken;
+            if (string.IsNullOrWhiteSpace(profileToken))
+                profileToken = SelectProfileToken(profilesXml, camera.StreamType);
+            if (string.IsNullOrWhiteSpace(profileToken)) return null;
+
+            var streamXml = await SendSoapAsync(
+                mediaUrl,
+                BuildGetStreamUriEnvelope(camera.Username ?? "", plainPassword ?? "", profileToken),
+                camera, ct);
+            var uri = ExtractTag(streamXml, "Uri");
+            if (string.IsNullOrWhiteSpace(uri)) return null;
+
+            _log.LogInformation("ONVIF discovered stream for camera {CameraNumber}: {Host} {StreamType}",
+                camera.CameraNumber, camera.IpAddress, camera.StreamType);
+            return uri;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning("ONVIF stream discovery failed for camera {CameraNumber} at {Host}: {Error}",
+                camera.CameraNumber, camera.IpAddress, ex.Message);
+            return null;
+        }
+    }
+
+    private static IEnumerable<string> DeviceServiceCandidates(CameraConfig camera, string? overrideUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(overrideUrl)) yield return overrideUrl!;
+        yield return $"https://{camera.IpAddress}/onvif/device_service";
+        yield return $"http://{camera.IpAddress}:{camera.Port}/onvif/device_service";
+        yield return $"http://{camera.IpAddress}/onvif/device_service";
+    }
+
+    private async Task<string> SendSoapAsync(string url, string envelope, CameraConfig camera, CancellationToken ct)
+    {
+        using var handler = new HttpClientHandler
+        {
+            // Camera ONVIF HTTPS commonly uses a self-signed LAN certificate.
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+        };
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
+        using var req = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(envelope, Encoding.UTF8, "application/soap+xml")
+        };
+        using var resp = await http.SendAsync(req, ct);
+        var xml = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode)
+            throw new HttpRequestException($"ONVIF endpoint returned HTTP {(int)resp.StatusCode}.");
+        return xml;
+    }
+
+    private static string NormalizeDiscoveredUri(string uri)
+    {
+        // CP Plus exposes an ONVIF URI as rtsp://... with tls=true, while its
+        // actual secure transport requires the rtsps:// scheme.
+        if (uri.StartsWith("rtsp://", StringComparison.OrdinalIgnoreCase) &&
+            uri.Contains("tls=true", StringComparison.OrdinalIgnoreCase))
+            return "rtsps://" + uri[7..];
+        return uri;
+    }
+
+    private static (string? deviceServiceUrl, string? mediaServiceUrl, string? profileToken)
+        ReadOnvifSettings(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return (null, null, null);
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            string? Get(string name) => doc.RootElement.TryGetProperty(name, out var p) &&
+                p.ValueKind == JsonValueKind.String ? p.GetString() : null;
+            return (Get("deviceServiceUrl"), Get("mediaServiceUrl"), Get("profileToken"));
+        }
+        catch { return (null, null, null); }
+    }
+
+    private static string? ExtractMediaXAddr(string xml)
+    {
+        var match = Regex.Match(xml,
+            @"<(?:[^:>]+:)?Media\b[^>]*>.*?<(?:[^:>]+:)?XAddr[^>]*>([^<]+)</",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        return match.Success ? WebUtility.HtmlDecode(match.Groups[1].Value.Trim()) : null;
+    }
+
+    private static string? SelectProfileToken(string xml, string streamType)
+    {
+        var profiles = Regex.Matches(xml,
+            @"<(?<tag>(?:[^:>]+:)?Profiles?)\b[^>]*\btoken=[""'](?<token>[^""']+)[""'][^>]*>(?<body>.*?)</\k<tag>>",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var wantSub = string.Equals(streamType, "Sub", StringComparison.OrdinalIgnoreCase);
+        string? first = null;
+        foreach (Match profile in profiles)
+        {
+            first ??= profile.Groups["token"].Value;
+            var name = ExtractTag(profile.Groups["body"].Value, "Name");
+            if (wantSub == name.Contains("sub", StringComparison.OrdinalIgnoreCase))
+                return profile.Groups["token"].Value;
+        }
+        return first;
+    }
+
+    private static string BuildWsseHeader(string username, string password)
+    {
+        var created = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+        var nonceBytes = new byte[16];
+        RandomNumberGenerator.Fill(nonceBytes);
+        var nonce = Convert.ToBase64String(nonceBytes);
+        var digestSource = nonceBytes.Concat(Encoding.UTF8.GetBytes(created)).Concat(Encoding.UTF8.GetBytes(password)).ToArray();
+        var digest = Convert.ToBase64String(SHA1.HashData(digestSource));
+        return $@"<s:Header>
+    <Security xmlns=""http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"">
+      <UsernameToken>
+        <Username>{SecurityElement.Escape(username)}</Username>
+        <Password Type=""http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest"">{digest}</Password>
+        <Nonce EncodingType=""http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary"">{nonce}</Nonce>
+        <Created xmlns=""http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wsu-utility-1.0.xsd"">{created}</Created>
+      </UsernameToken>
+    </Security>
+  </s:Header>";
+    }
+
+    private static string BuildGetCapabilitiesEnvelope(string username, string password) =>
+        BuildEnvelope(BuildWsseHeader(username, password),
+            @"<tds:GetCapabilities xmlns:tds=""http://www.onvif.org/ver10/device/wsdl""><tds:Category>All</tds:Category></tds:GetCapabilities>");
+
+    private static string BuildGetProfilesEnvelope(string username, string password) =>
+        BuildEnvelope(BuildWsseHeader(username, password),
+            @"<trt:GetProfiles xmlns:trt=""http://www.onvif.org/ver10/media/wsdl""/>");
+
+    private static string BuildGetStreamUriEnvelope(string username, string password, string profileToken) =>
+        BuildEnvelope(BuildWsseHeader(username, password),
+            $@"<trt:GetStreamUri xmlns:trt=""http://www.onvif.org/ver10/media/wsdl""><trt:StreamSetup><tt:Stream xmlns:tt=""http://www.onvif.org/ver10/schema"">RTP-Unicast</tt:Stream><tt:Transport xmlns:tt=""http://www.onvif.org/ver10/schema""><tt:Protocol>RTSP</tt:Protocol></tt:Transport></trt:StreamSetup><trt:ProfileToken>{SecurityElement.Escape(profileToken)}</trt:ProfileToken></trt:GetStreamUri>");
+
+    private static string BuildEnvelope(string header, string body) =>
+        $@"<?xml version=""1.0"" encoding=""UTF-8""?><s:Envelope xmlns:s=""http://www.w3.org/2003/05/soap-envelope""><s:Header>{header.Replace("<s:Header>", "").Replace("</s:Header>", "")}</s:Header><s:Body>{body}</s:Body></s:Envelope>";
 
     /// <summary>Default device_service + Profile_{channel}; a camera's OnvifSettings JSON can override
     /// {"mediaServiceUrl":"...","profileToken":"..."} for models with non-standard ONVIF paths.</summary>
@@ -149,34 +365,232 @@ public class OnvifCaptureProvider : ICameraCaptureProvider
 
 /// <summary>Generic RTSP: extracts a single frame via the ffmpeg binary (must be installed and on PATH).
 /// Works with any RTSP-capable model (CP Plus/Dahua/Uniview/Generic) using vendor URL templates.</summary>
-public class RtspCaptureProvider : ICameraCaptureProvider
+public class RtspCaptureProvider : ICameraCaptureProvider, ICameraContinuousStreamProvider
 {
+    private readonly ILogger<RtspCaptureProvider> _log;
+
+    public RtspCaptureProvider(ILogger<RtspCaptureProvider> log) => _log = log;
+
     public string Protocol => "RTSP";
 
     public async Task<(bool success, byte[]? jpegBytes, string? error)> CaptureAsync(CameraConfig camera, string? plainPassword, CancellationToken ct)
     {
-        var url = BuildRtspUrl(camera, plainPassword);
+        var errors = new List<string>();
+        foreach (var url in BuildRtspUrls(camera, plainPassword))
+        {
+            var result = await CaptureRtspFrameAsync(camera, url, ct);
+            if (result.success) return result;
+            if (!string.IsNullOrWhiteSpace(result.error)) errors.Add(result.error!);
+        }
+
+        return (false, null, string.Join(" | ", errors.Distinct()));
+    }
+
+    /// <summary>
+    /// Opens one long-lived ffmpeg decoder and emits JPEG frames from its MJPEG
+    /// stdout. The caller owns cancellation; no process is created per frame.
+    /// </summary>
+    public async IAsyncEnumerable<byte[]> StreamAsync(
+        CameraConfig camera, string? plainPassword,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var retryDelay = TimeSpan.FromSeconds(1);
+        var urls = BuildRtspUrls(camera, plainPassword).ToList();
+
+        while (!ct.IsCancellationRequested)
+        {
+            var producedFrame = false;
+            foreach (var url in urls)
+            {
+                if (ct.IsCancellationRequested) yield break;
+                var startedAt = Stopwatch.GetTimestamp();
+                _log.LogInformation("Opening live camera stream {CameraNumber} {Host}:{Port} {Protocol} {StreamType}",
+                    camera.CameraNumber, camera.IpAddress, camera.Port,
+                    Uri.TryCreate(url, UriKind.Absolute, out var parsed) ? parsed.Scheme : "RTSP",
+                    camera.StreamType);
+
+                await foreach (var frame in StreamUrlAsync(camera, url, ct))
+                {
+                    if (!producedFrame)
+                    {
+                        producedFrame = true;
+                        _log.LogInformation("Live camera {CameraNumber} produced its first frame in {ElapsedMs} ms",
+                            camera.CameraNumber, Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds);
+                    }
+                    retryDelay = TimeSpan.FromSeconds(1);
+                    yield return frame;
+                }
+
+                // Once a URL has produced frames, reconnect that URL rather
+                // than cycling through every vendor fallback on every drop.
+                if (producedFrame) break;
+            }
+
+            if (ct.IsCancellationRequested) yield break;
+            _log.LogWarning("Live camera {CameraNumber} disconnected; retrying in {RetrySeconds} seconds",
+                camera.CameraNumber, retryDelay.TotalSeconds);
+            try { await Task.Delay(retryDelay, ct); }
+            catch (OperationCanceledException) { yield break; }
+            retryDelay = TimeSpan.FromSeconds(Math.Min(retryDelay.TotalSeconds * 2, 10));
+        }
+    }
+
+    /// <summary>Streams a URI discovered by ONVIF or supplied as an explicit override.</summary>
+    public IAsyncEnumerable<byte[]> StreamExternalUrlAsync(
+        CameraConfig camera, string url, string? plainPassword,
+        CancellationToken ct = default)
+        => StreamUrlAsync(camera, InjectCredentials(url, camera.Username, plainPassword), ct);
+
+    private async IAsyncEnumerable<byte[]> StreamUrlAsync(
+        CameraConfig camera, string url,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CANE_FFMPEG_PATH"))
+                ? "ffmpeg"
+                : Environment.GetEnvironmentVariable("CANE_FFMPEG_PATH")!,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        var args = new List<string>
+        {
+            "-hide_banner", "-loglevel", "warning", "-nostdin",
+            "-fflags", "nobuffer", "-flags", "low_delay",
+            "-analyzeduration", "500000", "-probesize", "32768"
+        };
+        if (url.StartsWith("rtsps://", StringComparison.OrdinalIgnoreCase))
+            args.AddRange(["-tls_verify", "0"]);
+        args.AddRange([
+            "-rtsp_transport", "tcp", "-i", url,
+            "-an", "-vf", "scale=640:-2", "-r", "10",
+            "-c:v", "mjpeg", "-q:v", "6", "-f", "mjpeg", "pipe:1"
+        ]);
+        foreach (var arg in args) psi.ArgumentList.Add(arg);
+
+        Process? process = null;
+        try
+        {
+            process = Process.Start(psi);
+            if (process == null) yield break;
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            var stdout = process.StandardOutput.BaseStream;
+            var readBuffer = new byte[64 * 1024];
+            var pending = new List<byte>(128 * 1024);
+            var fpsWindowStarted = Stopwatch.GetTimestamp();
+            var fpsWindowFrames = 0;
+
+            while (!ct.IsCancellationRequested)
+            {
+                var read = await stdout.ReadAsync(readBuffer.AsMemory(), ct);
+                if (read == 0) break;
+                for (var i = 0; i < read; i++) pending.Add(readBuffer[i]);
+
+                while (TryTakeJpeg(pending, out var jpeg))
+                {
+                    fpsWindowFrames++;
+                    var fpsWindow = Stopwatch.GetElapsedTime(fpsWindowStarted);
+                    if (fpsWindow >= TimeSpan.FromSeconds(5))
+                    {
+                        _log.LogDebug("Live camera {CameraNumber} decoder FPS {Fps:F1}",
+                            camera.CameraNumber, fpsWindowFrames / fpsWindow.TotalSeconds);
+                        fpsWindowStarted = Stopwatch.GetTimestamp();
+                        fpsWindowFrames = 0;
+                    }
+                    yield return jpeg;
+                }
+            }
+
+            if (!ct.IsCancellationRequested)
+            {
+                var stderr = (await stderrTask).Trim();
+                if (!string.IsNullOrWhiteSpace(stderr))
+                    _log.LogWarning("Live camera {CameraNumber} ffmpeg stopped: {Error}",
+                        camera.CameraNumber, RedactRtspCredentials(stderr, url));
+            }
+        }
+        finally
+        {
+            if (process != null)
+            {
+                try
+                {
+                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                }
+                catch { /* client disconnect cleanup is best effort */ }
+                process.Dispose();
+            }
+        }
+    }
+
+    private static bool TryTakeJpeg(List<byte> pending, out byte[] jpeg)
+    {
+        jpeg = Array.Empty<byte>();
+        var start = FindMarker(pending, 0, 0xFF, 0xD8);
+        if (start < 0)
+        {
+            if (pending.Count > 1) pending.RemoveRange(0, pending.Count - 1);
+            return false;
+        }
+        if (start > 0) pending.RemoveRange(0, start);
+        var end = FindMarker(pending, 2, 0xFF, 0xD9);
+        if (end < 0) return false;
+        var length = end + 2;
+        jpeg = pending.GetRange(0, length).ToArray();
+        pending.RemoveRange(0, length);
+        return jpeg.Length > 100;
+    }
+
+    private static int FindMarker(List<byte> bytes, int start, byte first, byte second)
+    {
+        for (var i = start; i + 1 < bytes.Count; i++)
+            if (bytes[i] == first && bytes[i + 1] == second) return i;
+        return -1;
+    }
+
+    private static async Task<(bool success, byte[]? jpegBytes, string? error)> CaptureRtspFrameAsync(
+        CameraConfig camera, string url, CancellationToken ct)
+    {
         var tempFile = Path.Combine(Path.GetTempPath(), $"cam_{camera.Id}_{Guid.NewGuid():N}.jpg");
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "ffmpeg",
+                // Use an explicit path when the API runs as a Windows service
+                // whose PATH does not include the interactive user's tools.
+                // Otherwise resolve the normal ffmpeg command from PATH.
+                FileName = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CANE_FFMPEG_PATH"))
+                    ? "ffmpeg"
+                    : Environment.GetEnvironmentVariable("CANE_FFMPEG_PATH")!,
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
                 UseShellExecute = false
             };
-            foreach (var arg in new[] { "-y", "-rtsp_transport", "tcp", "-i", url, "-frames:v", "1", "-q:v", "3", tempFile })
+            var args = new List<string> { "-hide_banner", "-loglevel", "error", "-y" };
+            if (url.StartsWith("rtsps://", StringComparison.OrdinalIgnoreCase))
+            {
+                // CP Plus secure RTSP uses a self-signed device certificate on
+                // the private factory LAN.
+                args.AddRange(["-tls_verify", "0"]);
+            }
+            args.AddRange(["-rtsp_transport", "tcp", "-i", url, "-frames:v", "1", "-q:v", "3", tempFile]);
+            foreach (var arg in args)
                 psi.ArgumentList.Add(arg);
 
             using var proc = Process.Start(psi);
             if (proc == null) return (false, null, "Could not start the ffmpeg process.");
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(10));
+            var errorOutput = proc.StandardError.ReadToEndAsync(cts.Token);
             await proc.WaitForExitAsync(cts.Token);
+            var ffmpegError = RedactRtspCredentials((await errorOutput).Trim(), url);
 
             if (!File.Exists(tempFile))
-                return (false, null, "RTSP snapshot failed - ffmpeg did not produce an image. Check the RTSP URL/credentials/network.");
+                return (false, null, string.IsNullOrWhiteSpace(ffmpegError)
+                    ? "RTSP snapshot failed - ffmpeg did not produce an image. Check the RTSP URL/credentials/network."
+                    : $"RTSP snapshot failed: {ffmpegError}");
             var bytes = await File.ReadAllBytesAsync(tempFile, ct);
             return bytes.Length > 100 ? (true, bytes, null) : (false, null, "RTSP camera returned an empty image.");
         }
@@ -199,22 +613,61 @@ public class RtspCaptureProvider : ICameraCaptureProvider
     }
 
     public static string BuildRtspUrl(CameraConfig camera, string? plainPassword)
+        => BuildRtspUrls(camera, plainPassword).First();
+
+    public static IEnumerable<string> BuildRtspUrls(CameraConfig camera, string? plainPassword)
     {
-        if (!string.IsNullOrWhiteSpace(camera.RtspUrl)) return InjectCredentials(camera.RtspUrl, camera.Username, plainPassword);
-        var cred = string.IsNullOrEmpty(camera.Username) ? "" : $"{Uri.EscapeDataString(camera.Username)}:{Uri.EscapeDataString(plainPassword ?? "")}@";
-        return camera.Vendor switch
+        if (!string.IsNullOrWhiteSpace(camera.RtspUrl))
         {
-            "Hikvision" => $"rtsp://{cred}{camera.IpAddress}:{camera.Port}/Streaming/Channels/{camera.Channel}01",
-            "CPPlus" or "Dahua" => $"rtsp://{cred}{camera.IpAddress}:{camera.Port}/cam/realmonitor?channel={camera.Channel}&subtype=0",
-            "Uniview" => $"rtsp://{cred}{camera.IpAddress}:{camera.Port}/media/video{camera.Channel}",
-            _ => $"rtsp://{cred}{camera.IpAddress}:{camera.Port}/"
-        };
+            yield return InjectCredentials(camera.RtspUrl, camera.Username, plainPassword);
+            yield break;
+        }
+        var cred = string.IsNullOrEmpty(camera.Username) ? "" : $"{Uri.EscapeDataString(camera.Username)}:{Uri.EscapeDataString(plainPassword ?? "")}@";
+        if (camera.Vendor is "CPPlus" or "Dahua")
+        {
+            var subtype = string.Equals(camera.StreamType, "Sub", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+            // CP-UNC-TA61L3C-LQ exposes this secure URI through ONVIF
+            // GetStreamUri. This is the verified path for direct camera access.
+            yield return $"rtsps://{cred}{camera.IpAddress}:{camera.Port}/video/live?channel={camera.Channel}&subtype={subtype}&unicast=true&proto=Onvif&tls=true";
+            yield return $"rtsps://{cred}{camera.IpAddress}:{camera.Port}/video/live?channel={camera.Channel}&subtype={(subtype == 0 ? 1 : 0)}&unicast=true&proto=Onvif&tls=true";
+            // Compatibility fallback for older CP Plus/Dahua firmware.
+            yield return $"rtsp://{cred}{camera.IpAddress}:{camera.Port}/cam/realmonitor?channel={camera.Channel}&subtype={subtype}";
+            yield return $"rtsp://{cred}{camera.IpAddress}:{camera.Port}/cam/realmonitor?channel={camera.Channel}&subtype={(subtype == 0 ? 1 : 0)}";
+            yield break;
+        }
+        if (camera.Vendor == "Hikvision")
+        {
+            yield return $"rtsp://{cred}{camera.IpAddress}:{camera.Port}/Streaming/Channels/{camera.Channel}01";
+            yield break;
+        }
+        if (camera.Vendor == "Uniview")
+        {
+            yield return $"rtsp://{cred}{camera.IpAddress}:{camera.Port}/media/video{camera.Channel}";
+            yield break;
+        }
+        yield return $"rtsp://{cred}{camera.IpAddress}:{camera.Port}/";
     }
 
     private static string InjectCredentials(string rtspUrl, string? username, string? password)
     {
         if (string.IsNullOrEmpty(username) || rtspUrl.Contains('@')) return rtspUrl;
-        return rtspUrl.Replace("rtsp://", $"rtsp://{Uri.EscapeDataString(username)}:{Uri.EscapeDataString(password ?? "")}@");
+        var scheme = rtspUrl.StartsWith("rtsps://", StringComparison.OrdinalIgnoreCase) ? "rtsps://" : "rtsp://";
+        return rtspUrl.Replace(scheme, $"{scheme}{Uri.EscapeDataString(username)}:{Uri.EscapeDataString(password ?? "")}@", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string RedactRtspCredentials(string error, string url)
+    {
+        if (string.IsNullOrWhiteSpace(error)) return error;
+        var safeUrl = url;
+        try
+        {
+            var parsed = new Uri(url);
+            safeUrl = $"{parsed.Scheme}://{parsed.Host}{(parsed.IsDefaultPort ? "" : $":{parsed.Port}")}{parsed.PathAndQuery}";
+        }
+        catch { /* keep the original error text if the camera URL is malformed */ }
+        var redacted = error.Replace(url, safeUrl, StringComparison.Ordinal);
+        return Regex.Replace(redacted, @"(rtsps?://)[^/\s@]+@", "$1<redacted>@",
+            RegexOptions.IgnoreCase);
     }
 }
 

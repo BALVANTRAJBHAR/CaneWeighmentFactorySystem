@@ -58,8 +58,12 @@ builder.Services.AddScoped<LicenseService>();
 
 // ---- Camera capture (Phase 6): vendor-abstracted providers + orchestration service ----
 builder.Services.AddSingleton<ICameraCaptureProvider, IsapiCaptureProvider>();
-builder.Services.AddSingleton<ICameraCaptureProvider, OnvifCaptureProvider>();
-builder.Services.AddSingleton<ICameraCaptureProvider, RtspCaptureProvider>();
+builder.Services.AddSingleton<OnvifCaptureProvider>();
+builder.Services.AddSingleton<ICameraCaptureProvider>(sp => sp.GetRequiredService<OnvifCaptureProvider>());
+builder.Services.AddSingleton<RtspCaptureProvider>();
+builder.Services.AddSingleton<ICameraCaptureProvider>(sp => sp.GetRequiredService<RtspCaptureProvider>());
+builder.Services.AddSingleton<ICameraContinuousStreamProvider>(sp => sp.GetRequiredService<RtspCaptureProvider>());
+builder.Services.AddSingleton<ICameraContinuousStreamProvider>(sp => sp.GetRequiredService<OnvifCaptureProvider>());
 builder.Services.AddSingleton<ICameraCaptureProvider, SimulatorCaptureProvider>();
 builder.Services.AddScoped<ICameraCaptureService, CameraCaptureService>();
 

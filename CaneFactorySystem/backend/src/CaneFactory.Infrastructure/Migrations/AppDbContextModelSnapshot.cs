@@ -540,6 +540,16 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.ToTable("Items");
                 });
 
+            modelBuilder.Entity("CaneFactory.Domain.Entities.Expense", b =>
+                {
+                    b.HasOne("CaneFactory.Domain.Entities.ExpenseType", "ExpenseType")
+                        .WithMany()
+                        .HasForeignKey("ExpenseTypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                    b.Navigation("ExpenseType");
+                });
+
             modelBuilder.Entity("CaneFactory.Domain.Entities.Loan", b =>
                 {
                     b.Property<int>("Id")
@@ -827,6 +837,50 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.HasIndex("PartyName");
 
                     b.ToTable("Parties");
+                });
+
+            modelBuilder.Entity("CaneFactory.Domain.Entities.Expense", b =>
+                {
+                    b.Property<int>("Id").ValueGeneratedOnAdd().HasColumnType("int");
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+                    b.Property<DateTime>("CreatedAt").HasColumnType("datetime2");
+                    b.Property<int?>("CreatedBy").HasColumnType("int");
+                    b.Property<DateTime?>("DeletedAt").HasColumnType("datetime2");
+                    b.Property<int?>("DeletedBy").HasColumnType("int");
+                    b.Property<DateTime>("ExpenseDate").HasColumnType("datetime2");
+                    b.Property<int>("ExpenseTypeId").HasColumnType("int");
+                    b.Property<bool>("IsDeleted").HasColumnType("bit");
+                    b.Property<decimal>("Quantity").HasPrecision(14, 3).HasColumnType("decimal(14,3)");
+                    b.Property<string>("Remarks").HasMaxLength(500).HasColumnType("nvarchar(500)");
+                    b.Property<bool>("Status").HasColumnType("bit");
+                    b.Property<decimal>("TotalAmount").HasPrecision(14, 2).HasColumnType("decimal(14,2)");
+                    b.Property<decimal>("UnitCharge").HasPrecision(14, 2).HasColumnType("decimal(14,2)");
+                    b.Property<DateTime?>("UpdatedAt").HasColumnType("datetime2");
+                    b.Property<int?>("UpdatedBy").HasColumnType("int");
+                    b.HasKey("Id");
+                    b.HasIndex("ExpenseDate");
+                    b.HasIndex("ExpenseTypeId");
+                    b.ToTable("Expenses");
+                });
+
+            modelBuilder.Entity("CaneFactory.Domain.Entities.ExpenseType", b =>
+                {
+                    b.Property<int>("Id").ValueGeneratedOnAdd().HasColumnType("int");
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+                    b.Property<DateTime>("CreatedAt").HasColumnType("datetime2");
+                    b.Property<int?>("CreatedBy").HasColumnType("int");
+                    b.Property<DateTime?>("DeletedAt").HasColumnType("datetime2");
+                    b.Property<int?>("DeletedBy").HasColumnType("int");
+                    b.Property<string>("Description").HasMaxLength(250).HasColumnType("nvarchar(250)");
+                    b.Property<string>("ExpenseName").IsRequired().HasMaxLength(100).HasColumnType("nvarchar(100)");
+                    b.Property<string>("ExpenseNameHi").HasMaxLength(100).HasColumnType("nvarchar(100)");
+                    b.Property<bool>("IsDeleted").HasColumnType("bit");
+                    b.Property<bool>("Status").HasColumnType("bit");
+                    b.Property<DateTime?>("UpdatedAt").HasColumnType("datetime2");
+                    b.Property<int?>("UpdatedBy").HasColumnType("int");
+                    b.HasKey("Id");
+                    b.HasIndex("ExpenseName").IsUnique();
+                    b.ToTable("ExpenseTypes");
                 });
 
             modelBuilder.Entity("CaneFactory.Domain.Entities.Payment", b =>
@@ -1126,6 +1180,9 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<string>("PrinterType")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("PrintImages")
+                        .HasColumnType("bit");
 
                     b.Property<int>("SalePurchaseCopies")
                         .HasColumnType("int");

@@ -41,6 +41,20 @@ public class SalePurchaseWeighmentController : ControllerBase
     private IActionResult? Deny(string action) => _current.HasPermission($"SalePurchase.{action}")
         ? null : StatusCode(403, new { message = $"You do not have 'SalePurchase.{action}' permission." });
 
+    [HttpGet("{id:int}/images")]
+    public async Task<IActionResult> Images(int id)
+    {
+        if (Deny("View") is { } denied) return denied;
+        if (!await _db.SalePurchases.AnyAsync(x => x.Id == id && !x.IsDeleted))
+            return NotFound(new { message = "SalePurchase not found." });
+        var images = await _db.SalePurchaseImages.AsNoTracking()
+            .Where(x => x.SalePurchaseId == id && x.Status)
+            .OrderBy(x => x.CaptureStage).ThenBy(x => x.ImageName)
+            .Select(x => new { x.Id, x.CameraId, x.CaptureStage, x.ImageName, x.FileHash, x.CapturedAt, x.CapturedBy })
+            .ToListAsync();
+        return Ok(images);
+    }
+
     [HttpGet("pending")]
     public async Task<IActionResult> Pending()
     {

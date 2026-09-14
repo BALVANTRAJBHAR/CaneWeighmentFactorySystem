@@ -2,8 +2,10 @@ using CaneFactory.API.Auth;
 using CaneFactory.Application.Interfaces;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
+using CaneFactory.Infrastructure.Camera;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text;
 
 namespace CaneFactory.API.Controllers;
 
@@ -171,10 +173,71 @@ public class ConfigController : ControllerBase
         return Ok(new { message = $"Camera {cam.CameraNumber:D2} ({cam.Vendor}) saved successfully.", id = cam.Id });
     }
 
+    /// <summary>Returns the configured image base path plus the effective auto-detected path.</summary>
+    [HasPermission("Camera.Configure")]
+    [HttpGet("image-storage")]
+    public async Task<IActionResult> GetImageStorage()
+    {
+        var setting = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot");
+        var configured = setting?.Value ?? string.Empty;
+        var detected = WeighmentImagePathResolver.DetectDefaultDrive();
+        var effective = WeighmentImagePathResolver.ResolveRoot(configured);
+        return Ok(new
+        {
+            configuredPath = configured,
+            detectedDrive = detected,
+            effectiveRoot = effective,
+            availableDrives = WeighmentImagePathResolver.GetAvailableDrives()
+        });
+    }
+
+    /// <summary>Changes only the user-configurable base path; blank restores automatic drive selection.</summary>
+    [HasPermission("Camera.Configure")]
+    [HttpPut("image-storage")]
+    public async Task<IActionResult> UpdateImageStorage([FromBody] Dictionary<string, string> body)
+    {
+        var path = body.GetValueOrDefault("path") ?? body.GetValueOrDefault("value") ?? string.Empty;
+        if (path.Length > 512) return BadRequest(new { message = "Image path must be 512 characters or fewer." });
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            try { _ = WeighmentImagePathResolver.NormalizeConfiguredPath(path); }
+            catch (Exception ex) { return BadRequest(new { message = $"Invalid image path: {ex.Message}" }); }
+        }
+        var effectiveRoot = WeighmentImagePathResolver.ResolveRoot(path);
+        try { Directory.CreateDirectory(effectiveRoot); }
+        catch (Exception ex) { return BadRequest(new { message = $"Image folder cannot be created: {ex.Message}" }); }
+
+        var setting = await _db.SystemSettings.FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot");
+        if (setting == null)
+        {
+            setting = new SystemSetting { Key = "ImageStorageRoot", Value = path };
+            _db.SystemSettings.Add(setting);
+        }
+        else
+        {
+            setting.Value = path;
+            setting.UpdatedAt = DateTime.UtcNow;
+            setting.UpdatedBy = _current.UserId;
+        }
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("SystemSettingChange", "SystemSetting", "SystemSetting", "ImageStorageRoot",
+            newValue: new { configuredPath = path });
+        return Ok(new
+        {
+            message = string.IsNullOrWhiteSpace(path)
+                ? "Image path reset. The drive with the most free space will be selected automatically."
+                : "Image path saved successfully.",
+            configuredPath = path,
+            effectiveRoot
+        });
+    }
+
     /// <summary>Basic reachability test (TCP connect). Full ONVIF/ISAPI/RTSP capture activates in Phase 6.</summary>
     [HasPermission("Camera.Configure")]
     [HttpPost("cameras/{id:int}/test")]
-    public async Task<IActionResult> TestCamera(int id)
+    public async Task<IActionResult> TestCamera(int id, [FromServices] ICameraCaptureService capture,
+        CancellationToken ct)
     {
         var cam = await _db.Cameras.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id && !c.IsDeleted);
         if (cam == null) return NotFound(new { message = "Camera not found." });
@@ -184,7 +247,14 @@ public class ConfigController : ControllerBase
             var task = client.ConnectAsync(cam.IpAddress, cam.Port);
             if (await Task.WhenAny(task, Task.Delay(3000)) != task || !client.Connected)
                 return Conflict(new { message = $"Camera {cam.CameraNumber:D2} NOT reachable at {cam.IpAddress}:{cam.Port}." });
-            return Ok(new { message = $"Camera {cam.CameraNumber:D2} reachable at {cam.IpAddress}:{cam.Port}." });
+            var snapshot = await capture.CaptureSingleAsync(id, ct);
+            if (!snapshot.Success)
+                return Conflict(new
+                {
+                    message = $"Camera {cam.CameraNumber:D2} is reachable at {cam.IpAddress}:{cam.Port}, " +
+                              $"but the {cam.Protocol} snapshot failed: {snapshot.Error}"
+                });
+            return Ok(new { message = $"Camera {cam.CameraNumber:D2} reachable and snapshot verified at {cam.IpAddress}:{cam.Port}." });
         }
         catch (Exception ex)
         {
@@ -204,6 +274,60 @@ public class ConfigController : ControllerBase
         return File(result.ImageBytes, "image/jpeg");
     }
 
+    /// <summary>Continuous low-latency MJPEG preview. One persistent RTSP/ffmpeg
+    /// decoder is kept alive for this client; no process is created per frame.</summary>
+    [HasPermission("Camera.ViewCamera")]
+    [HttpGet("cameras/{id:int}/live")]
+    public async Task Live(int id,
+        [FromServices] IEnumerable<ICameraContinuousStreamProvider> streams,
+        CancellationToken ct)
+    {
+        var camera = await _db.Cameras.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id && !c.IsDeleted, ct);
+        if (camera == null)
+        {
+            Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+        if (!await SettingTrueAsync("CameraSystemEnabled") || !camera.Status || !camera.LiveViewEnabled)
+        {
+            Response.StatusCode = StatusCodes.Status409Conflict;
+            return;
+        }
+
+        var provider = streams.FirstOrDefault(x => x.Protocol.Equals(camera.Protocol, StringComparison.OrdinalIgnoreCase));
+        if (provider == null)
+        {
+            Response.StatusCode = StatusCodes.Status409Conflict;
+            return;
+        }
+
+        var password = camera.PasswordEncrypted != null ? _protector.Unprotect(camera.PasswordEncrypted) : null;
+        if (camera.RtspUrl == null && camera.Vendor is ("CPPlus" or "Dahua"))
+            camera.StreamType = "Sub";
+
+        Response.StatusCode = StatusCodes.Status200OK;
+        Response.ContentType = "multipart/x-mixed-replace; boundary=frame";
+        Response.Headers.CacheControl = "no-store, no-cache";
+        Response.Headers.Pragma = "no-cache";
+
+        try
+        {
+            await foreach (var jpeg in provider.StreamAsync(camera, password, ct).WithCancellation(ct))
+            {
+                var header = Encoding.ASCII.GetBytes(
+                    $"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: {jpeg.Length}\r\n\r\n");
+                await Response.Body.WriteAsync(header, ct);
+                await Response.Body.WriteAsync(jpeg, ct);
+                await Response.Body.WriteAsync("\r\n"u8.ToArray(), ct);
+                await Response.Body.FlushAsync(ct);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal when Flutter leaves the screen or the client cancels a stream.
+        }
+    }
+
     private async Task<bool> SettingTrueAsync(string key)
     {
         var setting = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(x => x.Key == key);
@@ -221,7 +345,7 @@ public class ConfigController : ControllerBase
     {
         var p = await _db.PrintConfigs.FirstAsync(x => !x.IsDeleted);
         if (src.PrinterType is not ("DotMatrix" or "A4")) return BadRequest(new { message = "PrinterType must be DotMatrix or A4." });
-        var old = new { p.PrinterType, p.PrinterName, p.DotMatrixPrinterName, p.A4PrinterName, p.AutoPrint, p.GrossCopies, p.TareCopies };
+        var old = new { p.PrinterType, p.PrinterName, p.DotMatrixPrinterName, p.A4PrinterName, p.AutoPrint, p.PrintImages, p.GrossCopies, p.TareCopies };
         p.PrinterType = src.PrinterType;
         p.DotMatrixPrinterName = src.DotMatrixPrinterName?.Trim() ?? "";
         p.A4PrinterName = src.A4PrinterName?.Trim() ?? "";
@@ -229,6 +353,7 @@ public class ConfigController : ControllerBase
         p.PrinterName = p.PrinterType == "A4" ? p.A4PrinterName : p.DotMatrixPrinterName;
         p.PaperType = src.PaperType;
         p.AutoPrint = src.AutoPrint;
+        p.PrintImages = src.PrintImages;
         p.GrossCopies = Math.Clamp(src.GrossCopies, 0, 5);
         p.TareCopies = Math.Clamp(src.TareCopies, 0, 5);
         p.PaymentCopies = Math.Clamp(src.PaymentCopies, 0, 5);

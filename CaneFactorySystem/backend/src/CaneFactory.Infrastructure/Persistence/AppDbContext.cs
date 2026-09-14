@@ -29,6 +29,8 @@ public class AppDbContext : DbContext
     public DbSet<Season> Seasons => Set<Season>();
     public DbSet<PaymentModeMaster> PaymentModes => Set<PaymentModeMaster>();
     public DbSet<CompanyConfig> CompanyConfigs => Set<CompanyConfig>();
+    public DbSet<ExpenseType> ExpenseTypes => Set<ExpenseType>();
+    public DbSet<Expense> Expenses => Set<Expense>();
 
     public DbSet<Purchase> Purchases => Set<Purchase>();
     public DbSet<PurchaseImage> PurchaseImages => Set<PurchaseImage>();
@@ -132,6 +134,24 @@ public class AppDbContext : DbContext
             e.Property(x => x.PartyNameHi).HasMaxLength(100);
         });
         b.Entity<PaymentModeMaster>().HasIndex(x => x.ModeCode).IsUnique();
+
+        b.Entity<ExpenseType>(e =>
+        {
+            e.HasIndex(x => x.ExpenseName).IsUnique();
+            e.Property(x => x.ExpenseName).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ExpenseNameHi).HasMaxLength(100);
+            e.Property(x => x.Description).HasMaxLength(250);
+        });
+        b.Entity<Expense>(e =>
+        {
+            e.HasIndex(x => x.ExpenseDate);
+            e.HasIndex(x => x.ExpenseTypeId);
+            e.Property(x => x.Quantity).HasPrecision(14, 3);
+            e.Property(x => x.UnitCharge).HasPrecision(14, 2);
+            e.Property(x => x.TotalAmount).HasPrecision(14, 2);
+            e.Property(x => x.Remarks).HasMaxLength(500);
+            e.HasOne(x => x.ExpenseType).WithMany().HasForeignKey(x => x.ExpenseTypeId).OnDelete(DeleteBehavior.Restrict);
+        });
 
         b.Entity<Purchase>(e =>
         {

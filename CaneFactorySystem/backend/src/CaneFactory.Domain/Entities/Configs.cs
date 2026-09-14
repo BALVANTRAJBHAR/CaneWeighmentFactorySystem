@@ -32,6 +32,7 @@ public class PrintConfig : BaseEntity
     public string A4PrinterName { get; set; } = string.Empty;
     public string PaperType { get; set; } = "Continuous";
     public bool AutoPrint { get; set; } = true;
+    public bool PrintImages { get; set; } = true;
     public int GrossCopies { get; set; } = 1;
     public int TareCopies { get; set; } = 2;
     public int PaymentCopies { get; set; } = 1;

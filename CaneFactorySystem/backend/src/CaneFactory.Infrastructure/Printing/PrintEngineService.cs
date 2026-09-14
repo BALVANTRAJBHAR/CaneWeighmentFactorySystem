@@ -27,6 +27,7 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleEnglish = "Cane Purchase Slip - Gross";
         doc.QrValue = p.Id;
         doc.Rows = GrossRows(p, doc.Language);
+        doc.Images = doc.PrintImages ? await LoadPurchaseImagesForPrintAsync(p.Id, "GROSS") : new();
         return doc;
     }
 
@@ -38,6 +39,7 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleEnglish = "Cane Purchase Slip - Final";
         doc.QrValue = p.Id;
         doc.Rows = GrossRows(p, doc.Language).Concat(TareRows(p)).ToList();
+        doc.Images = doc.PrintImages ? await LoadPurchaseImagesForPrintAsync(p.Id, "GROSS", "TARE") : new();
         return doc;
     }
 
@@ -90,6 +92,9 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleEnglish = stage == "TARE" ? "Sale/Purchase Weighment Slip - Tare" : "Sale/Purchase Weighment Slip - Final";
         doc.QrValue = p.Id;
         doc.Rows = SalePurchaseRows(p, stage, doc.Language);
+        doc.Images = !doc.PrintImages ? new() : stage == "TARE"
+            ? await LoadSalePurchaseImagesForPrintAsync(p.Id, "TARE")
+            : await LoadSalePurchaseImagesForPrintAsync(p.Id, "GROSS", "TARE");
         return doc;
     }
 
@@ -170,8 +175,62 @@ public class PrintEngineService : IPrintEngineService
             LogoPath = company?.LogoPath,
             SeasonName = seasonName,
             GeneratedByUserName = generatedByUserName,
-            PrintDateTime = DateTime.Now
+            PrintDateTime = DateTime.Now,
+            PrintImages = cfg.PrintImages
         };
+    }
+
+    private async Task<List<PrintImage>> LoadPurchaseImagesForPrintAsync(int purchaseId, params string[] stages)
+    {
+        var expectedCameras = await _db.Cameras.AsNoTracking()
+            .CountAsync(c => !c.IsDeleted && c.Status && c.CaptureEnabled);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+
+        while (true)
+        {
+            var images = await _db.PurchaseImages.AsNoTracking()
+                .Where(i => i.PurchaseId == purchaseId && i.Status && stages.Contains(i.CaptureStage))
+                .OrderBy(i => i.CapturedAt)
+                .ToListAsync();
+            var existing = images.Where(i => File.Exists(i.FilePath)).ToList();
+            var expected = expectedCameras * stages.Length;
+            if (expected == 0 || existing.Count >= expected || DateTime.UtcNow >= deadline)
+                return OrderPrintImages(existing.Select(i => new PrintImage(
+                    $"{i.CaptureStage} • {Path.GetFileNameWithoutExtension(i.FilePath)}", i.FilePath)), stages);
+            await Task.Delay(250);
+        }
+    }
+
+    private async Task<List<PrintImage>> LoadSalePurchaseImagesForPrintAsync(int salePurchaseId, params string[] stages)
+    {
+        var expectedCameras = await _db.Cameras.AsNoTracking()
+            .CountAsync(c => !c.IsDeleted && c.Status && c.CaptureEnabled);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+
+        while (true)
+        {
+            var images = await _db.SalePurchaseImages.AsNoTracking()
+                .Where(i => i.SalePurchaseId == salePurchaseId && i.Status && stages.Contains(i.CaptureStage))
+                .OrderBy(i => i.CapturedAt)
+                .ToListAsync();
+            var existing = images.Where(i => File.Exists(i.FilePath)).ToList();
+            var expected = expectedCameras * stages.Length;
+            if (expected == 0 || existing.Count >= expected || DateTime.UtcNow >= deadline)
+                return OrderPrintImages(existing.Select(i => new PrintImage(
+                    $"{i.CaptureStage} • {Path.GetFileNameWithoutExtension(i.FilePath)}", i.FilePath)), stages);
+            await Task.Delay(250);
+        }
+    }
+
+    private static List<PrintImage> OrderPrintImages(IEnumerable<PrintImage> images, string[] stages)
+    {
+        var stageOrder = stages.Select((stage, index) => new { stage, index })
+            .ToDictionary(x => x.stage, x => x.index, StringComparer.OrdinalIgnoreCase);
+        return images.OrderBy(image =>
+        {
+            var stage = image.Label.Split('•')[0].Trim();
+            return stageOrder.GetValueOrDefault(stage, int.MaxValue);
+        }).ThenBy(image => image.Label).ToList();
     }
 
     private static string Text(string? english, string? hindi, string language) =>

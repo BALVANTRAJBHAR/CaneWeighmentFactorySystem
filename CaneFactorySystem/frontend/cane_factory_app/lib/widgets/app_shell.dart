@@ -11,6 +11,7 @@ import '../screens/auth/change_password_screen.dart';
 import '../screens/dashboard/dashboard_screen.dart';
 import '../screens/developer/device_config_screen.dart';
 import '../screens/developer/settings_screens.dart';
+import '../screens/expenses/expense_screen.dart';
 import '../screens/farmer/farmer_dashboard_screen.dart';
 import '../screens/guide/user_guide_screen.dart';
 import '../screens/loans/loan_screens.dart';
@@ -66,6 +67,8 @@ class _AppShellState extends State<AppShell> {
         () => const PurchasesScreen()),
     _NavItem('Payments', Icons.payments_outlined, 'Payment.View',
         () => const PaymentScreen()),
+    _NavItem('Expenses', Icons.account_balance_wallet_outlined, 'Expense.View',
+        () => const ExpenseScreen()),
     _NavItem('SalePurchase Weighment', Icons.local_shipping_outlined,
         'SalePurchase.View', () => const SalePurchaseWeighmentScreen()),
     _NavItem(

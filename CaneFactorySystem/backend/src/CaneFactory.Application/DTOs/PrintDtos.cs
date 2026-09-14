@@ -23,6 +23,10 @@ public class PrintDocument
 
     /// <summary>Rendered two-per-line (left pair / right pair) by both renderers.</summary>
     public List<PrintRow> Rows { get; set; } = new();
+
+    /// <summary>Evidence images rendered below the weighment details on A4 slips.</summary>
+    public List<PrintImage> Images { get; set; } = new();
+    public bool PrintImages { get; set; } = true;
 }
 
 public class PrintRow
@@ -35,5 +39,18 @@ public class PrintRow
     public PrintRow(string labelHindi, string labelEnglish, string value)
     {
         LabelHindi = labelHindi; LabelEnglish = labelEnglish; Value = value;
+    }
+}
+
+public class PrintImage
+{
+    public string Label { get; set; } = string.Empty;
+    public string FilePath { get; set; } = string.Empty;
+
+    public PrintImage() { }
+    public PrintImage(string label, string filePath)
+    {
+        Label = label;
+        FilePath = filePath;
     }
 }

@@ -55,6 +55,15 @@ public interface ICameraCaptureProvider
         CaneFactory.Domain.Entities.CameraConfig camera, string? plainPassword, CancellationToken ct);
 }
 
+/// <summary>Continuous live-video provider. Frames are JPEG boundaries emitted from one persistent
+/// decoder/stream connection; this is separate from single-shot evidence capture.</summary>
+public interface ICameraContinuousStreamProvider
+{
+    string Protocol { get; }
+    IAsyncEnumerable<byte[]> StreamAsync(
+        CaneFactory.Domain.Entities.CameraConfig camera, string? plainPassword, CancellationToken ct = default);
+}
+
 /// <summary>Orchestrates capture across all enabled cameras and persists PurchaseImage metadata + files on disk.</summary>
 public interface ICameraCaptureService
 {

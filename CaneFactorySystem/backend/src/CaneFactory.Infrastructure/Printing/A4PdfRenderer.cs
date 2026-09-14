@@ -44,21 +44,55 @@ public class A4PdfRenderer : IPrintRenderer
                     });
                 });
 
-                page.Content().PaddingTop(10).Table(table =>
+                page.Content().PaddingTop(10).Column(content =>
                 {
-                    table.ColumnsDefinition(c =>
+                    content.Item().Table(table =>
                     {
-                        c.RelativeColumn(1.1f); c.RelativeColumn(1.4f);
-                        c.RelativeColumn(1.1f); c.RelativeColumn(1.4f);
+                        table.ColumnsDefinition(c =>
+                        {
+                            c.RelativeColumn(1.1f); c.RelativeColumn(1.4f);
+                            c.RelativeColumn(1.1f); c.RelativeColumn(1.4f);
+                        });
+                        for (var i = 0; i < doc.Rows.Count; i += 2)
+                        {
+                            var r1 = doc.Rows[i];
+                            var r2 = i + 1 < doc.Rows.Count ? doc.Rows[i + 1] : null;
+                            AddCell(table, hindi ? r1.LabelHindi : r1.LabelEnglish, true);
+                            AddCell(table, r1.Value, false);
+                            AddCell(table, r2 != null ? (hindi ? r2.LabelHindi : r2.LabelEnglish) : "", true);
+                            AddCell(table, r2?.Value ?? "", false);
+                        }
                     });
-                    for (var i = 0; i < doc.Rows.Count; i += 2)
+
+                    var printableImages = doc.PrintImages ? doc.Images
+                        .Where(image => !string.IsNullOrWhiteSpace(image.FilePath) && File.Exists(image.FilePath))
+                        .ToList() : new List<PrintImage>();
+                    if (printableImages.Count > 0)
                     {
-                        var r1 = doc.Rows[i];
-                        var r2 = i + 1 < doc.Rows.Count ? doc.Rows[i + 1] : null;
-                        AddCell(table, hindi ? r1.LabelHindi : r1.LabelEnglish, true);
-                        AddCell(table, r1.Value, false);
-                        AddCell(table, r2 != null ? (hindi ? r2.LabelHindi : r2.LabelEnglish) : "", true);
-                        AddCell(table, r2?.Value ?? "", false);
+                        content.Item().PaddingTop(10).Text(hindi ? "तौल चित्र" : "Weighment Images")
+                            .FontSize(10).Bold().FontColor(Colors.Blue.Darken2);
+                        content.Item().PaddingTop(3).Table(imagesTable =>
+                        {
+                            imagesTable.ColumnsDefinition(columns =>
+                            {
+                                columns.RelativeColumn();
+                                columns.RelativeColumn();
+                            });
+
+                            foreach (var image in printableImages)
+                            {
+                                imagesTable.Cell().Padding(4).Column(imageCell =>
+                                {
+                                    imageCell.Item().AlignCenter().Text(image.Label).FontSize(8)
+                                        .FontColor(Colors.Grey.Darken1);
+                                    imageCell.Item().PaddingTop(2).Height(145).AlignCenter()
+                                        .Image(File.ReadAllBytes(image.FilePath)).FitArea();
+                                });
+                            }
+
+                            if (printableImages.Count % 2 != 0)
+                                imagesTable.Cell().Padding(4).Text(string.Empty);
+                        });
                     }
                 });
 

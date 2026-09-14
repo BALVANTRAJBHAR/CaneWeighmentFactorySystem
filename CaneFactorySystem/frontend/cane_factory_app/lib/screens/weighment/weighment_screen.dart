@@ -143,18 +143,28 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
 
   /// Camera capture runs in the background on the server after Gross/Tare save;
   /// wait briefly then fetch the metadata list so thumbnails appear automatically.
-  Future<void> _loadCapturedImages(int purchaseId) async {
+  Future<bool> _loadCapturedImages(int purchaseId, String stage) async {
     _lastCapturedPurchaseId = purchaseId;
-    await Future.delayed(const Duration(seconds: 2));
-    try {
-      final res =
-          await ApiClient.instance.dio.get('/api/purchases/$purchaseId/images');
-      if (res.statusCode == 200 &&
-          mounted &&
-          _lastCapturedPurchaseId == purchaseId) {
-        setState(() => _capturedImages = res.data);
-      }
-    } catch (_) {}
+    for (var attempt = 0; attempt < 24; attempt++) {
+      if (attempt > 0) await Future.delayed(const Duration(milliseconds: 250));
+      try {
+        final res = await ApiClient.instance.dio
+            .get('/api/purchases/$purchaseId/images');
+        if (res.statusCode == 200 && res.data is List) {
+          final images = (res.data as List).toList();
+          final stageImages =
+              images.where((image) => image['captureStage'] == stage).toList();
+          if (mounted && _lastCapturedPurchaseId == purchaseId) {
+            setState(() => _capturedImages = images);
+          }
+          if (stageImages.isNotEmpty) {
+            await _sound.playConfiguredEvent('IMAGE_CAPTURED');
+            return true;
+          }
+        }
+      } catch (_) {}
+    }
+    return false;
   }
 
   Future<void> _lookupGrower() async {
@@ -229,7 +239,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       if (!mounted) return;
       if (res.statusCode == 200) {
         _toast(res.data['message']);
-        _sound.onWeighmentSaved();
+        await _sound.onWeighmentSaved();
         final purchaseId = res.data['purchaseId'] as int;
         // reset new-entry fields; keep configuration selections for fast operation
         setState(() {
@@ -240,7 +250,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           _lastPrintStage = 'GROSS';
         });
         _loadPending();
-        _loadCapturedImages(purchaseId);
+        _loadCapturedImages(purchaseId, 'GROSS');
         _autoPrint(res.data['autoPrint']);
       } else {
         _toast(ApiClient.errorMessage(res), error: true);
@@ -274,7 +284,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       if (!mounted) return;
       if (res.statusCode == 200) {
         _toast('${res.data['message']} Purchase ID: ${res.data['purchaseId']}');
-        _sound.onWeighmentSaved();
+        await _sound.onWeighmentSaved();
         final purchaseId = _selectedPurchase!['purchaseId'] as int;
         setState(() {
           _selectedPurchase = null;
@@ -283,7 +293,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           _lastPrintStage = 'TARE';
         });
         _loadPending();
-        _loadCapturedImages(purchaseId);
+        _loadCapturedImages(purchaseId, 'TARE');
         _autoPrint(res.data['autoPrint']);
       } else {
         _toast(ApiClient.errorMessage(res), error: true);
@@ -355,14 +365,29 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                                       ? _grossPanel()
                                       : _tarePanel()),
                               const SizedBox(width: 6),
-                              SizedBox(width: 360, child: _cameraPanel()),
+                              SizedBox(
+                                  width: 480,
+                                  height: 370,
+                                  child: _cameraPanel()),
                             ])
-                      : Column(children: [
-                          Expanded(
-                              child: _grossMode ? _grossPanel() : _tarePanel()),
-                          const SizedBox(height: 6),
-                          SizedBox(height: 220, child: _cameraPanel()),
-                        ]),
+                      : Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                              // In a restored/non-maximized window reserve
+                              // three parts for the form and one part for the
+                              // cameras. This keeps the camera area at 25% of
+                              // the available width instead of full width.
+                              Expanded(
+                                  flex: 3,
+                                  child: _grossMode
+                                      ? _grossPanel()
+                                      : _tarePanel()),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                  flex: 1,
+                                  child: SizedBox(
+                                      height: 320, child: _cameraPanel())),
+                            ]),
             ),
             const SizedBox(height: 6),
             // ---------- BOTTOM: pending grid ----------
@@ -593,30 +618,36 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 ),
               ),
               SizedBox(
-                width: 120,
-                child: TextField(
-                  controller: _cutting,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))
-                  ],
-                  decoration: const InputDecoration(
-                      labelText: 'Cutting %', hintText: 'Example: 2.00'),
-                ),
-              ),
-              SizedBox(
-                width: 120,
-                child: TextField(
-                  controller: _tax,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))
-                  ],
-                  decoration: const InputDecoration(
-                      labelText: 'Tax %', hintText: 'Example: 0.00'),
-                ),
+                width: 252,
+                child: Row(children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _tax,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                            RegExp(r'^\d*\.?\d{0,2}'))
+                      ],
+                      decoration: const InputDecoration(
+                          labelText: 'Tax %', hintText: '0.00'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: _cutting,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                            RegExp(r'^\d*\.?\d{0,2}'))
+                      ],
+                      decoration: const InputDecoration(
+                          labelText: 'Cutting %', hintText: '2.00'),
+                    ),
+                  ),
+                ]),
               ),
             ]),
             const SizedBox(height: 16),
@@ -745,7 +776,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Expanded(
           flex: _capturedImages.isEmpty ? 1 : 3,
-          child: CameraLivePreviewPanel(cameras: _cameras, compact: true)),
+          child: CameraLivePreviewPanel(
+              cameras: _cameras, compact: true, squareCards: true)),
       if (_capturedImages.isNotEmpty) ...[
         const Divider(height: 12),
         Row(children: [

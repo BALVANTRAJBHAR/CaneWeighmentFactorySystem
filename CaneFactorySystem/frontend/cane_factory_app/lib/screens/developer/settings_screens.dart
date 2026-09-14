@@ -278,6 +278,8 @@ class _CamerasTab extends StatefulWidget {
 
 class _CamerasTabState extends State<_CamerasTab> {
   List cams = [];
+  final _imageRootController = TextEditingController();
+  String? _effectiveImageRoot;
 
   @override
   void initState() {
@@ -288,6 +290,34 @@ class _CamerasTabState extends State<_CamerasTab> {
   Future<void> _load() async {
     final res = await ApiClient.instance.dio.get('/api/config/cameras');
     if (res.statusCode == 200 && mounted) setState(() => cams = res.data);
+    try {
+      final storage =
+          await ApiClient.instance.dio.get('/api/config/image-storage');
+      if (storage.statusCode == 200 && mounted) {
+        _imageRootController.text =
+            storage.data['configuredPath']?.toString() ?? '';
+        setState(() =>
+            _effectiveImageRoot = storage.data['effectiveRoot']?.toString());
+      }
+    } catch (_) {
+      // Camera list remains usable when an older API has not exposed this endpoint yet.
+    }
+  }
+
+  Future<void> _saveImageRoot() async {
+    final res = await ApiClient.instance.dio.put('/api/config/image-storage',
+        data: {'path': _imageRootController.text.trim()});
+    if (mounted) showResult(context, res);
+    if (res.statusCode == 200 && mounted) {
+      setState(
+          () => _effectiveImageRoot = res.data['effectiveRoot']?.toString());
+    }
+  }
+
+  @override
+  void dispose() {
+    _imageRootController.dispose();
+    super.dispose();
   }
 
   Future<void> _edit([Map<String, dynamic>? cam]) async {
@@ -498,6 +528,32 @@ class _CamerasTabState extends State<_CamerasTab> {
             icon: const Icon(Icons.add),
             label: const Text('Add Camera')),
       ]),
+      const SizedBox(height: 12),
+      Card(
+          child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SizedBox(
+                        width: 420,
+                        child: TextField(
+                            controller: _imageRootController,
+                            decoration: const InputDecoration(
+                                labelText: 'Weighment Image Root (optional)',
+                                hintText: r'C:\ or D:\ or E:\CustomPath',
+                                helperText:
+                                    'Blank = auto-select C:/D:/E: drive with the most free space'))),
+                    FilledButton.icon(
+                        onPressed: _saveImageRoot,
+                        icon: const Icon(Icons.save_outlined),
+                        label: const Text('Save Image Path')),
+                    if (_effectiveImageRoot != null)
+                      Text('Effective folder: $_effectiveImageRoot',
+                          style: const TextStyle(fontSize: 12)),
+                  ]))),
       for (final cam in cams)
         Card(
             child: ListTile(
@@ -680,6 +736,12 @@ class _PrintTabState extends State<_PrintTab> {
           title: const Text('Auto Print after Save'),
           value: v!['autoPrint'] == true,
           onChanged: (x) => setState(() => v!['autoPrint'] = x)),
+      SwitchListTile(
+          title: const Text('Print captured images on A4'),
+          subtitle: const Text(
+              'When enabled, Gross/Tare camera images are included below the A4 weighment details.'),
+          value: v!['printImages'] != false,
+          onChanged: (x) => setState(() => v!['printImages'] = x)),
       Wrap(spacing: 14, runSpacing: 14, children: [
         for (final e in [
           ('grossCopies', 'Gross Copies'),
@@ -1503,13 +1565,17 @@ class _CompanyTabState extends State<_CompanyTab> {
               hintText: 'Printed on all slips/reports'),
           onChanged: (x) {
             v!['companyName'] = x;
-            if (!_companyNameHiManual) _companyNameHi.text = HindiTransliterator.transliterate(x);
+            if (!_companyNameHiManual)
+              _companyNameHi.text = HindiTransliterator.transliterate(x);
           }),
       const SizedBox(height: 12),
       TextField(
           controller: _companyNameHi,
           decoration: const InputDecoration(labelText: 'Company Name (Hindi)'),
-          onChanged: (x) { _companyNameHiManual = true; v!['companyNameHi'] = x; }),
+          onChanged: (x) {
+            _companyNameHiManual = true;
+            v!['companyNameHi'] = x;
+          }),
       const SizedBox(height: 12),
       TextField(
           controller: TextEditingController(text: v!['address']),
@@ -1517,14 +1583,18 @@ class _CompanyTabState extends State<_CompanyTab> {
           maxLines: 2,
           onChanged: (x) {
             v!['address'] = x;
-            if (!_addressHiManual) _addressHi.text = HindiTransliterator.transliterate(x);
+            if (!_addressHiManual)
+              _addressHi.text = HindiTransliterator.transliterate(x);
           }),
       const SizedBox(height: 12),
       TextField(
           controller: _addressHi,
           decoration: const InputDecoration(labelText: 'Address (Hindi)'),
           maxLines: 2,
-          onChanged: (x) { _addressHiManual = true; v!['addressHi'] = x; }),
+          onChanged: (x) {
+            _addressHiManual = true;
+            v!['addressHi'] = x;
+          }),
       const SizedBox(height: 12),
       TextField(
           controller: _logoPath,
@@ -1542,6 +1612,20 @@ class _CompanyTabState extends State<_CompanyTab> {
           child: Text(
               'Select a PNG/JPG stored on this factory PC. It is used by A4/PDF and Dot Matrix slips.',
               style: TextStyle(fontSize: 12, color: Colors.grey))),
+      const SizedBox(height: 8),
+      Card(
+          child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Text('Windows application branding',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                    SizedBox(height: 4),
+                    Text(
+                        'The company logo above changes printed slips. The native Windows title is configured in windows/runner/main.cpp, and the Windows app icon is windows/runner/resources/app_icon.ico. Replace that ICO and rebuild the Windows app to apply it.',
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  ]))),
       const SizedBox(height: 12),
       DropdownButtonFormField<String>(
           value: v!['defaultLanguage'],
