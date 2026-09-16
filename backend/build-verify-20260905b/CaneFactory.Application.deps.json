@@ -1,0 +1,39 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "CaneFactory.Application/1.0.0": {
+        "dependencies": {
+          "CaneFactory.Domain": "1.0.0"
+        },
+        "runtime": {
+          "CaneFactory.Application.dll": {}
+        }
+      },
+      "CaneFactory.Domain/1.0.0": {
+        "runtime": {
+          "CaneFactory.Domain.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "CaneFactory.Application/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "CaneFactory.Domain/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

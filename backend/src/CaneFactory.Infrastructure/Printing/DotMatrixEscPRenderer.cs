@@ -1,0 +1,182 @@
+using CaneFactory.Application.DTOs;
+using CaneFactory.Application.Interfaces;
+using SkiaSharp;
+using SkiaSharp.HarfBuzz;
+
+namespace CaneFactory.Infrastructure.Printing;
+
+/// <summary>
+/// TVS MSP 270 Classic Plus (9-pin, ESC/P2-compatible) renderer. The slip is first rasterized to a
+/// monochrome SKBitmap using proper HarfBuzz text shaping (so Hindi conjuncts/matras render
+/// correctly - the printer's own font is never used), then converted 1:1 to Epson ESC * bit-image
+/// graphics. RenderPreview returns that exact source bitmap as PNG, so preview == print (WYSIWYG).
+/// </summary>
+public class DotMatrixEscPRenderer : IPrintRenderer
+{
+    public string TargetType => "DotMatrix";
+
+    private const int WidthPx = 960;        // 8" usable width @ 120 dpi (ESC * m=1, double density)
+    private const byte LineSpacingUnits = 20; // ESC '3' n -> n/180" ; one 8-dot band = 8/72" = 20/180"
+
+    public (byte[] bytes, string contentType, string fileExtension) RenderPreview(PrintDocument doc)
+    {
+        using var bmp = Draw(doc);
+        using var image = SKImage.FromBitmap(bmp);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        return (data.ToArray(), "image/png", "png");
+    }
+
+    public (byte[] bytes, string contentType, string fileExtension) RenderFinal(PrintDocument doc)
+    {
+        using var bmp = Draw(doc);
+        return (ToEscP(bmp), "application/octet-stream", "prn");
+    }
+
+    private static SKBitmap Draw(PrintDocument doc)
+    {
+        var hindi = string.Equals(doc.Language, "hi", StringComparison.OrdinalIgnoreCase);
+        var regular = PrintFonts.Get(doc.Language, bold: false);
+        var bold = PrintFonts.Get(doc.Language, bold: true);
+
+        const int headerH = 120, rowH = 32, footerH = 60;
+        var pairRows = (int)Math.Ceiling(doc.Rows.Count / 2.0);
+        var height = headerH + pairRows * rowH + footerH;
+        height = ((height + 7) / 8) * 8; // pad to a multiple of 8 rows for clean ESC* banding
+
+        var bmp = new SKBitmap(WidthPx, height);
+        using var canvas = new SKCanvas(bmp);
+        canvas.Clear(SKColors.White);
+        using var paint = new SKPaint { Color = SKColors.Black, IsAntialias = false };
+        using var titleFont = new SKFont(bold, 26);
+        using var subFont = new SKFont(bold, 18);
+        using var labelFont = new SKFont(bold, 15);
+        using var valueFont = new SKFont(regular, 15);
+        using var shaperBold = new SKShaper(bold);
+        using var shaperRegular = new SKShaper(regular);
+
+        var y = 8;
+        if (!string.IsNullOrWhiteSpace(doc.LogoPath) && File.Exists(doc.LogoPath))
+        {
+            try
+            {
+                using var logo = SKBitmap.Decode(doc.LogoPath);
+                if (logo != null)
+                {
+                    var scale = Math.Min(52f / logo.Width, 52f / logo.Height);
+                    var destination = new SKRect(10, 4, 10 + logo.Width * scale, 4 + logo.Height * scale);
+                    canvas.DrawBitmap(logo, destination, new SKSamplingOptions(SKFilterMode.Linear));
+                }
+            }
+            catch { /* logo is optional; a bad image must never stop operational printing */ }
+        }
+        DrawCentered(canvas, doc.CompanyName, shaperBold, titleFont, paint, WidthPx, ref y, 30);
+        if (!string.IsNullOrWhiteSpace(doc.Address))
+            DrawCentered(canvas, doc.Address, shaperRegular, subFont, paint, WidthPx, ref y, 22);
+
+        if (doc.QrValue.HasValue)
+        {
+            var qrPng = QrCodeHelper.GeneratePng(doc.QrValue.Value.ToString(), 3);
+            using var qrBmp = SKBitmap.Decode(qrPng);
+            canvas.DrawBitmap(qrBmp, WidthPx - qrBmp.Width - 10, 4, new SKSamplingOptions(SKFilterMode.Nearest));
+        }
+
+        y += 4;
+        canvas.DrawLine(10, y, WidthPx - 10, y, paint);
+        y += 24;
+        var title = hindi ? doc.TitleHindi : doc.TitleEnglish;
+        canvas.DrawShapedText(shaperBold, title, new SKPoint(10, y), SKTextAlign.Left, subFont, paint);
+        if (!string.IsNullOrWhiteSpace(doc.SeasonName))
+            canvas.DrawShapedText(shaperRegular, $"{(doc.Language == "hi" ? "पेराई सत्र" : "Season")}: {doc.SeasonName}", new SKPoint(WidthPx - 260, y), SKTextAlign.Left, valueFont, paint);
+        y += 12;
+        canvas.DrawLine(10, y, WidthPx - 10, y, paint);
+        y += 12;
+
+        var colWidth = WidthPx / 2;
+        for (var i = 0; i < doc.Rows.Count; i += 2)
+        {
+            DrawRow(canvas, doc.Rows[i], hindi, shaperBold, shaperRegular, labelFont, valueFont, paint, 10, y, colWidth);
+            if (i + 1 < doc.Rows.Count)
+                DrawRow(canvas, doc.Rows[i + 1], hindi, shaperBold, shaperRegular, labelFont, valueFont, paint, colWidth + 10, y, colWidth);
+            y += rowH;
+        }
+
+        y += 4;
+        canvas.DrawLine(10, y, WidthPx - 10, y, paint);
+        y += 22;
+        canvas.DrawShapedText(shaperRegular, $"{(doc.Language == "hi" ? "द्वारा जनरेट किया गया" : "Generated By")}: {doc.GeneratedByUserName}", new SKPoint(10, y), SKTextAlign.Left, valueFont, paint);
+        canvas.DrawShapedText(shaperRegular, $"Print: {doc.PrintDateTime:dd-MM-yyyy HH:mm:ss}", new SKPoint(WidthPx - 330, y), SKTextAlign.Left, valueFont, paint);
+
+        canvas.Flush();
+        return bmp;
+    }
+
+    private static void DrawCentered(SKCanvas canvas, string text, SKShaper shaper, SKFont font, SKPaint paint, int width, ref int y, int lineHeight)
+    {
+        var shaped = shaper.Shape(text, font);
+        var x = Math.Max(0, (width - shaped.Width) / 2f);
+        canvas.DrawShapedText(shaper, text, new SKPoint(x, y + lineHeight - 6), SKTextAlign.Left, font, paint);
+        y += lineHeight;
+    }
+
+    private static void DrawRow(SKCanvas canvas, PrintRow row, bool hindi, SKShaper shaperBold, SKShaper shaperRegular,
+        SKFont labelFont, SKFont valueFont, SKPaint paint, int x, int y, int columnWidth)
+    {
+        var label = (hindi ? row.LabelHindi : row.LabelEnglish) + ":";
+        canvas.DrawShapedText(shaperBold, label, new SKPoint(x, y + 18), SKTextAlign.Left, labelFont, paint);
+        var maxValueWidth = columnWidth - 250; // leave margin before the next column starts
+        var value = Truncate(row.Value, shaperRegular, valueFont, maxValueWidth);
+        canvas.DrawShapedText(shaperRegular, value, new SKPoint(x + 230, y + 18), SKTextAlign.Left, valueFont, paint);
+    }
+
+    /// <summary>Prevents long values (long names/addresses) overlapping the next column - the full
+    /// value is always preserved in the stored transaction data, only this narrow printout truncates.</summary>
+    private static string Truncate(string text, SKShaper shaper, SKFont font, float maxWidth)
+    {
+        if (maxWidth <= 0 || shaper.Shape(text, font).Width <= maxWidth) return text;
+        var truncated = text;
+        while (truncated.Length > 1 && shaper.Shape(truncated + "...", font).Width > maxWidth)
+            truncated = truncated[..^1];
+        return truncated + "...";
+    }
+
+    /// <summary>Epson ESC/P bit-image raster: ESC '3' fixes line spacing to exactly one 8-dot band
+    /// (8/72"), then each band is emitted as ESC * 1 nL nH + 1 byte/column (8 vertical bits, MSB=top).</summary>
+    private static byte[] ToEscP(SKBitmap bmp)
+    {
+        using var ms = new MemoryStream();
+        void W(params byte[] b) => ms.Write(b, 0, b.Length);
+
+        W(0x1B, 0x40);                       // ESC @  - initialize printer
+        W(0x1B, 0x33, LineSpacingUnits);      // ESC 3 n - line spacing n/180"
+
+        int width = bmp.Width, height = bmp.Height;
+        var nL = (byte)(width & 0xFF);
+        var nH = (byte)((width >> 8) & 0xFF);
+
+        for (var band = 0; band < height; band += 8)
+        {
+            W(0x1B, 0x2A, 0x01, nL, nH); // ESC * 1 nL nH - double density, 8 dots/column
+            var line = new byte[width];
+            for (var x = 0; x < width; x++)
+            {
+                byte col = 0;
+                for (var bit = 0; bit < 8; bit++)
+                {
+                    var py = band + bit;
+                    if (py < height && IsBlack(bmp, x, py)) col |= (byte)(1 << (7 - bit));
+                }
+                line[x] = col;
+            }
+            ms.Write(line, 0, line.Length);
+            W(0x0D, 0x0A); // CR LF - advances exactly one band (matches the ESC 3 20 line spacing)
+        }
+        W(0x0A, 0x0A, 0x0A, 0x0A); // tear-off margin (continuous stationery - no form feed/cut)
+        return ms.ToArray();
+    }
+
+    private static bool IsBlack(SKBitmap bmp, int x, int y)
+    {
+        var c = bmp.GetPixel(x, y);
+        return (c.Red + c.Green + c.Blue) / 3 < 128;
+    }
+}
