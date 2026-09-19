@@ -262,23 +262,31 @@ class _GrowerFormState extends State<_GrowerForm> {
       'status': _status,
       'acceptDuplicateWarning': acceptWarnings,
     };
-    final res = widget.existing != null
-        ? await ApiClient.instance.dio
-            .put('/api/growers/${widget.existing!['id']}', data: data)
-        : await ApiClient.instance.dio.post('/api/growers', data: data);
-    setState(() => _busy = false);
-    if (res.statusCode == 200) {
-      if (mounted) {
+    try {
+      final res = widget.existing != null
+          ? await ApiClient.instance.dio
+              .put('/api/growers/${widget.existing!['id']}', data: data)
+          : await ApiClient.instance.dio.post('/api/growers', data: data);
+      if (!mounted) return;
+      if (res.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(res.data['message']),
             backgroundColor: const Color(0xFF2E7D32)));
         Navigator.pop(context, true);
+      } else if (res.statusCode == 422 &&
+          res.data['requiresConfirmation'] == true) {
+        setState(() => _warnings = List<String>.from(res.data['warnings']));
+      } else {
+        setState(() => _error = ApiClient.errorMessage(res));
       }
-    } else if (res.statusCode == 422 &&
-        res.data['requiresConfirmation'] == true) {
-      setState(() => _warnings = List<String>.from(res.data['warnings']));
-    } else {
-      setState(() => _error = ApiClient.errorMessage(res));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = ApiClient.exceptionMessage(error,
+            'Grower save timed out or the server could not complete the request. Check the API/SQL Server log, then try again.');
+      });
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 

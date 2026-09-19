@@ -112,7 +112,7 @@ public class WeighmentController : ControllerBase
         if (!grower.Status) return Conflict(new { message = $"Grower '{grower.GrowerName}' is INACTIVE and cannot be used." });
         if (!await _db.VehicleTypes.AnyAsync(v => v.Id == req.VehicleTypeId && !v.IsDeleted && v.Status))
             return BadRequest(new { message = "Selected Vehicle Type does not exist or is inactive." });
-        var vehicleNumber = Validators.NormUpper(req.VehicleNumber);
+        var vehicleNumber = Validators.NormalizeVehicleNumber(req.VehicleNumber);
         if (vehicleNumber.Length is < 4 or > 15)
             return BadRequest(new { message = "Vehicle Number must be 4-15 characters. Example: UP32AB1234" });
         var variety = await _db.Varieties.FirstOrDefaultAsync(v => v.Id == req.VarietyId && !v.IsDeleted && v.Status);
@@ -128,11 +128,14 @@ public class WeighmentController : ControllerBase
         var minError = await MinimumWeightErrorAsync(grossQuintal, applyGross: true);
         if (minError != null) return Conflict(new { message = minError, soundEvent = "BELOW_MINIMUM" });
 
+        var now = DateTime.UtcNow;
+        var eligibilityError = await CanStartNewCaneGrossAsync(vehicleNumber, now);
+        if (eligibilityError != null) return Conflict(new { message = eligibilityError, soundEvent = "WEIGHING_ACTIVE" });
+
         var season = await _db.Seasons.FirstOrDefaultAsync(s => s.IsActive && !s.IsDeleted);
         if (season == null) return Conflict(new { message = "No ACTIVE season is configured. Ask Admin/Developer to activate a Season." });
 
         // Rate snapshot at gross time
-        var now = DateTime.UtcNow;
         // Rate periods are configured as calendar dates, not instants. Comparing a local
         // date selected in the desktop UI with UTC time made a same-day rate unavailable
         // until its accidentally persisted clock time had passed.
@@ -172,6 +175,8 @@ public class WeighmentController : ControllerBase
                 CreatedBy = _current.UserId
             };
             _db.Purchases.Add(purchase);
+            await _db.SaveChangesAsync();
+            await MarkPlatformClearRequiredAsync();
             await _db.SaveChangesAsync();
         });
 
@@ -232,6 +237,8 @@ public class WeighmentController : ControllerBase
         p.UpdatedAt = DateTime.UtcNow;
         p.UpdatedBy = _current.UserId;
         await _db.SaveChangesAsync();
+        await MarkPlatformClearRequiredAsync();
+        await _db.SaveChangesAsync();
 
         await _audit.LogAsync("TareWeighment", "Weighment", "Purchase", p.Id.ToString(),
             newValue: new { p.TareWeightQuintal, p.NetWeightQuintal, p.FinalWeightQuintal, p.PurchaseAmount });
@@ -240,14 +247,22 @@ public class WeighmentController : ControllerBase
         var smsQueued = false;
         try
         {
-            smsQueued = await _sms.QueueAsync("TARE_COMPLETED", p.GrowerId, p.Grower.Mobile, $"PUR-{p.Id}", new Dictionary<string, string>
+            var placeholders = new Dictionary<string, string>
             {
                 ["GrowerName"] = p.Grower.GrowerName,
                 ["GrowerCode"] = p.GrowerCode,
                 ["VehicleNumber"] = p.VehicleNumber,
                 ["FinalWeight"] = final.ToString("F2"),
                 ["PurchaseAmount"] = amount.ToString("F2")
-            });
+            };
+            var growerQueued = await _sms.QueueAsync("TARE_COMPLETED", p.GrowerId, p.Grower.Mobile, $"PUR-{p.Id}", placeholders);
+            var recipients = await _db.SmsRecipients.AsNoTracking()
+                .Where(x => !x.IsDeleted && x.Status && x.ReceiveCanePurchase).ToListAsync();
+            var ownerQueued = new List<bool>();
+            foreach (var recipient in recipients)
+                ownerQueued.Add(await _sms.QueueForOperationalRecipientAsync("TARE_COMPLETED", recipient.MobileNumber,
+                    $"PUR-{p.Id}-OWNER-{recipient.Id}", placeholders));
+            smsQueued = growerQueued || ownerQueued.Any(x => x);
         }
         catch { /* SMS is a notification only - never affects a successful weighment */ }
 
@@ -277,6 +292,45 @@ public class WeighmentController : ControllerBase
         var sound = await _db.SoundConfigs.AsNoTracking().FirstOrDefaultAsync(x => !x.IsDeleted);
         var messages = await _db.SoundMessages.AsNoTracking().Where(m => !m.IsDeleted && m.Enabled).ToListAsync();
         return Ok(new { weightRules = r, soundConfig = sound, soundMessages = messages });
+    }
+
+    private async Task<string?> CanStartNewCaneGrossAsync(string vehicleNumber, DateTime now)
+    {
+        var platformLock = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Key == "WeighbridgePlatformClearRequired");
+        if (platformLock?.Value == "1")
+            return "The previous vehicle has not yet cleared the platform. Wait until the indicator returns to zero before starting a new gross weighment.";
+
+        var pending = await _db.Purchases.AsNoTracking().FirstOrDefaultAsync(p =>
+            !p.IsDeleted && p.VehicleNumber == vehicleNumber && p.GrossTareStatus == "GROSS_DONE");
+        if (pending != null)
+            return $"Vehicle {vehicleNumber} already has pending tare for Purchase ID {pending.Id}. Complete its tare/final weighment before another gross.";
+
+        var rules = await _db.WeightRules.AsNoTracking().FirstOrDefaultAsync(r => !r.IsDeleted);
+        var cooldown = Math.Max(0, rules?.VehicleReweighCooldownMinutes ?? 30);
+        if (cooldown == 0) return null;
+        var lastCompletedAt = await _db.Purchases.AsNoTracking()
+            .Where(p => !p.IsDeleted && p.VehicleNumber == vehicleNumber && p.GrossTareStatus == "TARE_DONE" && p.TareDateTime != null)
+            .OrderByDescending(p => p.TareDateTime).Select(p => p.TareDateTime).FirstOrDefaultAsync();
+        if (lastCompletedAt is not DateTime completedAt) return null;
+        var releaseAt = completedAt.AddMinutes(cooldown);
+        if (now < releaseAt)
+        {
+            var remaining = Math.Max(1, (int)Math.Ceiling((releaseAt - now).TotalMinutes));
+            return $"Vehicle {vehicleNumber} was finalized at {completedAt.ToLocalTime():dd-MMM-yyyy HH:mm}. Reweigh is allowed after {cooldown} minutes; wait about {remaining} more minute(s).";
+        }
+        return null;
+    }
+
+    private async Task MarkPlatformClearRequiredAsync()
+    {
+        var setting = await _db.SystemSettings.FirstOrDefaultAsync(s => s.Key == "WeighbridgePlatformClearRequired");
+        if (setting == null)
+        {
+            setting = new CaneFactory.Domain.Entities.SystemSetting { Key = "WeighbridgePlatformClearRequired", Value = "1" };
+            _db.SystemSettings.Add(setting);
+        }
+        else setting.Value = "1";
     }
 
     private async Task<string?> MinimumWeightErrorAsync(decimal weightQuintal, bool applyGross)
@@ -323,3 +377,5 @@ public class WeighmentController : ControllerBase
         return false;
     }
 }
+
+

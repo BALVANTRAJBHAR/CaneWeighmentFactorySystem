@@ -34,6 +34,12 @@ public class PaymentReportRow
     public decimal LoanDeductedAmount { get; set; }
     public decimal NetPayableAmount { get; set; }
     public string PaymentModeName { get; set; } = string.Empty;
+    public string? AccountHolderName { get; set; }
+    public string? BankName { get; set; }
+    public string? BankBranch { get; set; }
+    public string? BankIfsc { get; set; }
+    public string? BankAccountNumber { get; set; }
+    public bool IsBankPayment { get; set; }
     public DateTime PaymentDate { get; set; }
     public string PaidByUserName { get; set; } = string.Empty;
     public string PaymentStatus { get; set; } = string.Empty;
@@ -61,3 +67,4 @@ public class DailyCollectionRow
     public decimal FinalWeightQuintal { get; set; }
     public decimal PurchaseAmount { get; set; }
 }
+

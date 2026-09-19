@@ -69,6 +69,8 @@ public interface ICameraCaptureService
 {
     Task<List<CameraCaptureResult>> CaptureForPurchaseAsync(int purchaseId, string stage, int? capturedByUserId, CancellationToken ct = default);
     Task<List<CameraCaptureResult>> CaptureForPaymentAsync(int paymentId, int? capturedByUserId, CancellationToken ct = default);
+    Task<CameraCaptureResult> CaptureForPaymentPurchaseAsync(int paymentId, int purchaseId, int? capturedByUserId,
+        bool replaceExisting = false, CancellationToken ct = default);
     Task<List<CameraCaptureResult>> CaptureForSalePurchaseAsync(int salePurchaseId, string stage, int? capturedByUserId, CancellationToken ct = default);
     Task<CameraCaptureResult> CaptureSingleAsync(int cameraConfigId, CancellationToken ct = default);
 }
@@ -91,6 +93,7 @@ public interface IPrintEngineService
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildLoanSlipAsync(int loanId, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildLoanRecoverySlipAsync(int loanRecoveryId, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildPaymentSlipAsync(int paymentId, string generatedByUserName);
+    Task<CaneFactory.Application.DTOs.PrintDocument> BuildPaymentBatchSlipAsync(IReadOnlyCollection<int> paymentIds, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildSalePurchaseSlipAsync(int salePurchaseId, string stage, string generatedByUserName);
     CaneFactory.Application.DTOs.PrintDocument BuildTestDocument(string language, string generatedByUserName);
     (byte[] bytes, string contentType, string fileExtension) Render(CaneFactory.Application.DTOs.PrintDocument doc, string target, bool preview);
@@ -115,6 +118,10 @@ public interface ISmsService
         Dictionary<string, string> placeholders);
     Task<bool> QueueForPartyAsync(string eventCode, int partyId, string mobileNumber, string referenceId,
         Dictionary<string, string> placeholders);
+    Task<bool> QueueForOperationalRecipientAsync(string eventCode, string mobileNumber, string referenceId,
+        Dictionary<string, string> placeholders);
+    Task<bool> QueueRawAsync(string eventCode, int? growerId, int? partyId, string mobileNumber,
+        string referenceId, string message);
 }
 
 /// <summary>Phase 11: generic tabular PDF/Excel renderer shared by every report endpoint. Never tied

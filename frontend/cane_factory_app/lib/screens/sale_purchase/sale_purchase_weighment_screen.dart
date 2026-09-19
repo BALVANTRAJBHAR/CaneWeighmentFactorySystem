@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
 import '../../core/file_download.dart';
@@ -310,45 +311,7 @@ class _SalePurchaseWeighmentScreenState
         child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(children: [
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Card(
-                    child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: SegmentedButton<bool>(
-                            segments: const [
-                              ButtonSegment(
-                                  value: false, label: Text('TARE FIRST')),
-                              ButtonSegment(value: true, label: Text('GROSS'))
-                            ],
-                            selected: {
-                              _gross
-                            },
-                            onSelectionChanged: (v) =>
-                                setState(() => _gross = v.first)))),
-                const SizedBox(width: 8),
-                Expanded(
-                    child: Card(
-                        child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 18, vertical: 7),
-                            child: Row(children: [
-                              Text(
-                                  '${live.weightQuintal.toStringAsFixed(2)} Qtl',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .headlineMedium
-                                      ?.copyWith(
-                                          fontWeight: FontWeight.bold,
-                                          color: live.isLive
-                                              ? Colors.green
-                                              : Colors.red)),
-                              const SizedBox(width: 18),
-                              Text(
-                                  '${live.deviceConnected ? 'Connected' : 'Disconnected'} • ${live.readerState} • ${live.stable ? 'Stable' : 'Unstable'}'),
-                              if (live.lastReceivedAt != null)
-                                Text('Last: ${live.lastReceivedAt!.toLocal()}')
-                            ]))))
-              ]),
+              _weighmentHeader(live),
               const SizedBox(height: 8),
               Expanded(
                   child: SingleChildScrollView(
@@ -377,6 +340,103 @@ class _SalePurchaseWeighmentScreenState
               SizedBox(height: 210, child: Card(child: _pendingGrid()))
             ])));
   }
+
+  /// Uses the same three-part hierarchy as Cane Weighment: mode on the left,
+  /// weight centred in its own box, and digitizer health in a separate box.
+  /// This deliberately keeps status details out of the live-weight display.
+  Widget _weighmentHeader(dynamic live) => LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 1000;
+          final modeBox = Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: false, label: Text('TARE FIRST')),
+                  ButtonSegment(value: true, label: Text('GROSS')),
+                ],
+                selected: {_gross},
+                onSelectionChanged: (v) => setState(() => _gross = v.first),
+              ),
+            ),
+          );
+
+          final weightBox = Card(
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 72),
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+              child: Text(
+                '${live.weightQuintal.toStringAsFixed(2)} Qtl',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: live.isLive ? Colors.green : Colors.red),
+              ),
+            ),
+          );
+
+          final statusBox = Card(
+            child: SizedBox(
+              width: compact ? double.infinity : 270,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      live.deviceConnected
+                          ? 'Digitizer: ${live.deviceName ?? 'Main Weighbridge Indicator'}'
+                          : 'Digitizer: Disconnected',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      live.deviceConnected ? 'CONNECTED' : 'DISCONNECTED',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: live.deviceConnected
+                            ? const Color(0xFF2E7D32)
+                            : Colors.red,
+                      ),
+                    ),
+                    Text(
+                      '${live.readerState.replaceAll('_', ' ')} • ${live.stable ? 'STABLE' : 'UNSTABLE'}',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    Text(
+                      live.lastReceivedAt == null
+                          ? 'Last: No data yet'
+                          : 'Last: ${DateFormat('HH:mm:ss').format(live.lastReceivedAt!.toLocal())}',
+                      style: const TextStyle(fontSize: 10),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [modeBox, weightBox, statusBox],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              modeBox,
+              const SizedBox(width: 8),
+              Expanded(child: weightBox),
+              const SizedBox(width: 8),
+              statusBox,
+            ],
+          );
+        },
+      );
 
   Widget _tareForm() => Wrap(
           spacing: 14,

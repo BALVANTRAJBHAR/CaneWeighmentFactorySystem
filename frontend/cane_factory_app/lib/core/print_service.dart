@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
@@ -54,8 +55,14 @@ class PrintService {
               responseType: ResponseType.bytes,
               validateStatus: (s) => s != null && s < 500));
       if (res.statusCode != 200) {
-        return PrintOutcome(false,
-            'Could not generate the print document (server error ${res.statusCode}).');
+        var message =
+            'Could not generate the print document (server error ${res.statusCode}).';
+        try {
+          final decoded =
+              jsonDecode(utf8.decode(List<int>.from(res.data as List))) as Map;
+          if (decoded['message'] != null) message = decoded['message'].toString();
+        } catch (_) {}
+        return PrintOutcome(false, message);
       }
       bytes = res.data as List<int>;
     } catch (_) {
@@ -102,3 +109,4 @@ class PrintService {
     }
   }
 }
+

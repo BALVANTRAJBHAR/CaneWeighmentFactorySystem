@@ -11,3 +11,11 @@ public class PaymentCreateRequest
     public string? TransactionRefNumber { get; set; }
     public string? IdempotencyKey { get; set; }
 }
+
+/// <summary>Manual cash-payment evidence capture request. ReplaceExisting retains the historical audit row
+/// but makes the new image the active evidence for the selected paid purchase.</summary>
+public class PaymentEvidenceCaptureRequest
+{
+    public int? PurchaseId { get; set; }
+    public bool ReplaceExisting { get; set; }
+}

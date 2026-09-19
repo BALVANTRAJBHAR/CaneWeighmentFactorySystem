@@ -39,7 +39,13 @@ var connString = builder.Configuration.GetConnectionString("Default")
 builder.Services.AddDbContext<AppDbContext>(o =>
 {
     if (provider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase)) o.UseSqlite(connString);
-    else o.UseSqlServer(connString, sql => sql.EnableRetryOnFailure(3));
+    else o.UseSqlServer(connString, sql =>
+    {
+        // A blocked SQL operation must surface before the desktop client's
+        // receive timeout, rather than leaving an operator on "Saving...".
+        sql.CommandTimeout(15);
+        sql.EnableRetryOnFailure(3);
+    });
 });
 
 // ---- Application services ----
@@ -55,6 +61,8 @@ builder.Services.AddSingleton<WeighingService>();
 builder.Services.AddHostedService<WeighingRecoveryService>();
 builder.Services.AddScoped<UserStateService>();
 builder.Services.AddScoped<LicenseService>();
+builder.Services.AddScoped<BackupExecutionService>();
+builder.Services.AddHostedService<BackupSchedulerService>();
 
 // ---- Camera capture (Phase 6): vendor-abstracted providers + orchestration service ----
 builder.Services.AddSingleton<ICameraCaptureProvider, IsapiCaptureProvider>();
@@ -251,3 +259,5 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+
+

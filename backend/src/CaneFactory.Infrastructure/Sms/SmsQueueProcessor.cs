@@ -43,7 +43,7 @@ public class SmsQueueProcessor : BackgroundService
         var audit = scope.ServiceProvider.GetRequiredService<IAuditService>();
 
         var cfg = await db.SmsConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted, ct);
-        if (cfg == null || !cfg.Enabled) return;
+        if (cfg == null) return;
 
         var now = DateTime.UtcNow;
         var batch = await db.SmsLogs
@@ -51,10 +51,27 @@ public class SmsQueueProcessor : BackgroundService
             .OrderBy(l => l.CreatedAt).Take(20).ToListAsync(ct);
         if (batch.Count == 0) return;
 
+        // Disabling the master/event switch is a deliberate operator decision. Do not leave an old
+        // queued SMS to be sent unexpectedly if the switch is re-enabled later.
+        var eligible = new List<CaneFactory.Domain.Entities.SmsLog>();
+        foreach (var log in batch)
+        {
+            if (cfg.Enabled && IsEventEnabled(cfg, log.EventCode))
+            {
+                eligible.Add(log);
+                continue;
+            }
+            log.Status = "CANCELLED";
+            log.NextAttemptAt = null;
+            log.FailureReason = cfg.Enabled ? "SMS event disabled before delivery." : "SMS master disabled before delivery.";
+        }
+        if (eligible.Count != batch.Count) await db.SaveChangesAsync(ct);
+        if (eligible.Count == 0) return;
+
         var apiKey = cfg.ApiKeyEncrypted != null ? protector.Unprotect(cfg.ApiKeyEncrypted) : null;
         var apiSecret = cfg.ApiSecretEncrypted != null ? protector.Unprotect(cfg.ApiSecretEncrypted) : null;
 
-        foreach (var log in batch)
+        foreach (var log in eligible)
         {
             log.Status = "PROCESSING";
             log.AttemptCount++;
@@ -87,4 +104,12 @@ public class SmsQueueProcessor : BackgroundService
     }
 
     private static string? Truncate(string? s) => s == null ? null : (s.Length <= 500 ? s : s[..500]);
+
+    private static bool IsEventEnabled(CaneFactory.Domain.Entities.SmsConfig cfg, string eventCode) => eventCode switch
+    {
+        "TARE_COMPLETED" => cfg.CanePurchaseSmsEnabled,
+        "PAYMENT_COMPLETED" => cfg.CanePaymentSmsEnabled,
+        "SALE_PURCHASE_COMPLETED" => cfg.SalePurchaseSmsEnabled,
+        _ => true
+    };
 }

@@ -238,6 +238,9 @@ class _DeviceConfigScreenState extends State<DeviceConfigScreen> {
                             DropdownMenuItem(
                                 value: 'USB', child: Text('USB-to-Serial')),
                             DropdownMenuItem(
+                                value: 'RemoteAgent',
+                                child: Text('Remote USB/COM PC (Scale Bridge)')),
+                            DropdownMenuItem(
                                 value: 'TCPIP', child: Text('TCP/IP (future)'))
                           ],
                           onChanged: (v) => connType = v!)),

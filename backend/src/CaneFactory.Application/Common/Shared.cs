@@ -39,4 +39,8 @@ public static class Validators
     public static bool IsAadhaar(string? v) => !string.IsNullOrWhiteSpace(v) && v.Length == 12 && v.All(char.IsDigit);
     public static string Norm(string? v) => (v ?? string.Empty).Trim();
     public static string NormUpper(string? v) => Norm(v).ToUpperInvariant();
+    /// <summary>Canonical identifier used for all vehicle duplicate checks and storage.
+    /// UP32 AB 1234, up32ab1234 and UP32AB-1234 all become UP32AB1234.</summary>
+    public static string NormalizeVehicleNumber(string? v) =>
+        new string(Norm(v).Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
 }

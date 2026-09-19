@@ -172,6 +172,44 @@ public class PrintController : ControllerBase
         return File(bytes, contentType, $"Payment-{id}.{ext}");
     }
 
+    /// <summary>Renders one consolidated PDF for all independently auditable payments created
+    /// by a date-range payment action. The opaque batch token prevents a long ID list in the URL.</summary>
+    [HttpGet("payment-batch")]
+    public async Task<IActionResult> PaymentBatchSlip([FromQuery] string? batchToken, [FromQuery] string? target,
+        [FromQuery] string format = "final")
+    {
+        if (!_current.HasPermission("Payment.Print"))
+            return StatusCode(403, new { message = "You do not have 'Payment.Print' permission." });
+        if (string.IsNullOrWhiteSpace(batchToken) || batchToken.Length != 32)
+            return BadRequest(new { message = "A valid payment batch token is required." });
+        if (format is not ("final" or "preview"))
+            return BadRequest(new { message = "format must be final or preview." });
+
+        var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
+        var resolvedTarget = target ?? cfg?.PrinterType ?? "DotMatrix";
+        if (resolvedTarget is not ("A4" or "DotMatrix"))
+            return BadRequest(new { message = "target must be A4 or DotMatrix." });
+
+        var payments = await _db.Payments.Where(x => x.BatchPrintToken == batchToken && !x.IsDeleted)
+            .OrderBy(x => x.AdviceNumber).ToListAsync();
+        if (payments.Count == 0)
+            return NotFound(new { message = "Payment batch was not found." });
+
+        PrintDocument doc;
+        try { doc = await _engine.BuildPaymentBatchSlipAsync(payments.Select(x => x.Id).ToArray(), _current.Username ?? ""); }
+        catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
+
+        var (bytes, contentType, ext) = _engine.Render(doc, resolvedTarget, format == "preview");
+        if (format == "final")
+        {
+            foreach (var payment in payments) payment.PrintCount++;
+            await _db.SaveChangesAsync();
+            await _audit.LogAsync("Print", "Payment", "PaymentBatch", payments[0].Id.ToString(),
+                newValue: new { paymentCount = payments.Count, target = resolvedTarget });
+        }
+        return File(bytes, contentType, $"Payment-Batch-{payments[0].AdviceNumber}-{payments[^1].AdviceNumber}.{ext}");
+    }
+
     [HttpGet("sale-purchase/{id:int}")]
     public async Task<IActionResult> SalePurchaseSlip(int id, [FromQuery] string stage, [FromQuery] string? target, [FromQuery] string format = "final")
     {
@@ -199,6 +237,158 @@ public class PrintController : ControllerBase
         return File(bytes, contentType, $"SalePurchase-{id}-{stage}.{ext}");
     }
 
+
+    // ---------------------------------------------------------- FORCED DUPLICATE / REPRINT
+    // These endpoints are used only by the Reprint form. Every document is visibly marked
+    // DUPLICATE and every successful final render is audited as Reprint.
+
+    [HttpGet("reprint/config")]
+    public async Task<IActionResult> ReprintConfig()
+    {
+        if (!CanUseAnyReprint())
+            return StatusCode(403, new { message = "You do not have permission to reprint documents." });
+        var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
+        if (cfg == null) return NotFound(new { message = "Print configuration was not found." });
+        return Ok(new
+        {
+            cfg.PrinterType,
+            printerName = cfg.PrinterType == "A4" ? cfg.A4PrinterName : cfg.DotMatrixPrinterName,
+            cfg.A4PrinterName,
+            cfg.DotMatrixPrinterName
+        });
+    }
+
+    [HttpGet("reprint/purchase/{id:int}")]
+    public async Task<IActionResult> ReprintPurchase(int id, [FromQuery] string? target,
+        [FromQuery] string format = "final")
+    {
+        if (!_current.HasPermission("Weighment.Print"))
+            return StatusCode(403, new { message = "You do not have 'Weighment.Print' permission." });
+        if (!ValidFormat(format, out var formatError)) return formatError!;
+        var resolvedTarget = await ResolveTargetAsync(target);
+        if (resolvedTarget.error != null) return resolvedTarget.error;
+
+        var purchase = await _db.Purchases.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
+        if (purchase == null) return NotFound(new { message = $"Purchase {id} not found." });
+        if (purchase.GrossTareStatus == "CANCELLED")
+            return Conflict(new { message = $"Purchase {id} is cancelled and cannot be reprinted as a valid slip." });
+        var stage = purchase.TareDateTime.HasValue ? "TARE" : "GROSS";
+        var doc = stage == "TARE"
+            ? await _engine.BuildTareSlipAsync(id, _current.Username ?? "")
+            : await _engine.BuildGrossSlipAsync(id, _current.Username ?? "");
+        MarkDuplicate(doc);
+        var rendered = _engine.Render(doc, resolvedTarget.target!, format == "preview");
+        if (format == "final")
+        {
+            if (stage == "TARE") purchase.TarePrintCount++; else purchase.GrossPrintCount++;
+            await _db.SaveChangesAsync();
+            await _audit.LogAsync("Reprint", "Weighment", "Purchase", id.ToString(),
+                newValue: new { stage, target = resolvedTarget.target, duplicate = true,
+                    printCount = stage == "TARE" ? purchase.TarePrintCount : purchase.GrossPrintCount });
+        }
+        return File(rendered.bytes, rendered.contentType, $"DUPLICATE-Purchase-{id}-{stage}.{rendered.fileExtension}");
+    }
+
+    [HttpGet("reprint/sale-purchase/{id:int}")]
+    public async Task<IActionResult> ReprintSalePurchase(int id, [FromQuery] string? target,
+        [FromQuery] string format = "final")
+    {
+        if (!_current.HasPermission("SalePurchase.Print"))
+            return StatusCode(403, new { message = "You do not have 'SalePurchase.Print' permission." });
+        if (!ValidFormat(format, out var formatError)) return formatError!;
+        var resolvedTarget = await ResolveTargetAsync(target);
+        if (resolvedTarget.error != null) return resolvedTarget.error;
+
+        var sale = await _db.SalePurchases.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
+        if (sale == null) return NotFound(new { message = $"SalePurchase {id} not found." });
+        if (sale.WeighmentStatus == "CANCELLED")
+            return Conflict(new { message = $"SalePurchase {id} is cancelled and cannot be reprinted as a valid slip." });
+        var stage = sale.WeighmentStatus == "COMPLETED" && sale.GrossDateTime.HasValue ? "GROSS" : "TARE";
+        var doc = await _engine.BuildSalePurchaseSlipAsync(id, stage, _current.Username ?? "");
+        MarkDuplicate(doc);
+        var rendered = _engine.Render(doc, resolvedTarget.target!, format == "preview");
+        if (format == "final")
+        {
+            if (stage == "TARE") sale.TarePrintCount++; else sale.GrossPrintCount++;
+            await _db.SaveChangesAsync();
+            await _audit.LogAsync("Reprint", "SalePurchase", "SalePurchase", id.ToString(),
+                newValue: new { stage, target = resolvedTarget.target, duplicate = true,
+                    printCount = stage == "TARE" ? sale.TarePrintCount : sale.GrossPrintCount });
+        }
+        return File(rendered.bytes, rendered.contentType, $"DUPLICATE-SalePurchase-{id}-{stage}.{rendered.fileExtension}");
+    }
+
+    [HttpGet("reprint/payment/{id:int}")]
+    public async Task<IActionResult> ReprintPayment(int id, [FromQuery] string? target,
+        [FromQuery] string format = "final") => await RenderPaymentReprintAsync(id, target, format, null);
+
+    [HttpGet("reprint/payment-advice/{adviceNumber:int}")]
+    public async Task<IActionResult> ReprintPaymentByAdvice(int adviceNumber, [FromQuery] string? target,
+        [FromQuery] string format = "final")
+    {
+        if (!_current.HasPermission("Payment.Print"))
+            return StatusCode(403, new { message = "You do not have 'Payment.Print' permission." });
+        var ids = await _db.Payments.AsNoTracking()
+            .Where(x => x.AdviceNumber == adviceNumber && !x.IsDeleted)
+            .Select(x => x.Id).Take(2).ToListAsync();
+        if (ids.Count == 0) return NotFound(new { message = $"Advice Number {adviceNumber} not found." });
+        if (ids.Count > 1)
+            return Conflict(new { message = $"Advice Number {adviceNumber} matches multiple payments. Use Payment ID." });
+        return await RenderPaymentReprintAsync(ids[0], target, format, adviceNumber);
+    }
+
+    private async Task<IActionResult> RenderPaymentReprintAsync(int id, string? target, string format, int? adviceNumber)
+    {
+        if (!_current.HasPermission("Payment.Print"))
+            return StatusCode(403, new { message = "You do not have 'Payment.Print' permission." });
+        if (!ValidFormat(format, out var formatError)) return formatError!;
+        var resolvedTarget = await ResolveTargetAsync(target);
+        if (resolvedTarget.error != null) return resolvedTarget.error;
+
+        var payment = await _db.Payments.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
+        if (payment == null) return NotFound(new { message = $"Payment {id} not found." });
+        if (payment.PaymentStatus == "CANCELLED")
+            return Conflict(new { message = $"Payment {id} is cancelled and cannot be reprinted as a valid receipt." });
+        var doc = await _engine.BuildPaymentSlipAsync(id, _current.Username ?? "");
+        MarkDuplicate(doc);
+        var rendered = _engine.Render(doc, resolvedTarget.target!, format == "preview");
+        if (format == "final")
+        {
+            payment.PrintCount++;
+            await _db.SaveChangesAsync();
+            await _audit.LogAsync("Reprint", "Payment", "Payment", id.ToString(),
+                newValue: new { adviceNumber = adviceNumber ?? payment.AdviceNumber,
+                    target = resolvedTarget.target, duplicate = true, printCount = payment.PrintCount });
+        }
+        return File(rendered.bytes, rendered.contentType, $"DUPLICATE-Payment-{id}-Advice-{payment.AdviceNumber}.{rendered.fileExtension}");
+    }
+
+    private bool CanUseAnyReprint() => _current.HasPermission("Weighment.Print")
+        || _current.HasPermission("SalePurchase.Print") || _current.HasPermission("Payment.Print");
+
+    private static bool ValidFormat(string format, out IActionResult? error)
+    {
+        error = format is "final" or "preview"
+            ? null
+            : new BadRequestObjectResult(new { message = "format must be final or preview." });
+        return error == null;
+    }
+
+    private async Task<(string? target, IActionResult? error)> ResolveTargetAsync(string? target)
+    {
+        var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
+        var resolved = target ?? cfg?.PrinterType ?? "DotMatrix";
+        return resolved is "A4" or "DotMatrix"
+            ? (resolved, null)
+            : (null, BadRequest(new { message = "target must be A4 or DotMatrix." }));
+    }
+
+    private static void MarkDuplicate(PrintDocument doc)
+    {
+        doc.IsDuplicate = true;
+        doc.PrintDateTime = DateTime.Now;
+    }
+
     /// <summary>Developer print test with sample data - no purchase/audit side effects. Lets the
     /// Developer verify printer, paper type, language, Hindi glyph rendering, QR readability and
     /// alignment before relying on Auto Print in production.</summary>
@@ -215,3 +405,4 @@ public class PrintController : ControllerBase
         return File(bytes, contentType, $"PrintTest.{ext}");
     }
 }
+

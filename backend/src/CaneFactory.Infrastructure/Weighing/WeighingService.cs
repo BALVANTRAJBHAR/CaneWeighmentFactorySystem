@@ -34,12 +34,35 @@ public class WeighingService
 
     private decimal _lastWeightKg;
     private DateTime _lastChangeAt = DateTime.UtcNow;
+    private bool _platformWasEmpty;
     private LiveWeightDto _current = new() { DeviceConnected = false, ReaderState = "DISCONNECTED" };
     public bool SimulatorRunning => _simCts != null;
     public bool Reading => _readCts != null;
     public bool Connected => _port?.IsOpen == true;
     public bool IsOperatingDevice(int deviceId) => _device?.Id == deviceId && (_port?.IsOpen == true || Reading);
     public int? OperatingDeviceId => _device?.Id;
+
+    /// <summary>Accepts an already-parsed reading from the designated LAN Scale Bridge. The bridge
+    /// owns the physical COM port; the central server must never attempt to open that remote port.</summary>
+    public void ReceiveRemoteReading(string deviceName, decimal weightKg, bool stable, string readerState, string? error)
+    {
+        var live = string.Equals(readerState, "READING", StringComparison.OrdinalIgnoreCase) && error == null;
+        UpdateState(d =>
+        {
+            d.DeviceName = deviceName;
+            d.DeviceConnected = !string.Equals(readerState, "DISCONNECTED", StringComparison.OrdinalIgnoreCase);
+            d.ReaderRunning = live;
+            d.IsLive = live;
+            d.ReaderState = readerState;
+            d.WeightKg = live ? weightKg : 0;
+            d.WeightQuintal = live ? WeightCalculator.KgToQuintal(weightKg) : 0;
+            d.Stable = live && stable;
+            d.LastReceivedAt = live ? DateTime.UtcNow : default;
+            d.Error = error;
+        });
+        // A disconnect has no physical weight information. Never treat it as a zero-platform\n        // event; otherwise toggling the digitizer could bypass the persisted safety lock.\n        if (live) ObservePlatformEmpty(weightKg);
+        _ = _broadcaster.BroadcastAsync(Current);
+    }
 
     public bool TryGetUsableWeight(out decimal weightKg, out string reason)
     {
@@ -239,6 +262,7 @@ public class WeighingService
             d.ReaderState = "READING";
             d.Error = null;
         });
+        ObservePlatformEmpty(kg);
         _ = _broadcaster.BroadcastAsync(Current);
     }
 
@@ -325,4 +349,37 @@ public class WeighingService
         d.LastReceivedAt = default;
         d.Error = error;
     });
+
+    /// <summary>After a weight is saved the API persists a platform-clear lock. A real zero
+    /// indication is the only automatic way to release it, including after a serial reconnect.</summary>
+    private void ObservePlatformEmpty(decimal weightKg)
+    {
+        var empty = Math.Abs(weightKg) <= 0.01m;
+        if (empty && !_platformWasEmpty) _ = MarkPlatformClearedAsync();
+        _platformWasEmpty = empty;
+    }
+
+    private async Task MarkPlatformClearedAsync()
+    {
+        try
+        {
+            using var scope = _scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var setting = await db.SystemSettings.FirstOrDefaultAsync(s => s.Key == "WeighbridgePlatformClearRequired");
+            if (setting?.Value == "1")
+            {
+                setting.Value = "0";
+                await db.SaveChangesAsync();
+                _log.LogInformation("Weighbridge platform reached zero; new weighments are unlocked");
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not persist the zero-platform safety release");
+        }
+    }
 }
+
+
+
+

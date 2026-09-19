@@ -22,13 +22,47 @@ public class SmsService : ISmsService
         Dictionary<string, string> placeholders)
         => await QueueInternalAsync(eventCode, null, partyId, mobileNumber, referenceId, placeholders);
 
+    public async Task<bool> QueueForOperationalRecipientAsync(string eventCode, string mobileNumber, string referenceId,
+        Dictionary<string, string> placeholders)
+        => await QueueInternalAsync(eventCode, null, null, mobileNumber, referenceId, placeholders);
+
+    public async Task<bool> QueueRawAsync(string eventCode, int? growerId, int? partyId, string mobileNumber,
+        string referenceId, string message)
+    {
+        if (!IsValidMobile(mobileNumber) || string.IsNullOrWhiteSpace(message)) return false;
+        var cfg = await _db.SmsConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
+        if (cfg == null || !cfg.Enabled) return false;
+        if (await _db.SmsLogs.AnyAsync(l => l.EventCode == eventCode && l.ReferenceId == referenceId)) return false;
+        try
+        {
+            _db.SmsLogs.Add(new SmsLog
+            {
+                EventCode = eventCode,
+                GrowerId = growerId,
+                PartyId = partyId,
+                MobileNumber = mobileNumber.Trim(),
+                ReferenceId = referenceId,
+                MessageText = message.Trim(),
+                Status = "QUEUED",
+                AttemptCount = 0,
+                CreatedAt = DateTime.UtcNow
+            });
+            await _db.SaveChangesAsync();
+            return true;
+        }
+        catch (DbUpdateException)
+        {
+            return false;
+        }
+    }
+
     private async Task<bool> QueueInternalAsync(string eventCode, int? growerId, int? partyId, string mobileNumber,
         string referenceId, Dictionary<string, string> placeholders)
     {
-        if (string.IsNullOrWhiteSpace(mobileNumber)) return false;
+        if (!IsValidMobile(mobileNumber)) return false;
 
         var cfg = await _db.SmsConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
-        if (cfg == null || !cfg.Enabled) return false;
+        if (cfg == null || !cfg.Enabled || !IsEventEnabled(cfg, eventCode)) return false;
 
         if (await _db.SmsLogs.AnyAsync(l => l.EventCode == eventCode && l.ReferenceId == referenceId))
             return false; // already queued once for this exact event - do not duplicate
@@ -69,4 +103,15 @@ public class SmsService : ISmsService
         foreach (var (k, v) in placeholders) msg = msg.Replace("{" + k + "}", v);
         return msg;
     }
+
+    private static bool IsValidMobile(string? mobile) =>
+        !string.IsNullOrWhiteSpace(mobile) && mobile.Trim().Length == 10 && mobile.Trim().All(char.IsDigit);
+
+    private static bool IsEventEnabled(SmsConfig cfg, string eventCode) => eventCode switch
+    {
+        "TARE_COMPLETED" => cfg.CanePurchaseSmsEnabled,
+        "PAYMENT_COMPLETED" => cfg.CanePaymentSmsEnabled,
+        "SALE_PURCHASE_COMPLETED" => cfg.SalePurchaseSmsEnabled,
+        _ => true // manual broadcast/test queues remain controlled by master SMS Enabled.
+    };
 }

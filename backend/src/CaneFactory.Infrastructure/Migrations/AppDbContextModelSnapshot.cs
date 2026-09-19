@@ -525,7 +525,8 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("AadhaarHash")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("[AadhaarHash] IS NOT NULL");
 
                     b.HasIndex("BankId");
 
@@ -1712,6 +1713,12 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<int?>("CreatedBy")
                         .HasColumnType("int");
 
+                    b.Property<bool>("CanePaymentSmsEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("CanePurchaseSmsEnabled")
+                        .HasColumnType("bit");
+
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("datetime2");
 
@@ -1755,6 +1762,9 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<string>("SenderId")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<bool>("SalePurchaseSmsEnabled")
+                        .HasColumnType("bit");
+
                     b.Property<bool>("Status")
                         .HasColumnType("bit");
 
@@ -1767,6 +1777,66 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("SmsConfigs");
+                });
+
+            modelBuilder.Entity("CaneFactory.Domain.Entities.SmsRecipient", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("CreatedBy")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("DeletedBy")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("MobileNumber")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<bool>("ReceiveCanePurchase")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("ReceivePayment")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("ReceiveSalePurchase")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("RecipientName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<bool>("Status")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("UpdatedBy")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MobileNumber")
+                        .IsUnique()
+                        .HasFilter("[IsDeleted] = 0");
+
+                    b.ToTable("SmsRecipients");
                 });
 
             modelBuilder.Entity("CaneFactory.Domain.Entities.SmsLog", b =>

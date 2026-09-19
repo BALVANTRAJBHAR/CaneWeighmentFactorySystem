@@ -37,11 +37,12 @@ public class GrowersController : ControllerBase
     private readonly ICurrentUser _current;
     private readonly ISequenceGenerator _seq;
     private readonly ISecretProtector _protector;
+    private readonly ILogger<GrowersController> _log;
 
     public GrowersController(AppDbContext db, IAuditService audit, ICurrentUser current,
-        ISequenceGenerator seq, ISecretProtector protector)
+        ISequenceGenerator seq, ISecretProtector protector, ILogger<GrowersController> log)
     {
-        _db = db; _audit = audit; _current = current; _seq = seq; _protector = protector;
+        _db = db; _audit = audit; _current = current; _seq = seq; _protector = protector; _log = log;
     }
 
     private IActionResult? Deny(string action) =>
@@ -124,31 +125,46 @@ public class GrowersController : ControllerBase
 
         // Transaction-safe per-village GrowerSequence => GrowerCode = VillageId/Sequence
         Grower? g = null;
-        await _db.ExecuteInTransactionAsync(async () =>
+        try
         {
-            var growerId = (int)await _seq.NextAsync("GrowerId", 1);
-            var sequence = (int)await _seq.NextAsync($"GrowerSeq:{req.VillageId}", 1);
-            g = new Grower
+            await _db.ExecuteInTransactionAsync(async () =>
             {
-                Id = growerId,
-            VillageId = req.VillageId,
-            GrowerSequence = sequence,
-            GrowerCode = $"{req.VillageId}/{sequence}",
-            GrowerName = Validators.Norm(req.GrowerName),
-            GrowerNameHi = string.IsNullOrWhiteSpace(req.GrowerNameHi) ? null : req.GrowerNameHi.Trim(),
-            FatherName = Validators.Norm(req.FatherName),
-            FatherNameHi = string.IsNullOrWhiteSpace(req.FatherNameHi) ? null : req.FatherNameHi.Trim(),
-            BankId = req.BankId,
-            BankAccountNumber = Validators.Norm(req.BankAccountNumber),
-            AccountHolderName = Validators.Norm(req.AccountHolderName),
-            Mobile = req.Mobile,
-            Email = Validators.Norm(req.Email),
-                CreatedBy = _current.UserId
-            };
-            ApplyAadhaar(g, req.AadhaarNumber);
-            _db.Growers.Add(g);
-            await _db.SaveChangesAsync();
-        });
+                var growerId = (int)await _seq.NextAsync("GrowerId", 1);
+                var sequence = (int)await _seq.NextAsync($"GrowerSeq:{req.VillageId}", 1);
+                g = new Grower
+                {
+                    Id = growerId,
+                    VillageId = req.VillageId,
+                    GrowerSequence = sequence,
+                    GrowerCode = $"{req.VillageId}/{sequence}",
+                    GrowerName = Validators.Norm(req.GrowerName),
+                    GrowerNameHi = string.IsNullOrWhiteSpace(req.GrowerNameHi) ? null : req.GrowerNameHi.Trim(),
+                    FatherName = Validators.Norm(req.FatherName),
+                    FatherNameHi = string.IsNullOrWhiteSpace(req.FatherNameHi) ? null : req.FatherNameHi.Trim(),
+                    BankId = req.BankId,
+                    BankAccountNumber = Validators.Norm(req.BankAccountNumber),
+                    AccountHolderName = Validators.Norm(req.AccountHolderName),
+                    Mobile = req.Mobile,
+                    Email = Validators.Norm(req.Email),
+                    CreatedBy = _current.UserId
+                };
+                ApplyAadhaar(g, req.AadhaarNumber);
+                _db.Growers.Add(g);
+                await _db.SaveChangesAsync();
+            });
+        }
+        catch (DbUpdateException ex)
+        {
+            // The client gets an actionable, safe message; the server retains the
+            // full database exception and trace id for diagnosis.
+            _log.LogError(ex, "Unable to create grower. Aadhaar supplied: {HasAadhaar}. Trace: {TraceId}",
+                !string.IsNullOrWhiteSpace(req.AadhaarNumber), HttpContext.TraceIdentifier);
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                message = "Grower could not be saved. Aadhaar is optional. Apply the latest server database update and try again.",
+                reference = HttpContext.TraceIdentifier
+            });
+        }
         var createdGrower = g!;
         await _audit.LogAsync("Create", "Grower", "Grower", createdGrower.Id.ToString(),
             newValue: new { createdGrower.GrowerCode, createdGrower.GrowerName, createdGrower.VillageId });
@@ -201,10 +217,20 @@ public class GrowersController : ControllerBase
 
     private void ApplyAadhaar(Grower g, string? aadhaar)
     {
-        if (string.IsNullOrWhiteSpace(aadhaar)) return;
-        g.AadhaarEncrypted = _protector.Protect(aadhaar);
-        g.AadhaarLast4 = aadhaar[^4..];
-        g.AadhaarHash = _protector.Hash(aadhaar);
+        var normalized = aadhaar?.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            // Explicitly persist database NULL, never an empty value or a stale
+            // encrypted/hash value.  This is important for optional Aadhaar.
+            g.AadhaarEncrypted = null;
+            g.AadhaarLast4 = null;
+            g.AadhaarHash = null;
+            return;
+        }
+
+        g.AadhaarEncrypted = _protector.Protect(normalized);
+        g.AadhaarLast4 = normalized[^4..];
+        g.AadhaarHash = _protector.Hash(normalized);
     }
 
     private async Task<string?> ValidateAsync(GrowerRequest req, int? id)

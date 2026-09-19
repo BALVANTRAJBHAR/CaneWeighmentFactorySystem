@@ -50,20 +50,34 @@ class SoundController {
   Future<void>? _configFuture;
   Future<void>? _voiceFuture;
   List<String> _windowsVoices = const [];
+  List<String> _windowsHindiVoices = const [];
   String? _windowsVoiceName;
+  bool _windowsHasHindiVoice = false;
 
   List<String> get windowsVoices => List.unmodifiable(_windowsVoices);
+  List<String> get windowsHindiVoices =>
+      List.unmodifiable(_windowsHindiVoices);
   String? get windowsVoiceName => _windowsVoiceName;
+  bool get windowsHasHindiVoice => _windowsHasHindiVoice;
 
   /// Voices are workstation-specific, so this preference belongs to the
   /// local client rather than the shared server configuration.
-  Future<void> loadWindowsVoices() => _voiceFuture ??= _loadWindowsVoices();
+  Future<void> loadWindowsVoices({bool refresh = false}) {
+    if (refresh) _voiceFuture = null;
+    return _voiceFuture ??= _loadWindowsVoices();
+  }
 
   Future<void> _loadWindowsVoices() async {
     if (!_windowsSpeech.isSupported) return;
     final prefs = await SharedPreferences.getInstance();
     _windowsVoiceName = prefs.getString('windows_speech_voice');
-    _windowsVoices = await _windowsSpeech.getVoices();
+    final result = await Future.wait([
+      _windowsSpeech.getVoices(),
+      _windowsSpeech.getHindiVoices(),
+    ]);
+    _windowsVoices = result[0];
+    _windowsHindiVoices = result[1];
+    _windowsHasHindiVoice = _windowsHindiVoices.isNotEmpty;
     if (_windowsVoiceName != null &&
         !_windowsVoices.contains(_windowsVoiceName)) {
       _windowsVoiceName = null;
@@ -84,9 +98,7 @@ class SoundController {
   Future<void> testVoice() async {
     await loadConfig();
     await loadWindowsVoices();
-    final text = messages['WEIGHING_ACTIVE|$language'] ??
-        messages['WEIGHING_ACTIVE|hi'] ??
-        'Sound test is working.';
+    final text = _eventMessage('WEIGHING_ACTIVE') ?? 'Sound test is working.';
     await _speakText(text);
   }
 
@@ -162,11 +174,17 @@ class SoundController {
     // arrived from Configuration. This was the reason the configured vehicle
     // and weighment prompts could remain silent until the next state change.
     await loadConfig();
-    if (!enabled || !rulesEnabled) return;
-    if (state == SoundState.completed) return; // wait for reset/new vehicle
+    if (!enabled) return;
+    // After a successful saved weight, the vehicle-removal instruction must
+    // continue until a real zero platform reading arrives. It must never be
+    // cleared by a timer, app route change, or digitizer reconnect.
+    if (state == SoundState.completed) {
+      if (weightQuintal < 0.5) _setState(SoundState.noVehicle);
+      return;
+    }
     if (weightQuintal < 0.5) {
       _setState(SoundState.noVehicle);
-    } else if (weightQuintal < minimumWeightQuintal) {
+    } else if (rulesEnabled && weightQuintal < minimumWeightQuintal) {
       _setState(SoundState.belowMinimum);
     } else {
       _setState(SoundState.weighingInProgress);
@@ -175,10 +193,9 @@ class SoundController {
 
   Future<void> onWeighmentSaved() async {
     await loadConfig();
+    // Repeat the configured "move vehicle off" announcement until onWeight
+    // receives a zero-platform reading. This is intentionally not a timer.
     _setState(SoundState.completed);
-    Timer(const Duration(seconds: 8), () {
-      if (state == SoundState.completed) _setState(SoundState.noVehicle);
-    });
   }
 
   /// Plays a configured one-time event after an asynchronous operation such as
@@ -189,9 +206,15 @@ class SoundController {
     for (var i = 0; i < 50 && _speaking; i++) {
       await Future.delayed(const Duration(milliseconds: 100));
     }
+    // Image-captured is a one-time confirmation. Do not accidentally cancel
+    // the mandatory vehicle-removal instruction after a saved weighment.
+    final resumeVehicleRemoval = state == SoundState.completed;
     _stopRepeat();
     _speaking = false;
-    _startEvent(event, overrideMode: repeatMode == 'OFF' ? 'OFF' : 'ONCE');
+    if (repeatMode != 'OFF') await _speakEvent(event);
+    if (resumeVehicleRemoval && state == SoundState.completed) {
+      _startEvent('WEIGHMENT_COMPLETED');
+    }
   }
 
   /// Changing Gross/Tare mode or leaving the screen stops any repeating message.
@@ -211,10 +234,13 @@ class SoundController {
   }
 
   void _setState(SoundState s) {
-    if (state == s) return;
+    // On entering a screen with an already-empty platform, state starts as
+    // noVehicle. Start the prompt even though the enum value is unchanged.
+    if (state == s && _activeEvent != null) return;
     state = s;
     _stopRepeat();
     switch (s) {
+      case SoundState.noVehicle:
       case SoundState.belowMinimum:
         _startEvent('BELOW_MINIMUM');
         break;
@@ -250,7 +276,7 @@ class SoundController {
 
   Future<void> _speakEvent(String event) async {
     if (_speaking) return; // no overlapping playback
-    final text = messages['$event|$language'] ?? messages['$event|hi'];
+    final text = _eventMessage(event);
     if (text == null) return;
     _speaking = true;
     _playCount++;
@@ -268,7 +294,7 @@ class SoundController {
       await loadWindowsVoices();
       await _windowsSpeech.speak(
         text: text,
-        preferHindi: language == 'hi',
+        preferHindi: language == 'hi' && _windowsHasHindiVoice,
         volume: volume,
         speechRate: speechRate,
         voiceName: _windowsVoiceName,
@@ -278,6 +304,21 @@ class SoundController {
     await _runNative(() async {
       await _nativeTts.speak(text);
     });
+  }
+
+  /// If no Hindi Windows voice exists, use the already-configured English
+  /// equivalent. This is preferable to silently sending Hindi Unicode to an
+  /// incompatible English-only SAPI voice.
+  String? _eventMessage(String event) {
+    final mustUseEnglishFallback = _windowsSpeech.isSupported &&
+        language == 'hi' &&
+        !_windowsHasHindiVoice;
+    if (mustUseEnglishFallback) {
+      return messages['$event|en'] ?? messages['$event|hi'];
+    }
+    return messages['$event|$language'] ??
+        messages['$event|en'] ??
+        messages['$event|hi'];
   }
 
   void _stopRepeat() {

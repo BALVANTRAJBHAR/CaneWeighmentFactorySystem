@@ -1,59 +1,44 @@
-# BACKUP GUIDE — SQL Server 2019 Express
+# Backup guide — SQL Server Express
 
-Express edition has no SQL Agent — use Windows Task Scheduler with `sqlcmd`.
+The CaneFactory server API runs the saved backup policy itself. SQL Server Express has no SQL
+Agent and does not support `WITH COMPRESSION`; the application deliberately uses neither.
 
-## Phase 13: generate the scripts from the app instead of hand-writing them
-Developer Dashboard → Configuration → Backup tab (or `GET/PUT /api/backup/config`,
-`Backup.View`/`Backup.Configure`) stores the desired Frequency/TimeOfDay/RetentionDays/Folder
-policy. From that policy:
-- `GET /api/backup/script` downloads the exact FULL+DIFFERENTIAL+TRANSACTION LOG `.sql` script
-  below, pre-filled with your folder/retention.
-- `GET /api/backup/task-scheduler-xml` downloads a ready-to-import Task Scheduler XML
-  (`schtasks /Create /XML CaneFactoryBackup-Task.xml /TN CaneFactoryBackup`).
-Save both next to the database server and import the XML — no manual editing needed. The
-manual script below remains as reference/fallback.
+## Configure in the software
 
-## Strategy
-| Type | Frequency | Retention |
-|---|---|---|
-| FULL backup | daily 02:00 | 14 days local + external copy |
-| DIFFERENTIAL | every 4 hours (working season) | until next full |
-| TRANSACTION LOG | every 30 min (database uses FULL recovery) | until next full |
-| Image folder (`D:\CanePaymentData`) | daily robocopy mirror | per retention policy |
+Open **Configuration → Backup** on the PC running the API and SQL Server.
 
-## Scripts (save as .sql, schedule via Task Scheduler → sqlcmd -S localhost\SQLEXPRESS -i script.sql)
+1. Set **Backup Folder Path** to a folder on that server, for example `D:\CaneFactoryBackup`.
+   The API creates the folder when the policy is saved.
+2. Set frequency and time, turn **Backup Enabled** on, and click **Save Backup Policy**.
+   - `Hourly` with `01:00` means 01:00, 02:00, 03:00, and so on.
+   - `Daily` with `01:00` means every day at 01:00.
+   - `Weekly` means Sunday at the chosen time.
+3. Keep the server API running continuously. For IIS, set its application pool to
+   **AlwaysRunning**. The scheduler checks the policy every 20 seconds.
+
+The SQL Server service account and the API/IIS application-pool account must both have **Modify**
+permission on the backup folder. SQL Server resolves the folder on the server, never on a LAN client.
+
+## Current manual backup download
+
+`POST /api/backup/current/download` creates a verified `COPY_ONLY` full backup, leaves it in the
+configured folder, and streams it to the operator. `COPY_ONLY` does not disturb scheduled
+differential backups.
+
+## Optional Task Scheduler fallback
+
+The Backup tab downloads a SQL script and Task Scheduler XML as a fallback if the API cannot stay
+running. Copy `CaneFactoryBackup.sql` into the configured backup folder on the SQL Server PC, import
+the XML, and select a Windows account that can use `sqlcmd` and access SQL Server.
+
+Generated SQL is Express-safe:
+
 ```sql
--- FULL
-DECLARE @f NVARCHAR(300) = N'E:\Backup\AFFLLPCaneFactory_FULL_' + FORMAT(GETDATE(),'yyyyMMdd_HHmm') + '.bak';
-BACKUP DATABASE AFFLLPCaneFactory TO DISK=@f WITH INIT, CHECKSUM, COMPRESSION;
-RESTORE VERIFYONLY FROM DISK=@f WITH CHECKSUM;   -- verification
-
--- DIFFERENTIAL
-DECLARE @d NVARCHAR(300) = N'E:\Backup\AFFLLPCaneFactory_DIFF_' + FORMAT(GETDATE(),'yyyyMMdd_HHmm') + '.bak';
-BACKUP DATABASE AFFLLPCaneFactory TO DISK=@d WITH DIFFERENTIAL, INIT, CHECKSUM;
-
--- TRANSACTION LOG
-DECLARE @l NVARCHAR(300) = N'E:\Backup\AFFLLPCaneFactory_LOG_' + FORMAT(GETDATE(),'yyyyMMdd_HHmm') + '.trn';
-BACKUP LOG AFFLLPCaneFactory TO DISK=@l WITH INIT, CHECKSUM;
-```
-Note: COMPRESSION is ignored on Express (allowed syntax); it activates automatically after a
-Standard upgrade.
-
-## Restore test procedure (perform monthly)
-```sql
-RESTORE DATABASE AFFLLPCaneFactory_TEST FROM DISK='E:\Backup\<full>.bak'
-  WITH MOVE 'AFFLLPCaneFactory' TO 'E:\RestoreTest\AFFLLPCaneFactory_TEST.mdf',
-       MOVE 'AFFLLPCaneFactory_log' TO 'E:\RestoreTest\AFFLLPCaneFactory_TEST_log.ldf',
-       NORECOVERY;
-RESTORE DATABASE AFFLLPCaneFactory_TEST FROM DISK='E:\Backup\<diff>.bak' WITH NORECOVERY;
-RESTORE LOG AFFLLPCaneFactory_TEST FROM DISK='E:\Backup\<log>.trn' WITH RECOVERY;
--- sanity checks
-SELECT COUNT(*) FROM AFFLLPCaneFactory_TEST.dbo.Purchases;
-DBCC CHECKDB('AFFLLPCaneFactory_TEST');
-DROP DATABASE AFFLLPCaneFactory_TEST;
+BACKUP DATABASE [AFFLLPCaneFactory] TO DISK = @full WITH INIT, CHECKSUM;
+RESTORE VERIFYONLY FROM DISK = @full WITH CHECKSUM;
 ```
 
-## Monitoring
-The dashboard health panel shows Storage % with configurable Warning/Critical thresholds
-(System Settings → Health.Storage.Warning/Critical). Keep backups on a separate physical disk
-and copy off-site/cloud when internet is available.
+## Restore test
+
+Monthly, restore the newest full backup to a test database and run `DBCC CHECKDB`. Keep an encrypted
+off-site copy of completed `.bak` files; a backup on the database disk alone does not protect against disk failure.

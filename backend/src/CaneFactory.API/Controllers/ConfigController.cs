@@ -36,10 +36,12 @@ public class ConfigController : ControllerBase
     public async Task<IActionResult> UpdateWeightRules([FromBody] WeightRuleConfig src)
     {
         if (src.MinimumWeightQuintal < 0) return BadRequest(new { message = "Minimum weight cannot be negative." });
+        if (src.VehicleReweighCooldownMinutes is < 0 or > 43200)
+            return BadRequest(new { message = "Vehicle reweigh cooldown must be between 0 and 43,200 minutes (30 days)." });
         if (src.DefaultCuttingPercent is < 0 or > 100 || src.DefaultTaxPercent is < 0 or > 100)
             return BadRequest(new { message = "Cutting/Tax % must be between 0 and 100." });
         var r = await _db.WeightRules.FirstAsync(x => !x.IsDeleted);
-        var old = new { r.MinimumWeightQuintal, r.Enabled, r.ApplyToGross, r.ApplyToTare, r.DefaultCuttingPercent, r.DefaultTaxPercent };
+        var old = new { r.MinimumWeightQuintal, r.Enabled, r.ApplyToGross, r.ApplyToTare, r.DefaultCuttingPercent, r.DefaultTaxPercent, r.VehicleReweighCooldownMinutes };
         r.MinimumWeightQuintal = Math.Round(src.MinimumWeightQuintal, 2);
         r.Enabled = src.Enabled;
         r.ApplyToCanePurchase = src.ApplyToCanePurchase;
@@ -48,6 +50,7 @@ public class ConfigController : ControllerBase
         r.ApplyToTare = src.ApplyToTare;
         r.DefaultCuttingPercent = Math.Round(src.DefaultCuttingPercent, 2);
         r.DefaultTaxPercent = Math.Round(src.DefaultTaxPercent, 2);
+        r.VehicleReweighCooldownMinutes = src.VehicleReweighCooldownMinutes;
         r.UpdatedAt = DateTime.UtcNow;
         r.UpdatedBy = _current.UserId;
         await _db.SaveChangesAsync();
@@ -154,7 +157,7 @@ public class ConfigController : ControllerBase
 
         var cam = await _db.Cameras.FirstOrDefaultAsync(c => c.CameraNumber == req.CameraNumber && !c.IsDeleted);
         var isNew = cam == null;
-        cam ??= new CameraConfig { CameraNumber = req.CameraNumber, CreatedBy = _current.UserId };
+        cam ??= new CameraConfig { CameraNumber = req.CameraNumber };
         cam.Vendor = req.Vendor; cam.Model = req.Model; cam.Protocol = req.Protocol;
         cam.IpAddress = req.IpAddress; cam.Port = req.Port;
         // Empty credentials from an edit form mean "keep the encrypted configuration".
@@ -230,6 +233,90 @@ public class ConfigController : ControllerBase
                 : "Image path saved successfully.",
             configuredPath = path,
             effectiveRoot
+        });
+    }
+
+    // ----------------------------------------------------------- PAYMENT EVIDENCE CAMERA
+    /// <summary>Dedicated camera and disk root for manual cash-payment evidence.
+    /// Camera host/IP and credentials remain in the normal Camera Configuration record.</summary>
+    [HasPermission("Camera.Configure")]
+    [HttpGet("payment-evidence")]
+    public async Task<IActionResult> GetPaymentEvidenceConfiguration()
+    {
+        var cameraSetting = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Key == "PaymentEvidenceCameraId");
+        var rootSetting = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Key == "PaymentEvidenceRoot");
+        var configuredPath = string.IsNullOrWhiteSpace(rootSetting?.Value) ? @"C:\WeighmentImage\Payment" : rootSetting.Value;
+        var cameras = await _db.Cameras.AsNoTracking().Where(c => !c.IsDeleted)
+            .OrderBy(c => c.CameraNumber)
+            .Select(c => new { c.Id, c.CameraNumber, c.Vendor, c.Model, c.Protocol, c.Status, c.CaptureEnabled, c.LiveViewEnabled })
+            .ToListAsync();
+        return Ok(new
+        {
+            selectedCameraId = int.TryParse(cameraSetting?.Value, out var cameraId) ? cameraId : (int?)null,
+            configuredPath,
+            defaultPath = @"C:\WeighmentImage\Payment",
+            cameras
+        });
+    }
+
+    [HasPermission("Camera.Configure")]
+    [HttpPut("payment-evidence")]
+    public async Task<IActionResult> UpdatePaymentEvidenceConfiguration([FromBody] PaymentEvidenceConfigRequest req)
+    {
+        var camera = await _db.Cameras.FirstOrDefaultAsync(c => c.Id == req.CameraId && !c.IsDeleted &&
+            c.Status && c.CaptureEnabled && c.LiveViewEnabled);
+        if (camera == null)
+            return BadRequest(new { message = "Select an active camera with Capture and Live View enabled for payment evidence." });
+
+        var rawPath = string.IsNullOrWhiteSpace(req.Path) ? @"C:\WeighmentImage\Payment" : req.Path.Trim();
+        if (rawPath.Length > 512) return BadRequest(new { message = "Payment evidence path must be 512 characters or fewer." });
+        string effectivePath;
+        try
+        {
+            effectivePath = WeighmentImagePathResolver.NormalizeConfiguredPath(rawPath);
+            Directory.CreateDirectory(effectivePath);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = $"Payment evidence folder cannot be created: {ex.Message}" });
+        }
+
+        var cameraSetting = await _db.SystemSettings.FirstOrDefaultAsync(s => s.Key == "PaymentEvidenceCameraId");
+        var rootSetting = await _db.SystemSettings.FirstOrDefaultAsync(s => s.Key == "PaymentEvidenceRoot");
+        var old = new { CameraId = cameraSetting?.Value, Path = rootSetting?.Value };
+        if (cameraSetting == null)
+        {
+            cameraSetting = new SystemSetting { Key = "PaymentEvidenceCameraId", Value = camera.Id.ToString() };
+            _db.SystemSettings.Add(cameraSetting);
+        }
+        else
+        {
+            cameraSetting.Value = camera.Id.ToString();
+            cameraSetting.UpdatedAt = DateTime.UtcNow;
+            cameraSetting.UpdatedBy = _current.UserId;
+        }
+        if (rootSetting == null)
+        {
+            rootSetting = new SystemSetting { Key = "PaymentEvidenceRoot", Value = effectivePath };
+            _db.SystemSettings.Add(rootSetting);
+        }
+        else
+        {
+            rootSetting.Value = effectivePath;
+            rootSetting.UpdatedAt = DateTime.UtcNow;
+            rootSetting.UpdatedBy = _current.UserId;
+        }
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("PaymentEvidenceConfiguration", "Camera", "SystemSetting", "PaymentEvidence",
+            oldValue: old, newValue: new { CameraId = camera.Id, camera.CameraNumber, Path = effectivePath });
+        return Ok(new
+        {
+            message = $"Payment evidence camera {camera.CameraNumber:D2} and path saved successfully.",
+            selectedCameraId = camera.Id,
+            configuredPath = effectivePath,
+            filenamePattern = @"{path}\yyyy-MM-dd\GrowerCode-AdviceNo-PurchaseId-PaymentId.jpg"
         });
     }
 
@@ -394,7 +481,7 @@ public class ConfigController : ControllerBase
                 s.Id, s.ProviderName, s.ApiBaseUrl, s.HttpMethod,
                 HasApiKey = s.ApiKeyEncrypted != null, HasApiSecret = s.ApiSecretEncrypted != null,
                 s.AuthorizationHeader, s.SenderId, s.EntityId, s.Enabled,
-                s.Language, s.RequestContentType, s.RequestBodyTemplate, s.ResponseSuccessPath, s.ResponseSuccessValue, s.SalePurchaseRecipients
+                s.Language, s.RequestContentType, s.RequestBodyTemplate, s.ResponseSuccessPath, s.ResponseSuccessValue
             },
             templates
         });
@@ -417,7 +504,6 @@ public class ConfigController : ControllerBase
         s.RequestBodyTemplate = req.RequestBodyTemplate;
         s.ResponseSuccessPath = req.ResponseSuccessPath;
         s.ResponseSuccessValue = req.ResponseSuccessValue;
-        s.SalePurchaseRecipients = req.SalePurchaseRecipients;
         if (isNew) _db.SmsConfigs.Add(s);
         else { s.UpdatedAt = DateTime.UtcNow; s.UpdatedBy = _current.UserId; }
         await _db.SaveChangesAsync();
@@ -442,7 +528,7 @@ public class ConfigController : ControllerBase
 
         var t = await _db.SmsTemplates.FirstOrDefaultAsync(x => x.EventCode == req.EventCode && x.Language == req.Language && !x.IsDeleted);
         var isNew = t == null;
-        t ??= new SmsTemplate { EventCode = req.EventCode, Language = req.Language, CreatedBy = _current.UserId };
+        t ??= new SmsTemplate { EventCode = req.EventCode, Language = req.Language };
         t.MessageTemplate = req.MessageTemplate;
         t.DltTemplateId = req.DltTemplateId;
         t.Enabled = req.Enabled;
@@ -549,6 +635,12 @@ public class ConfigController : ControllerBase
         await _audit.LogAsync("SystemSettingChange", "SystemSetting", "SystemSetting", key, oldValue: old, newValue: s.Value);
         return Ok(new { message = $"Setting '{key}' updated successfully." });
     }
+}
+
+public class PaymentEvidenceConfigRequest
+{
+    public int CameraId { get; set; }
+    public string? Path { get; set; }
 }
 
 public class CameraSaveRequest

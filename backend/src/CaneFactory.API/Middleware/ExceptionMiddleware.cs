@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CaneFactory.API.Services;
 
 namespace CaneFactory.API.Middleware;
 
@@ -18,6 +19,9 @@ public class ExceptionMiddleware
     {
         try
         {
+            BackupScheduleRuntime.EnsureStarted(
+                ctx.RequestServices.GetRequiredService<IServiceScopeFactory>(),
+                ctx.RequestServices.GetRequiredService<ILoggerFactory>());
             await _next(ctx);
         }
         catch (Exception ex)

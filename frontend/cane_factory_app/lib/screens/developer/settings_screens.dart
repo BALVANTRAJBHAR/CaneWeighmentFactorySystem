@@ -70,6 +70,7 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
   final _min = TextEditingController();
   final _cut = TextEditingController();
   final _tax = TextEditingController();
+  final _cooldown = TextEditingController();
 
   @override
   void initState() {
@@ -85,6 +86,7 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
         _min.text = (v['minimumWeightQuintal'] as num).toStringAsFixed(2);
         _cut.text = (v['defaultCuttingPercent'] as num).toStringAsFixed(2);
         _tax.text = (v['defaultTaxPercent'] as num).toStringAsFixed(2);
+        _cooldown.text = '${v['vehicleReweighCooldownMinutes'] ?? 30}';
       });
     }
   }
@@ -96,6 +98,7 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
       'minimumWeightQuintal': double.tryParse(_min.text) ?? 10,
       'defaultCuttingPercent': double.tryParse(_cut.text) ?? 0,
       'defaultTaxPercent': double.tryParse(_tax.text) ?? 0,
+      'vehicleReweighCooldownMinutes': int.tryParse(_cooldown.text) ?? 30,
     });
     if (mounted) showResult(context, res);
   }
@@ -125,6 +128,14 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
                 controller: _tax,
                 decoration: const InputDecoration(
                     labelText: 'Default Tax %', hintText: 'Example: 0.00'))),
+        SizedBox(
+            width: 280,
+            child: TextField(
+                controller: _cooldown,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                    labelText: 'Same Vehicle Cooldown (minutes)',
+                    hintText: '30 = 30 minutes, 60 = 1 hour, 1440 = 1 day'))),
       ]),
       for (final e in [
         ('enabled', 'Minimum Weight Rule Enabled'),
@@ -168,7 +179,11 @@ class _SoundTabState extends State<_SoundTab> {
         cfg = Map<String, dynamic>.from(res.data['config']);
         messages = res.data['messages'];
       });
-      await _sound.loadWindowsVoices();
+      await _sound.loadWindowsVoices(refresh: true);
+      if (cfg?['language'] == 'hi' &&
+          !_sound.windowsHindiVoices.contains(_sound.windowsVoiceName)) {
+        await _sound.setWindowsVoice(null);
+      }
       if (mounted) setState(() {});
     }
   }
@@ -183,6 +198,14 @@ class _SoundTabState extends State<_SoundTab> {
   @override
   Widget build(BuildContext context) {
     if (cfg == null) return const Center(child: CircularProgressIndicator());
+    final hindiSelected = cfg!['language'] == 'hi';
+    final availableWindowsVoices = hindiSelected
+        ? _sound.windowsHindiVoices
+        : _sound.windowsVoices;
+    final selectedWindowsVoice =
+        availableWindowsVoices.contains(_sound.windowsVoiceName)
+            ? _sound.windowsVoiceName!
+            : '';
     return ListView(padding: const EdgeInsets.all(16), children: [
       SwitchListTile(
           title: const Text('Sound Enabled'),
@@ -198,7 +221,15 @@ class _SoundTabState extends State<_SoundTab> {
                   DropdownMenuItem(value: 'hi', child: Text('Hindi')),
                   DropdownMenuItem(value: 'en', child: Text('English'))
                 ],
-                onChanged: (v) => setState(() => cfg!['language'] = v))),
+                onChanged: (v) async {
+                  setState(() => cfg!['language'] = v);
+                  if (v == 'hi' &&
+                      !_sound.windowsHindiVoices
+                          .contains(_sound.windowsVoiceName)) {
+                    await _sound.setWindowsVoice(null);
+                    if (mounted) setState(() {});
+                  }
+                })),
         SizedBox(
             width: 200,
             child: DropdownButtonFormField<String>(
@@ -239,13 +270,17 @@ class _SoundTabState extends State<_SoundTab> {
           SizedBox(
             width: 320,
             child: DropdownButtonFormField<String>(
-              value: _sound.windowsVoiceName ?? '',
+              key: ValueKey('windows-voice-${cfg!['language']}'),
+              value: selectedWindowsVoice,
               decoration:
                   const InputDecoration(labelText: 'Windows Voice (this PC)'),
               items: [
-                const DropdownMenuItem(
-                    value: '', child: Text('Auto-select voice')),
-                for (final voice in _sound.windowsVoices)
+                DropdownMenuItem(
+                    value: '',
+                    child: Text(hindiSelected
+                        ? 'Auto-select Hindi voice'
+                        : 'Auto-select voice')),
+                for (final voice in availableWindowsVoices)
                   DropdownMenuItem(
                       value: voice,
                       child: Text(voice, overflow: TextOverflow.ellipsis)),
@@ -262,13 +297,30 @@ class _SoundTabState extends State<_SoundTab> {
               : () async {
                   setState(() => _testingVoice = true);
                   try {
+                    await _sound.loadWindowsVoices(refresh: true);
+                    if (cfg!['language'] == 'hi' &&
+                        !_sound.windowsHindiVoices
+                            .contains(_sound.windowsVoiceName)) {
+                      await _sound.setWindowsVoice(null);
+                    }
                     if (!await _save()) return;
                     await _sound.reloadConfig();
                     await _sound.testVoice();
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('Voice test sent to this PC.'),
+                      final fallback = cfg!['language'] == 'hi' &&
+                          !_sound.windowsHasHindiVoice;
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(fallback
+                            ? 'Hindi Windows voice is not installed. English test voice played instead.'
+                            : 'Voice test played on this PC.'),
                         backgroundColor: Color(0xFF2E7D32),
+                      ));
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text('Voice test failed: $e'),
+                        backgroundColor: Theme.of(context).colorScheme.error,
                       ));
                     }
                   } finally {
@@ -279,6 +331,14 @@ class _SoundTabState extends State<_SoundTab> {
           label: Text(_testingVoice ? 'Testing voice…' : 'Test Voice'),
         ),
       ]),
+      if (cfg!['language'] == 'hi' && !_sound.windowsHasHindiVoice)
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text(
+            'Hindi Windows voice is not installed on this PC. Until one is installed, English announcements will be spoken so that weighment alerts remain audible.',
+            style: TextStyle(fontSize: 11, color: Colors.orange),
+          ),
+        ),
       const Divider(height: 30),
       const Text('Announcement Messages (editable per event & language)',
           style: TextStyle(fontWeight: FontWeight.w700)),
@@ -330,7 +390,9 @@ class _CamerasTab extends StatefulWidget {
 class _CamerasTabState extends State<_CamerasTab> {
   List cams = [];
   final _imageRootController = TextEditingController();
+  final _paymentEvidenceRootController = TextEditingController();
   String? _effectiveImageRoot;
+  int? _paymentEvidenceCameraId;
 
   @override
   void initState() {
@@ -353,6 +415,18 @@ class _CamerasTabState extends State<_CamerasTab> {
     } catch (_) {
       // Camera list remains usable when an older API has not exposed this endpoint yet.
     }
+    try {
+      final paymentEvidence =
+          await ApiClient.instance.dio.get('/api/config/payment-evidence');
+      if (paymentEvidence.statusCode == 200 && mounted) {
+        _paymentEvidenceRootController.text =
+            paymentEvidence.data['configuredPath']?.toString() ?? r'C:\WeighmentImage\Payment';
+        final id = paymentEvidence.data['selectedCameraId'];
+        setState(() => _paymentEvidenceCameraId = id is num ? id.toInt() : int.tryParse('$id'));
+      }
+    } catch (_) {
+      // The normal camera catalogue remains usable while an older API is deployed.
+    }
   }
 
   Future<void> _saveImageRoot() async {
@@ -365,9 +439,28 @@ class _CamerasTabState extends State<_CamerasTab> {
     }
   }
 
+  Future<void> _savePaymentEvidence() async {
+    if (_paymentEvidenceCameraId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Select an active camera for Cash Payment Evidence.')));
+      return;
+    }
+    final res = await ApiClient.instance.dio.put('/api/config/payment-evidence',
+        data: {
+          'cameraId': _paymentEvidenceCameraId,
+          'path': _paymentEvidenceRootController.text.trim(),
+        });
+    if (mounted) showResult(context, res);
+    if (res.statusCode == 200 && mounted) {
+      setState(() => _paymentEvidenceRootController.text =
+          res.data['configuredPath']?.toString() ?? _paymentEvidenceRootController.text);
+    }
+  }
+
   @override
   void dispose() {
     _imageRootController.dispose();
+    _paymentEvidenceRootController.dispose();
     super.dispose();
   }
 
@@ -569,6 +662,12 @@ class _CamerasTabState extends State<_CamerasTab> {
 
   @override
   Widget build(BuildContext context) {
+    final paymentEvidenceCameras = cams.where((camera) =>
+        camera['status'] == true && camera['captureEnabled'] == true && camera['liveViewEnabled'] == true).toList();
+    final selectedPaymentCamera = paymentEvidenceCameras.any(
+            (camera) => camera['id'] == _paymentEvidenceCameraId)
+        ? _paymentEvidenceCameraId
+        : null;
     return ListView(padding: const EdgeInsets.all(16), children: [
       Row(children: [
         const Text('IP Cameras (1-6, vendor-abstracted)',
@@ -604,6 +703,55 @@ class _CamerasTabState extends State<_CamerasTab> {
                     if (_effectiveImageRoot != null)
                       Text('Effective folder: $_effectiveImageRoot',
                           style: const TextStyle(fontSize: 12)),
+                  ]))),
+      const SizedBox(height: 8),
+      Card(
+          child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    const SizedBox(
+                        width: 100,
+                        child: Text('Cash Payment\nEvidence',
+                            style: TextStyle(fontWeight: FontWeight.w700))),
+                    SizedBox(
+                        width: 270,
+                        child: DropdownButtonFormField<int>(
+                            value: selectedPaymentCamera,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                                labelText: 'Payment Evidence Camera'),
+                            hint: const Text('Select configured camera'),
+                            items: [
+                              for (final camera in paymentEvidenceCameras)
+                                DropdownMenuItem<int>(
+                                    value: camera['id'] as int,
+                                    child: Text(
+                                        'Camera ${(camera['cameraNumber'] as num).toInt().toString().padLeft(2, '0')} • ${camera['vendor']}'))
+                            ],
+                            onChanged: (value) =>
+                                setState(() => _paymentEvidenceCameraId = value))),
+                    SizedBox(
+                        width: 420,
+                        child: TextField(
+                            controller: _paymentEvidenceRootController,
+                            decoration: const InputDecoration(
+                                labelText: 'Payment Evidence Path',
+                                hintText: r'C:\WeighmentImage\Payment',
+                                helperText:
+                                    r'Files: path\yyyy-MM-dd\GrowerCode-AdviceNo-PurchaseId-PaymentId.jpg'))),
+                    FilledButton.icon(
+                        onPressed: _savePaymentEvidence,
+                        icon: const Icon(Icons.save_outlined),
+                        label: const Text('Save Payment Evidence')),
+                    const SizedBox(
+                        width: 700,
+                        child: Text(
+                            'Set the selected camera IP, protocol and credentials from its Edit button above. Only this active camera is used in the Cash Payment live-view/capture dialog.',
+                            style: TextStyle(fontSize: 12))),
                   ]))),
       for (final cam in cams)
         Card(
@@ -958,7 +1106,8 @@ class _SmsTabState extends State<_SmsTab> {
       'requestBodyTemplate',
       'responseSuccessPath',
       'responseSuccessValue',
-      'salePurchaseRecipients',
+      'recipientName',
+      'recipientMobile',
       'testMobile',
       'testMessage'
     ])
@@ -968,8 +1117,12 @@ class _SmsTabState extends State<_SmsTab> {
   String requestContentType = 'application/json';
   String language = 'hi';
   bool enabled = false;
+  bool canePurchaseSmsEnabled = true;
+  bool canePaymentSmsEnabled = true;
+  bool salePurchaseSmsEnabled = true;
   String? info;
   List templates = [];
+  List recipients = [];
   bool testing = false;
 
   @override
@@ -979,11 +1132,19 @@ class _SmsTabState extends State<_SmsTab> {
   }
 
   Future<void> _load() async {
-    final res = await ApiClient.instance.dio.get('/api/config/sms');
+    final results = await Future.wait([
+      ApiClient.instance.dio.get('/api/config/sms'),
+      ApiClient.instance.dio.get('/api/config/sms/recipients'),
+    ]);
+    final res = results[0];
     if (res.statusCode != 200 || !mounted) return;
+    final recipientRes = results[1];
     final v = res.data['config'];
     setState(() {
       templates = res.data['templates'] ?? [];
+      recipients = recipientRes.statusCode == 200 && recipientRes.data is List
+          ? List.from(recipientRes.data)
+          : [];
       if (v != null) {
         c['providerName']!.text = v['providerName'] ?? '';
         c['apiBaseUrl']!.text = v['apiBaseUrl'] ?? '';
@@ -993,11 +1154,13 @@ class _SmsTabState extends State<_SmsTab> {
         c['requestBodyTemplate']!.text = v['requestBodyTemplate'] ?? '';
         c['responseSuccessPath']!.text = v['responseSuccessPath'] ?? '';
         c['responseSuccessValue']!.text = v['responseSuccessValue'] ?? '';
-        c['salePurchaseRecipients']!.text = v['salePurchaseRecipients'] ?? '';
         method = v['httpMethod'] ?? 'POST';
         requestContentType = v['requestContentType'] ?? 'application/json';
         language = v['language'] ?? 'hi';
         enabled = v['enabled'] == true;
+        canePurchaseSmsEnabled = v['canePurchaseSmsEnabled'] != false;
+        canePaymentSmsEnabled = v['canePaymentSmsEnabled'] != false;
+        salePurchaseSmsEnabled = v['salePurchaseSmsEnabled'] != false;
         info =
             'API Key: ${v['hasApiKey'] == true ? 'set (encrypted)' : 'not set'} • API Secret: ${v['hasApiSecret'] == true ? 'set (encrypted)' : 'not set'}';
       }
@@ -1020,7 +1183,9 @@ class _SmsTabState extends State<_SmsTab> {
       'requestBodyTemplate': c['requestBodyTemplate']!.text,
       'responseSuccessPath': c['responseSuccessPath']!.text,
       'responseSuccessValue': c['responseSuccessValue']!.text,
-      'salePurchaseRecipients': c['salePurchaseRecipients']!.text,
+      'canePurchaseSmsEnabled': canePurchaseSmsEnabled,
+      'canePaymentSmsEnabled': canePaymentSmsEnabled,
+      'salePurchaseSmsEnabled': salePurchaseSmsEnabled,
     });
     if (context.mounted) showResult(context, res);
     _load();
@@ -1054,6 +1219,74 @@ class _SmsTabState extends State<_SmsTab> {
         backgroundColor: ok
             ? const Color(0xFF2E7D32)
             : Theme.of(context).colorScheme.error));
+  }
+
+  Future<void> _saveRecipient({Map? existing}) async {
+    final name = TextEditingController(
+        text: existing == null ? c['recipientName']!.text : existing['recipientName']?.toString() ?? '');
+    final mobile = TextEditingController(
+        text: existing == null ? c['recipientMobile']!.text : existing['mobileNumber']?.toString() ?? '');
+    var active = existing?['status'] != false;
+    var cane = existing?['receiveCanePurchase'] != false;
+    var payment = existing?['receivePayment'] != false;
+    var sale = existing?['receiveSalePurchase'] != false;
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: Text(existing == null ? 'Add SMS Recipient' : 'Edit SMS Recipient'),
+          content: SizedBox(width: 440, child: SingleChildScrollView(child: Column(
+            mainAxisSize: MainAxisSize.min, children: [
+              TextField(controller: name, decoration: const InputDecoration(labelText: 'Name / Owner Name')),
+              const SizedBox(height: 10),
+              TextField(controller: mobile, keyboardType: TextInputType.phone,
+                  maxLength: 10, decoration: const InputDecoration(labelText: '10-digit Mobile Number')),
+              SwitchListTile(title: const Text('Active'), value: active, onChanged: (v) => setD(() => active = v)),
+              SwitchListTile(title: const Text('Cane Purchase final SMS'), value: cane, onChanged: (v) => setD(() => cane = v)),
+              SwitchListTile(title: const Text('Grower payment SMS'), value: payment, onChanged: (v) => setD(() => payment = v)),
+              SwitchListTile(title: const Text('SalePurchase final SMS'), value: sale, onChanged: (v) => setD(() => sale = v)),
+            ],
+          ))),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+          ],
+        ),
+      ),
+    );
+    if (save != true) return;
+    final data = {
+      'recipientName': name.text.trim(), 'mobileNumber': mobile.text.trim(), 'status': active,
+      'receiveCanePurchase': cane, 'receivePayment': payment, 'receiveSalePurchase': sale,
+    };
+    final res = existing == null
+        ? await ApiClient.instance.dio.post('/api/config/sms/recipients', data: data)
+        : await ApiClient.instance.dio.put('/api/config/sms/recipients/${existing['id']}', data: data);
+    if (!mounted) return;
+    showResult(context, res);
+    if (res.statusCode == 200) {
+      c['recipientName']!.clear();
+      c['recipientMobile']!.clear();
+      _load();
+    }
+  }
+
+  Future<void> _deleteRecipient(Map recipient) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove SMS Recipient?'),
+        content: Text('${recipient['recipientName']} will no longer receive automatic SMS alerts.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton.tonal(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final res = await ApiClient.instance.dio.delete('/api/config/sms/recipients/${recipient['id']}');
+    if (mounted) showResult(context, res);
+    if (res.statusCode == 200) _load();
   }
 
   Future<void> _editTemplate(Map t) async {
@@ -1247,19 +1480,30 @@ class _SmsTabState extends State<_SmsTab> {
                   decoration: const InputDecoration(
                       labelText: 'Expected Success Value',
                       hintText: 'Example: success'))),
-          SizedBox(
-              width: width < 300 ? width : 300,
-              child: TextField(
-                  controller: c['salePurchaseRecipients'],
-                  decoration: const InputDecoration(
-                      labelText: 'SalePurchase SMS Recipients',
-                      hintText: 'Comma-separated 10-digit mobile numbers'))),
         ]);
       }),
+      const SizedBox(height: 6),
+      const Text('SMS Event Controls', style: TextStyle(fontWeight: FontWeight.w700)),
       SwitchListTile(
-          title: const Text('SMS Enabled'),
+          title: const Text('SMS Master Enabled'),
+          subtitle: const Text('When OFF, no queued or new SMS is sent.'),
           value: enabled,
           onChanged: (v) => setState(() => enabled = v)),
+      SwitchListTile(
+          title: const Text('Cane Purchase final SMS'),
+          subtitle: const Text('Grower + active owner recipients selected for cane purchase.'),
+          value: canePurchaseSmsEnabled,
+          onChanged: enabled ? (v) => setState(() => canePurchaseSmsEnabled = v) : null),
+      SwitchListTile(
+          title: const Text('Grower payment SMS'),
+          subtitle: const Text('Grower + active owner recipients selected for payment.'),
+          value: canePaymentSmsEnabled,
+          onChanged: enabled ? (v) => setState(() => canePaymentSmsEnabled = v) : null),
+      SwitchListTile(
+          title: const Text('SalePurchase final SMS'),
+          subtitle: const Text('Selected party + active owner recipients selected for SalePurchase.'),
+          value: salePurchaseSmsEnabled,
+          onChanged: enabled ? (v) => setState(() => salePurchaseSmsEnabled = v) : null),
       Wrap(spacing: 10, children: [
         FilledButton(
             onPressed: _save, child: const Text('Save SMS Configuration')),
@@ -1294,6 +1538,42 @@ class _SmsTabState extends State<_SmsTab> {
               child: Text(testing ? 'Sending...' : 'Send Test SMS')),
         ]);
       }),
+      const Divider(height: 32),
+      Text('Owner / Operational SMS Recipients',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+      const Padding(
+        padding: EdgeInsets.only(top: 4, bottom: 8),
+        child: Text('Add multiple numbers and choose exactly which alerts each active recipient receives.',
+            style: TextStyle(fontSize: 12)),
+      ),
+      Wrap(spacing: 12, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+        SizedBox(width: 220, child: TextField(controller: c['recipientName'],
+            decoration: const InputDecoration(labelText: 'Name / Owner Name'))),
+        SizedBox(width: 180, child: TextField(controller: c['recipientMobile'], keyboardType: TextInputType.phone,
+            maxLength: 10, decoration: const InputDecoration(labelText: 'Mobile Number'))),
+        FilledButton.tonal(onPressed: () => _saveRecipient(), child: const Text('Add Recipient')),
+      ]),
+      const SizedBox(height: 8),
+      if (recipients.isEmpty)
+        const Text('No owner/operational recipient configured yet.', style: TextStyle(fontSize: 12))
+      else
+        for (final raw in recipients)
+          Builder(builder: (_) {
+            final recipient = Map<String, dynamic>.from(raw as Map);
+            final events = <String>[
+              if (recipient['receiveCanePurchase'] == true) 'Cane',
+              if (recipient['receivePayment'] == true) 'Payment',
+              if (recipient['receiveSalePurchase'] == true) 'SalePurchase',
+            ].join(' • ');
+            return Card(child: ListTile(
+              title: Text('${recipient['recipientName']}  •  ${recipient['mobileNumber']}'),
+              subtitle: Text('${recipient['status'] == true ? 'Active' : 'Inactive'}${events.isEmpty ? '' : '  |  $events'}'),
+              trailing: Wrap(spacing: 2, children: [
+                IconButton(icon: const Icon(Icons.edit_outlined), tooltip: 'Edit', onPressed: () => _saveRecipient(existing: recipient)),
+                IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Remove', onPressed: () => _deleteRecipient(recipient)),
+              ]),
+            ));
+          }),
       const Divider(height: 32),
       Text('Message Templates',
           style: Theme.of(context)
@@ -1362,6 +1642,7 @@ class _SmsLogsTabState extends State<_SmsLogsTab> {
         'SENT' => const Color(0xFF2E7D32),
         'FAILED' => Colors.red,
         'RETRY_PENDING' => Colors.orange,
+        'CANCELLED' => Colors.grey,
         _ => Colors.blueGrey,
       };
 
@@ -1381,7 +1662,8 @@ class _SmsLogsTabState extends State<_SmsLogsTab> {
                 'PROCESSING',
                 'SENT',
                 'RETRY_PENDING',
-                'FAILED'
+                'FAILED',
+                'CANCELLED'
               ])
                 ChoiceChip(
                   label: Text(s ?? 'ALL'),
@@ -1452,35 +1734,93 @@ class _BackupTabState extends State<_BackupTab> {
   bool enabled = true;
   bool differentialEnabled = true;
   bool transactionLogEnabled = true;
+  Map<String, dynamic> backupStatus = {};
+  bool downloadingBackup = false;
 
   @override
   void initState() {
     super.initState();
-    ApiClient.instance.dio.get('/api/backup/config').then((res) {
-      if (res.statusCode == 200 && res.data != null && mounted) {
-        final v = res.data;
-        setState(() {
-          enabled = v['enabled'] == true;
-          frequency = v['frequency'] ?? 'Daily';
-          timeCtrl.text = v['timeOfDay'] ?? '02:00';
-          retentionCtrl.text = '${v['retentionDays'] ?? 14}';
-          folderCtrl.text = v['backupFolderPath'] ?? r'E:\Backup';
-          differentialEnabled = v['differentialEnabled'] == true;
-          transactionLogEnabled = v['transactionLogEnabled'] == true;
-        });
-      }
-    });
+    _load();
+  }
+
+  Future<void> _load() async {
+    final results = await Future.wait([
+      ApiClient.instance.dio.get('/api/backup/config'),
+      ApiClient.instance.dio.get('/api/backup/status'),
+    ]);
+    if (!mounted) return;
+    final configResponse = results[0];
+    final statusResponse = results[1];
+    if (configResponse.statusCode == 200 && configResponse.data != null) {
+      final v = configResponse.data;
+      setState(() {
+        enabled = v['enabled'] == true;
+        frequency = v['frequency'] ?? 'Daily';
+        timeCtrl.text = v['timeOfDay'] ?? '02:00';
+        retentionCtrl.text = '${v['retentionDays'] ?? 14}';
+        folderCtrl.text = v['backupFolderPath'] ?? r'E:\Backup';
+        differentialEnabled = v['differentialEnabled'] == true;
+        transactionLogEnabled = v['transactionLogEnabled'] == true;
+        backupStatus = statusResponse.statusCode == 200 &&
+                statusResponse.data is Map
+            ? Map<String, dynamic>.from(statusResponse.data)
+            : {};
+      });
+    }
   }
 
   Future<void> _download(String path, String filename) =>
       downloadAndNotify(context, path, filename);
 
+  Future<void> _downloadCurrentBackup() async {
+    setState(() => downloadingBackup = true);
+    try {
+      await postDownloadAndNotify(context, '/api/backup/current/download',
+          'CaneFactory-current-backup.bak');
+      await _load();
+    } finally {
+      if (mounted) setState(() => downloadingBackup = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(padding: const EdgeInsets.all(16), children: [
       const Text(
-          'SQL Server 2019 Express has no SQL Agent - schedule the generated .sql script via Windows Task Scheduler + sqlcmd.',
+          'The server API runs this policy automatically. Hourly 01:00 means 01:00, 02:00, 03:00…; Daily/Weekly run at the selected time. The SQL/XML downloads are an optional fallback.',
           style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+      const SizedBox(height: 10),
+      if (backupStatus.isNotEmpty)
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Wrap(
+              spacing: 24,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                    'Next full backup: ${backupStatus['nextFullBackupAt'] ?? '-'}'),
+                Text(
+                    'Last result: ${backupStatus['lastResult'] ?? 'Waiting for first scheduled run'}',
+                    style: TextStyle(
+                        color: backupStatus['lastResult'] == 'FAILED'
+                            ? Colors.red
+                            : Colors.green,
+                        fontWeight: FontWeight.w600)),
+                if (backupStatus['lastMessage'] != null)
+                  SizedBox(
+                      width: 650,
+                      child: Text('${backupStatus['lastMessage']}',
+                          style: const TextStyle(fontSize: 12))),
+                IconButton(
+                    tooltip: 'Refresh backup status',
+                    onPressed: _load,
+                    icon: const Icon(Icons.refresh)),
+              ],
+            ),
+          ),
+        ),
       const SizedBox(height: 10),
       Wrap(spacing: 14, runSpacing: 14, children: [
         SizedBox(
@@ -1542,6 +1882,7 @@ class _BackupTabState extends State<_BackupTab> {
                 'transactionLogIntervalMinutes': 30,
               });
               if (context.mounted) showResult(context, res);
+              if (res.statusCode == 200) await _load();
             },
             child: const Text('Save Backup Policy')),
         OutlinedButton(
@@ -1552,6 +1893,18 @@ class _BackupTabState extends State<_BackupTab> {
             onPressed: () => _download(
                 '/api/backup/task-scheduler-xml', 'CaneFactoryBackup-Task.xml'),
             child: const Text('Download Task Scheduler XML')),
+        OutlinedButton.icon(
+            onPressed:
+                downloadingBackup ? null : _downloadCurrentBackup,
+            icon: downloadingBackup
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.download),
+            label: Text(downloadingBackup
+                ? 'Creating Backup…'
+                : 'Download Current Backup')),
       ]),
     ]);
   }

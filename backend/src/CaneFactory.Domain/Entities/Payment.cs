@@ -15,6 +15,16 @@ public class Payment : BaseEntity
     public int PaymentModeId { get; set; }
     public PaymentModeMaster PaymentMode { get; set; } = null!;
     public string? TransactionRefNumber { get; set; }
+    /// <summary>Shared opaque token for all independently auditable payments created by one
+    /// date-range batch. It lets the client print one consolidated PDF without exposing IDs in a URL.</summary>
+    public string? BatchPrintToken { get; set; }
+    // Immutable recipient-bank snapshot for BANK payments. It keeps historical payment PDFs
+    // accurate even if the grower's bank master/account details are edited later.
+    public string? AccountHolderNameAtPayment { get; set; }
+    public string? BankNameAtPayment { get; set; }
+    public string? BankBranchAtPayment { get; set; }
+    public string? BankIfscAtPayment { get; set; }
+    public string? BankAccountNumberAtPayment { get; set; }
     public DateTime PaymentDate { get; set; }
     public int PaidByUserId { get; set; }
     public string PaidByUserName { get; set; } = string.Empty;
@@ -45,6 +55,8 @@ public class PaymentImage
 {
     public int Id { get; set; }
     public int PaymentId { get; set; }
+    /// <summary>The paid purchase this image proves. Null is retained only for legacy/uploaded evidence.</summary>
+    public int? PurchaseId { get; set; }
     public int CameraId { get; set; }
     public string ImageName { get; set; } = string.Empty;
     public string FilePath { get; set; } = string.Empty;

@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.DependencyInjection;
 using System.Security.Cryptography;
 
 namespace CaneFactory.API.Controllers;
@@ -30,13 +29,12 @@ public class PaymentController : ControllerBase
     private readonly ICurrentUser _current;
     private readonly ISequenceGenerator _seq;
     private readonly IMemoryCache _cache;
-    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ISmsService _sms;
 
     public PaymentController(AppDbContext db, IAuditService audit, ICurrentUser current,
-        ISequenceGenerator seq, IMemoryCache cache, IServiceScopeFactory scopeFactory, ISmsService sms)
+        ISequenceGenerator seq, IMemoryCache cache, ISmsService sms)
     {
-        _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache; _scopeFactory = scopeFactory; _sms = sms;
+        _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache; _sms = sms;
     }
 
     private IActionResult? Deny(string action) =>
@@ -55,19 +53,8 @@ public class PaymentController : ControllerBase
         return q.Where(p => p.Grower.Mobile == user.Mobile);
     }
 
-    /// <summary>Fire-and-forget Cash Evidence capture on a fresh DI scope - never blocks or fails
-    /// the payment response. Per-camera failures are already audited inside ICameraCaptureService.</summary>
-    private void QueueCapture(int paymentId)
-    {
-        var userId = _current.UserId;
-        _ = Task.Run(async () =>
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var svc = scope.ServiceProvider.GetRequiredService<ICameraCaptureService>();
-            try { await svc.CaptureForPaymentAsync(paymentId, userId); }
-            catch { /* best-effort */ }
-        });
-    }
+    // Cash evidence is intentionally captured from the operator's live-view dialog.
+    // A background snapshot could prove an empty counter rather than the farmer receiving payment.
 
     private async Task<object?> AutoPrintAsync(int paymentId)
     {
@@ -86,6 +73,22 @@ public class PaymentController : ControllerBase
         };
     }
 
+    private async Task<object?> AutoPrintBatchAsync(string batchPrintToken)
+    {
+        var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
+        if (cfg == null) return null;
+        return new
+        {
+            printerType = cfg.PrinterType,
+            printerName = cfg.PrinterName,
+            copies = cfg.PaymentCopies,
+            language = cfg.Language,
+            shouldAutoPrint = cfg.AutoPrint && cfg.PaymentCopies > 0,
+            documentUrl = $"/api/print/payment-batch?batchToken={batchPrintToken}&format=final" +
+                (cfg.AutoPrint && cfg.PaymentCopies > 0 ? "" : "&target=A4")
+        };
+    }
+
     /// <summary>Purchases eligible for payment for a Grower: TARE_DONE, PaymentStatus=PENDING, UNLOCKED.
     /// SINGLE narrows to one PurchaseId, DATE_RANGE narrows by TareDateTime, FARMER takes all of them.</summary>
     private IQueryable<Purchase> EligiblePurchasesQuery(string mode, int growerId, int? purchaseId, DateTime? from, DateTime? to)
@@ -99,6 +102,15 @@ public class PaymentController : ControllerBase
             // Use an exclusive next-day boundary: SQL datetime values later on To Date must be included.
             if (to.HasValue) q = q.Where(p => p.TareDateTime < to.Value.Date.AddDays(1));
         }
+        return q;
+    }
+
+    private IQueryable<Purchase> EligibleDateRangePurchasesQuery(DateTime? from, DateTime? to)
+    {
+        var q = _db.Purchases.Where(p => !p.IsDeleted && p.GrossTareStatus == "TARE_DONE"
+            && p.PaymentStatus == "PENDING" && p.LockStatus == "UNLOCKED");
+        if (from.HasValue) q = q.Where(p => p.TareDateTime >= from.Value.Date);
+        if (to.HasValue) q = q.Where(p => p.TareDateTime < to.Value.Date.AddDays(1));
         return q;
     }
 
@@ -163,6 +175,15 @@ public class PaymentController : ControllerBase
             return BadRequest(new { message = "selectionMode must be SINGLE, DATE_RANGE or FARMER." });
         if (mode == "SINGLE" && !purchaseId.HasValue)
             return BadRequest(new { message = "purchaseId is required for SINGLE selection mode." });
+        if (mode == "DATE_RANGE" && (!fromDate.HasValue || !toDate.HasValue))
+            return BadRequest(new { message = "From Date and To Date are required for Date Range payment." });
+        if (mode == "DATE_RANGE" && fromDate!.Value.Date > toDate!.Value.Date)
+            return BadRequest(new { message = "From Date must not be after To Date." });
+
+        // Date Range is a batch operation: each grower still receives an independent Payment ID,
+        // Advice Number, cash-book row, evidence set and printable slip.
+        if (mode == "DATE_RANGE" && string.IsNullOrWhiteSpace(growerCode))
+            return await PreviewDateRangeBatchAsync(fromDate, toDate);
 
         Grower? grower;
         try { grower = await ResolveSelectionGrowerAsync(mode, growerCode, purchaseId, fromDate, toDate); }
@@ -204,6 +225,40 @@ public class PaymentController : ControllerBase
         });
     }
 
+    private async Task<IActionResult> PreviewDateRangeBatchAsync(DateTime? fromDate, DateTime? toDate)
+    {
+        var eligible = await EligibleDateRangePurchasesQuery(fromDate, toDate)
+            .OrderBy(p => p.GrowerCode).ThenBy(p => p.TareDateTime)
+            .Select(p => new { p.Id, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName,
+                p.VehicleNumber, p.FinalWeightQuintal, p.PurchaseAmount, p.TareDateTime })
+            .ToListAsync();
+        if (eligible.Count == 0)
+            return NotFound(new { message = "No payable purchases were found in the selected date range." });
+
+        var loanByGrower = await _db.Loans.AsNoTracking().Where(l => !l.IsDeleted && l.LoanStatus == "ACTIVE")
+            .GroupBy(l => l.GrowerId).Select(g => new { GrowerId = g.Key, Total = g.Sum(l => l.OutstandingAmount) }).ToDictionaryAsync(x => x.GrowerId, x => x.Total);
+        var groups = eligible.GroupBy(x => new { x.GrowerId, x.GrowerCode, x.GrowerName }).Select(g =>
+        {
+            var total = WeightCalculator.R2(g.Sum(x => x.PurchaseAmount ?? 0));
+            var loan = loanByGrower.GetValueOrDefault(g.Key.GrowerId, 0m);
+            var deduction = WeightCalculator.R2(Math.Min(loan, total));
+            return new { g.Key.GrowerId, g.Key.GrowerCode, g.Key.GrowerName, purchaseCount = g.Count(),
+                totalFinalWeight = WeightCalculator.R2(g.Sum(x => x.FinalWeightQuintal ?? 0)), totalPurchaseAmount = total,
+                estimatedLoanDeduction = deduction, estimatedNetPayable = WeightCalculator.R2(total - deduction) };
+        }).ToList();
+        return Ok(new
+        {
+            isBatch = true, eligiblePurchases = eligible.Select(x => new { purchaseId = x.Id, x.GrowerCode, x.GrowerName, x.VehicleNumber, x.FinalWeightQuintal, x.PurchaseAmount, x.TareDateTime }),
+            batchGrowers = groups, purchaseCount = eligible.Count, growerCount = groups.Count,
+            totalFinalWeight = WeightCalculator.R2(eligible.Sum(x => x.FinalWeightQuintal ?? 0)),
+            totalPurchaseAmount = WeightCalculator.R2(eligible.Sum(x => x.PurchaseAmount ?? 0)),
+            totalOutstandingLoan = WeightCalculator.R2(groups.Sum(x => loanByGrower.GetValueOrDefault(x.GrowerId, 0m))),
+            estimatedLoanDeduction = WeightCalculator.R2(groups.Sum(x => x.estimatedLoanDeduction)),
+            estimatedNetPayable = WeightCalculator.R2(groups.Sum(x => x.estimatedNetPayable)),
+            outstandingLoans = Array.Empty<object>()
+        });
+    }
+
     [HttpPost]
     public async Task<IActionResult> Issue(PaymentCreateRequest req)
     {
@@ -215,6 +270,13 @@ public class PaymentController : ControllerBase
             return BadRequest(new { message = "selectionMode must be SINGLE, DATE_RANGE or FARMER." });
         if (mode == "SINGLE" && !req.PurchaseId.HasValue)
             return BadRequest(new { message = "purchaseId is required for SINGLE selection mode." });
+        if (mode == "DATE_RANGE" && (!req.FromDate.HasValue || !req.ToDate.HasValue))
+            return BadRequest(new { message = "From Date and To Date are required for Date Range payment." });
+        if (mode == "DATE_RANGE" && req.FromDate!.Value.Date > req.ToDate!.Value.Date)
+            return BadRequest(new { message = "From Date must not be after To Date." });
+
+        if (mode == "DATE_RANGE" && string.IsNullOrWhiteSpace(req.GrowerCode))
+            return await IssueDateRangeBatchAsync(req);
 
         Grower? grower;
         try { grower = await ResolveSelectionGrowerAsync(mode, req.GrowerCode, req.PurchaseId, req.FromDate, req.ToDate, includeVillage: true); }
@@ -225,6 +287,9 @@ public class PaymentController : ControllerBase
         var paymentMode = await _db.PaymentModes.FirstOrDefaultAsync(m => m.Id == req.PaymentModeId && !m.IsDeleted && m.Status);
         if (paymentMode == null) return BadRequest(new { message = "Selected Payment Mode does not exist or is inactive." });
         var isCashPayment = string.Equals(paymentMode.ModeCode, "CASH", StringComparison.OrdinalIgnoreCase);
+        var isBankPayment = IsBankPayment(paymentMode);
+        if (isBankPayment && GetBankDetailsError(grower) is { } bankError)
+            return Conflict(new { message = bankError });
 
         var eligible = await EligiblePurchasesQuery(mode, grower.Id, req.PurchaseId, req.FromDate, req.ToDate).ToListAsync();
         if (eligible.Count == 0) return Conflict(new { message = "No payable purchases found for the selected criteria." });
@@ -292,6 +357,11 @@ public class PaymentController : ControllerBase
             NetPayableAmount = netPayable,
             PaymentModeId = paymentMode.Id,
             TransactionRefNumber = req.TransactionRefNumber,
+            AccountHolderNameAtPayment = isBankPayment ? grower.AccountHolderName : null,
+            BankNameAtPayment = isBankPayment ? grower.Bank?.BankName : null,
+            BankBranchAtPayment = isBankPayment ? grower.Bank?.BranchName : null,
+            BankIfscAtPayment = isBankPayment ? grower.Bank?.IFSC : null,
+            BankAccountNumberAtPayment = isBankPayment ? grower.BankAccountNumber : null,
             PaymentDate = DateTime.UtcNow,
             PaidByUserId = _current.UserId!.Value,
             PaidByUserName = _current.Username ?? "",
@@ -342,12 +412,12 @@ public class PaymentController : ControllerBase
             newValue: new { payment!.GrowerCode, payment.AdviceNumber, payment.TotalPurchaseAmount, payment.LoanDeductedAmount, payment.NetPayableAmount, purchaseCount = eligible.Count });
 
         var isCash = isCashPayment;
-        if (isCash) QueueCapture(paymentId);
+
 
         var smsQueued = false;
         try
         {
-            smsQueued = await _sms.QueueAsync("PAYMENT_COMPLETED", grower.Id, grower.Mobile, $"PAY-{paymentId}", new Dictionary<string, string>
+            var placeholders = new Dictionary<string, string>
             {
                 ["GrowerName"] = grower.GrowerName,
                 ["GrowerCode"] = grower.GrowerCode,
@@ -356,7 +426,15 @@ public class PaymentController : ControllerBase
                 ["LoanDeducted"] = totalDeducted.ToString("F2"),
                 ["NetPayable"] = netPayable.ToString("F2"),
                 ["PaymentMode"] = paymentMode.ModeName
-            });
+            };
+            var growerQueued = await _sms.QueueAsync("PAYMENT_COMPLETED", grower.Id, grower.Mobile, $"PAY-{paymentId}", placeholders);
+            var recipients = await _db.SmsRecipients.AsNoTracking()
+                .Where(x => !x.IsDeleted && x.Status && x.ReceivePayment).ToListAsync();
+            var ownerQueued = new List<bool>();
+            foreach (var recipient in recipients)
+                ownerQueued.Add(await _sms.QueueForOperationalRecipientAsync("PAYMENT_COMPLETED", recipient.MobileNumber,
+                    $"PAY-{paymentId}-OWNER-{recipient.Id}", placeholders));
+            smsQueued = growerQueued || ownerQueued.Any(x => x);
         }
         catch { /* SMS is a notification only - never affects a successful payment */ }
 
@@ -370,9 +448,178 @@ public class PaymentController : ControllerBase
             netPayableAmount = netPayable,
             purchaseCount = eligible.Count,
             autoPrint = await AutoPrintAsync(paymentId),
-            captureQueued = isCash,
+            captureQueued = false,
+            cashEvidenceRequired = isCash,
             smsQueued
         });
+    }
+
+    /// <summary>Completes all payable growers in a date range as separately auditable payments.
+    /// This is intentionally one database transaction: either every selected farmer payment is
+    /// committed, or none are, while each farmer still gets their own Advice/PDF/evidence record.</summary>
+    private async Task<IActionResult> IssueDateRangeBatchAsync(PaymentCreateRequest req)
+    {
+        var paymentMode = await _db.PaymentModes.FirstOrDefaultAsync(m => m.Id == req.PaymentModeId && !m.IsDeleted && m.Status);
+        if (paymentMode == null) return BadRequest(new { message = "Selected Payment Mode does not exist or is inactive." });
+        var season = await _db.Seasons.FirstOrDefaultAsync(s => s.IsActive && !s.IsDeleted);
+        if (season == null) return Conflict(new { message = "No ACTIVE season is configured. Ask Admin/Developer to activate a Season." });
+        var isCash = string.Equals(paymentMode.ModeCode, "CASH", StringComparison.OrdinalIgnoreCase);
+        var isBank = IsBankPayment(paymentMode);
+        var purchases = await EligibleDateRangePurchasesQuery(req.FromDate, req.ToDate)
+            .OrderBy(p => p.GrowerId).ThenBy(p => p.TareDateTime).ToListAsync();
+        if (purchases.Count == 0) return Conflict(new { message = "No payable purchases found for the selected date range." });
+        var growerIds = purchases.Select(p => p.GrowerId).Distinct().ToArray();
+        var growers = await _db.Growers.Include(g => g.Village).Include(g => g.Bank).Where(g => !g.IsDeleted && growerIds.Contains(g.Id))
+            .ToDictionaryAsync(g => g.Id);
+        if (growers.Count != growerIds.Length) return Conflict(new { message = "One or more growers in the selected payment range are no longer active." });
+        if (isBank)
+        {
+            var invalidGrower = growers.Values.Select(grower => new { Grower = grower, Error = GetBankDetailsError(grower) })
+                .FirstOrDefault(x => x.Error != null);
+            if (invalidGrower != null)
+                return Conflict(new { message = invalidGrower.Error });
+        }
+
+        var batchPrintToken = Guid.NewGuid().ToString("N");
+        var completed = new List<PaymentCompletion>();
+        await _db.ExecuteInTransactionAsync(async () =>
+        {
+            foreach (var group in purchases.GroupBy(p => p.GrowerId))
+            {
+                var grower = growers[group.Key];
+                completed.Add(await CreatePaymentForGrowerAsync(grower, group.ToList(), paymentMode, season,
+                    isCash, isBank, req.TransactionRefNumber, batchPrintToken));
+            }
+        });
+
+        var smsQueued = 0;
+        foreach (var result in completed)
+        {
+            await _audit.LogAsync("Pay", "Payment", "Payment", result.Payment.Id.ToString(),
+                newValue: new { result.Payment.GrowerCode, result.Payment.AdviceNumber, result.Payment.TotalPurchaseAmount,
+                    result.Payment.LoanDeductedAmount, result.Payment.NetPayableAmount, purchaseCount = result.PurchaseCount });
+            if (await QueuePaymentSmsAsync(result.Grower, result.Payment, paymentMode.ModeName)) smsQueued++;
+        }
+        var paymentSummaries = new List<object>();
+        foreach (var result in completed)
+            paymentSummaries.Add(new { paymentId = result.Payment.Id, adviceNumber = result.Payment.AdviceNumber,
+                growerCode = result.Grower.GrowerCode, growerName = result.Grower.GrowerName,
+                totalPurchaseAmount = result.Payment.TotalPurchaseAmount, loanDeductedAmount = result.Payment.LoanDeductedAmount,
+                netPayableAmount = result.Payment.NetPayableAmount, purchaseCount = result.PurchaseCount,
+                captureQueued = false, cashEvidenceRequired = isCash, autoPrint = await AutoPrintAsync(result.Payment.Id) });
+        return Ok(new
+        {
+            isBatch = true,
+            message = $"{completed.Count} farmer payment(s) completed. One consolidated batch PDF contains every Advice, bank/payable row and purchase-wise detail.",
+            paymentCount = completed.Count, purchaseCount = completed.Sum(x => x.PurchaseCount),
+            autoPrint = await AutoPrintBatchAsync(batchPrintToken),
+            totalPurchaseAmount = WeightCalculator.R2(completed.Sum(x => x.Payment.TotalPurchaseAmount)),
+            loanDeductedAmount = WeightCalculator.R2(completed.Sum(x => x.Payment.LoanDeductedAmount)),
+            netPayableAmount = WeightCalculator.R2(completed.Sum(x => x.Payment.NetPayableAmount)),
+            cashCaptureQueued = false, cashEvidenceRequired = isCash, smsQueuedCount = smsQueued, payments = paymentSummaries
+        });
+    }
+
+    private async Task<PaymentCompletion> CreatePaymentForGrowerAsync(Grower grower, List<Purchase> eligible,
+        PaymentModeMaster paymentMode, Season season, bool isCashPayment, bool isBankPayment, string? transactionRefNumber,
+        string? batchPrintToken = null)
+    {
+        var paymentId = (int)await _seq.NextAsync("PaymentId", 1);
+        var adviceNumber = (int)await _seq.NextAsync("AdviceNumber", 1);
+        var totalPurchaseAmount = WeightCalculator.R2(eligible.Sum(p => p.PurchaseAmount ?? 0));
+        var remaining = totalPurchaseAmount;
+        var totalDeducted = 0m;
+        var activeLoans = await _db.Loans.Where(l => l.GrowerCode == grower.GrowerCode && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
+            .OrderBy(l => l.IssueDate).ToListAsync();
+        foreach (var loan in activeLoans)
+        {
+            if (remaining <= 0) break;
+            var deduct = WeightCalculator.R2(Math.Min(loan.OutstandingAmount, remaining));
+            if (deduct <= 0) continue;
+            var lrId = (int)await _seq.NextAsync("LRId", 1);
+            _db.LoanRecoveries.Add(new LoanRecovery
+            {
+                Id = lrId, LoanId = loan.Id, GrowerId = loan.GrowerId, GrowerCode = loan.GrowerCode,
+                RecoveryAmount = deduct, RecoveryDate = DateTime.UtcNow, RecoveredByUserId = _current.UserId!.Value,
+                RecoveredByUserName = _current.Username ?? "", Remarks = $"Auto-deducted during Payment {paymentId} (Advice {adviceNumber})",
+                RecoveryStatus = "ACTIVE", PaymentId = paymentId, CreatedBy = _current.UserId
+            });
+            loan.RecoveredAmount = WeightCalculator.R2(loan.RecoveredAmount + deduct);
+            loan.OutstandingAmount = WeightCalculator.R2(loan.OutstandingAmount - deduct);
+            if (loan.OutstandingAmount == 0) loan.LoanStatus = "CLOSED";
+            loan.UpdatedAt = DateTime.UtcNow; loan.UpdatedBy = _current.UserId;
+            remaining -= deduct; totalDeducted += deduct;
+        }
+        totalDeducted = WeightCalculator.R2(totalDeducted);
+        var netPayable = WeightCalculator.R2(totalPurchaseAmount - totalDeducted);
+        var payment = new Payment
+        {
+            Id = paymentId, AdviceNumber = adviceNumber, GrowerId = grower.Id, GrowerCode = grower.GrowerCode,
+            VillageId = grower.VillageId, TotalPurchaseAmount = totalPurchaseAmount, LoanDeductedAmount = totalDeducted,
+            NetPayableAmount = netPayable, PaymentModeId = paymentMode.Id, TransactionRefNumber = transactionRefNumber,
+            BatchPrintToken = batchPrintToken,
+            AccountHolderNameAtPayment = isBankPayment ? grower.AccountHolderName : null,
+            BankNameAtPayment = isBankPayment ? grower.Bank?.BankName : null,
+            BankBranchAtPayment = isBankPayment ? grower.Bank?.BranchName : null,
+            BankIfscAtPayment = isBankPayment ? grower.Bank?.IFSC : null,
+            BankAccountNumberAtPayment = isBankPayment ? grower.BankAccountNumber : null,
+            PaymentDate = DateTime.UtcNow, PaidByUserId = _current.UserId!.Value, PaidByUserName = _current.Username ?? "",
+            PaymentStatus = "COMPLETED", SeasonId = season.Id, CreatedBy = _current.UserId
+        };
+        _db.Payments.Add(payment);
+        if (isCashPayment && netPayable > 0)
+            _db.CashBookEntries.Add(new CashBookEntry
+            {
+                EntryDate = payment.PaymentDate.Date, EntryType = "CASH_OUT", SourceType = "FARMER_PAYMENT",
+                SourceName = "Farmer cash payment", Amount = netPayable, PaymentId = paymentId, GrowerId = grower.Id,
+                GrowerCode = grower.GrowerCode, GrowerName = grower.GrowerName, NetPayableAmount = netPayable,
+                ReferenceNumber = $"PAY-{paymentId}", Remarks = $"Advice {adviceNumber}", CreatedAt = DateTime.UtcNow,
+                CreatedBy = _current.UserId, Status = true
+            });
+        foreach (var purchase in eligible)
+        {
+            _db.PaymentPurchases.Add(new PaymentPurchase { PaymentId = paymentId, PurchaseId = purchase.Id, PurchaseAmountAtPayment = purchase.PurchaseAmount ?? 0 });
+            purchase.PaymentStatus = "PAID"; purchase.PaymentFlag = "Y"; purchase.AdviceNumber = adviceNumber;
+            purchase.UpdatedAt = DateTime.UtcNow; purchase.UpdatedBy = _current.UserId;
+        }
+        await _db.SaveChangesAsync();
+        return new PaymentCompletion(payment, grower, eligible.Count);
+    }
+
+    private async Task<bool> QueuePaymentSmsAsync(Grower grower, Payment payment, string paymentModeName)
+    {
+        try
+        {
+            var placeholders = new Dictionary<string, string>
+            {
+                ["GrowerName"] = grower.GrowerName, ["GrowerCode"] = grower.GrowerCode,
+                ["AdviceNumber"] = payment.AdviceNumber.ToString(), ["TotalPurchaseAmount"] = payment.TotalPurchaseAmount.ToString("F2"),
+                ["LoanDeducted"] = payment.LoanDeductedAmount.ToString("F2"), ["NetPayable"] = payment.NetPayableAmount.ToString("F2"),
+                ["PaymentMode"] = paymentModeName
+            };
+            var growerQueued = await _sms.QueueAsync("PAYMENT_COMPLETED", grower.Id, grower.Mobile, $"PAY-{payment.Id}", placeholders);
+            var recipients = await _db.SmsRecipients.AsNoTracking().Where(x => !x.IsDeleted && x.Status && x.ReceivePayment).ToListAsync();
+            var ownerQueued = false;
+            foreach (var recipient in recipients)
+                ownerQueued |= await _sms.QueueForOperationalRecipientAsync("PAYMENT_COMPLETED", recipient.MobileNumber,
+                    $"PAY-{payment.Id}-OWNER-{recipient.Id}", placeholders);
+            return growerQueued || ownerQueued;
+        }
+        catch { return false; } // SMS never rolls back a saved payment.
+    }
+
+    private sealed record PaymentCompletion(Payment Payment, Grower Grower, int PurchaseCount);
+
+    private static bool IsBankPayment(PaymentModeMaster paymentMode) =>
+        string.Equals(paymentMode.ModeCode, "BANK", StringComparison.OrdinalIgnoreCase);
+
+    private static string? GetBankDetailsError(Grower grower)
+    {
+        if (string.IsNullOrWhiteSpace(grower.AccountHolderName) || grower.Bank == null
+            || string.IsNullOrWhiteSpace(grower.Bank.BankName) || string.IsNullOrWhiteSpace(grower.Bank.BranchName)
+            || string.IsNullOrWhiteSpace(grower.Bank.IFSC) || string.IsNullOrWhiteSpace(grower.BankAccountNumber))
+            return $"Bank payment cannot be completed for grower {grower.GrowerCode}. Add account holder name, bank name, branch, IFSC and account number in Grower Master.";
+        return null;
     }
 
     /// <summary>Resolves the owner of a payment selection without trusting a grower code for a single purchase.</summary>
@@ -384,7 +631,7 @@ public class PaymentController : ControllerBase
             var purchase = await _db.Purchases.AsNoTracking().FirstOrDefaultAsync(p => p.Id == purchaseId && !p.IsDeleted);
             if (purchase == null) return null;
             return includeVillage
-                ? await _db.Growers.Include(g => g.Village).FirstOrDefaultAsync(g => g.Id == purchase.GrowerId && !g.IsDeleted)
+                ? await _db.Growers.Include(g => g.Village).Include(g => g.Bank).FirstOrDefaultAsync(g => g.Id == purchase.GrowerId && !g.IsDeleted)
                 : await _db.Growers.FirstOrDefaultAsync(g => g.Id == purchase.GrowerId && !g.IsDeleted);
         }
 
@@ -398,7 +645,7 @@ public class PaymentController : ControllerBase
                 throw new PaymentSelectionException("More than one grower matches this name. Enter the Grower Code or full mobile number.");
             if (matches.Count == 0) return null;
             if (!includeVillage) return matches[0];
-            return await _db.Growers.Include(g => g.Village)
+            return await _db.Growers.Include(g => g.Village).Include(g => g.Bank)
                 .FirstOrDefaultAsync(g => g.Id == matches[0].Id && !g.IsDeleted);
         }
 
@@ -411,7 +658,7 @@ public class PaymentController : ControllerBase
         if (growerIds.Count == 0) return null;
         if (growerIds.Count > 1) throw new PaymentSelectionException("The selected date range has payable purchases for multiple growers. Use Farmer-wise to pay one grower at a time.");
         return includeVillage
-            ? await _db.Growers.Include(g => g.Village).FirstOrDefaultAsync(g => g.Id == growerIds[0] && !g.IsDeleted)
+            ? await _db.Growers.Include(g => g.Village).Include(g => g.Bank).FirstOrDefaultAsync(g => g.Id == growerIds[0] && !g.IsDeleted)
             : await _db.Growers.FirstOrDefaultAsync(g => g.Id == growerIds[0] && !g.IsDeleted);
     }
 
@@ -503,6 +750,71 @@ public class PaymentController : ControllerBase
         });
     }
 
+    /// <summary>Cash-payment evidence context for the live camera dialog. It contains no camera credentials.</summary>
+    [HttpGet("{id:int}/evidence-context")]
+    public async Task<IActionResult> EvidenceContext(int id)
+    {
+        if (!_current.HasPermission("CashEvidence.Create"))
+            return StatusCode(403, new { message = "You do not have 'CashEvidence.Create' permission." });
+        var payment = await _db.Payments.AsNoTracking().Include(p => p.PaymentMode)
+            .FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted);
+        if (payment == null) return NotFound(new { message = "Payment not found." });
+        if (!string.Equals(payment.PaymentMode.ModeCode, "CASH", StringComparison.OrdinalIgnoreCase))
+            return Conflict(new { message = "Payment evidence is available only for Cash payments." });
+
+        var cameraSetting = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Key == "PaymentEvidenceCameraId");
+        var rootSetting = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Key == "PaymentEvidenceRoot");
+        var cameraId = int.TryParse(cameraSetting?.Value, out var parsedCameraId) ? parsedCameraId : 0;
+        var camera = cameraId <= 0 ? null : await _db.Cameras.AsNoTracking()
+            .Where(c => c.Id == cameraId && !c.IsDeleted && c.Status && c.CaptureEnabled && c.LiveViewEnabled)
+            .Select(c => new { c.Id, c.CameraNumber, c.Vendor, c.Model, c.Protocol })
+            .FirstOrDefaultAsync();
+        var purchases = await _db.PaymentPurchases.AsNoTracking().Where(pp => pp.PaymentId == id)
+            .OrderBy(pp => pp.PurchaseId)
+            .Select(pp => new
+            {
+                pp.PurchaseId,
+                pp.Purchase.VehicleNumber,
+                pp.Purchase.FinalWeightQuintal,
+                Evidence = _db.PaymentImages.Where(i => i.PaymentId == id && i.PurchaseId == pp.PurchaseId && i.Status)
+                    .OrderByDescending(i => i.CapturedAt)
+                    .Select(i => new { i.Id, i.ImageName, i.CapturedAt }).FirstOrDefault()
+            }).ToListAsync();
+        var root = string.IsNullOrWhiteSpace(rootSetting?.Value) ? @"C:\WeighmentImage\Payment" : rootSetting.Value;
+        return Ok(new
+        {
+            paymentId = payment.Id,
+            payment.AdviceNumber,
+            payment.GrowerCode,
+            payment.NetPayableAmount,
+            camera,
+            configuredPath = root,
+            filenamePattern = @"{path}\yyyy-MM-dd\GrowerCode-AdviceNo-PurchaseId-PaymentId.jpg",
+            purchases
+        });
+    }
+
+    /// <summary>Returns a current, non-persisted frame from the configured payment-evidence camera.</summary>
+    [HttpGet("{id:int}/evidence/preview")]
+    public async Task<IActionResult> EvidencePreview(int id, [FromServices] ICameraCaptureService capture, CancellationToken ct)
+    {
+        if (!_current.HasPermission("CashEvidence.Create"))
+            return StatusCode(403, new { message = "You do not have 'CashEvidence.Create' permission." });
+        var isCash = await _db.Payments.AsNoTracking().Include(p => p.PaymentMode)
+            .AnyAsync(p => p.Id == id && !p.IsDeleted && p.PaymentMode.ModeCode == "CASH", ct);
+        if (!isCash) return Conflict(new { message = "Payment evidence is available only for an existing Cash payment." });
+        var setting = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "PaymentEvidenceCameraId", ct);
+        if (!int.TryParse(setting?.Value, out var cameraId) || cameraId <= 0)
+            return Conflict(new { message = "Configure a Payment Evidence Camera in Developer > Cameras first." });
+        var result = await capture.CaptureSingleAsync(cameraId, ct);
+        if (!result.Success || result.ImageBytes == null)
+            return Conflict(new { message = result.Error ?? "Payment evidence live view could not be loaded." });
+        Response.Headers.CacheControl = "no-store, no-cache";
+        return File(result.ImageBytes, "image/jpeg");
+    }
+
     /// <summary>Cash Evidence photos already captured for this Payment.</summary>
     [HttpGet("{id:int}/images")]
     public async Task<IActionResult> Images(int id)
@@ -512,20 +824,38 @@ public class PaymentController : ControllerBase
         if (!await _db.Payments.AnyAsync(p => p.Id == id && !p.IsDeleted))
             return NotFound(new { message = "Payment not found." });
         var images = await _db.PaymentImages.Where(i => i.PaymentId == id && i.Status)
-            .OrderBy(i => i.ImageName)
-            .Select(i => new { i.Id, i.CameraId, i.ImageName, i.FileHash, i.CapturedAt, i.CapturedBy })
+            .OrderBy(i => i.PurchaseId).ThenBy(i => i.ImageName)
+            .Select(i => new { i.Id, i.PurchaseId, i.CameraId, i.ImageName, i.FileHash, i.CapturedAt, i.CapturedBy })
             .ToListAsync();
         return Ok(images);
     }
 
-    /// <summary>Manually (re-)trigger Cash Evidence capture for this Payment.</summary>
+    /// <summary>Captures a cash-payment photo for one paid purchase. replaceExisting is a safe retake:
+    /// it retires the prior database row, retains its audit trail, then saves a new immutable JPG.</summary>
     [HttpPost("{id:int}/images/capture")]
-    public async Task<IActionResult> CaptureImages(int id, [FromServices] ICameraCaptureService capture, CancellationToken ct)
+    public async Task<IActionResult> CaptureImages(int id, [FromBody] PaymentEvidenceCaptureRequest? request,
+        [FromServices] ICameraCaptureService capture, CancellationToken ct)
     {
         if (!_current.HasPermission("CashEvidence.Create"))
             return StatusCode(403, new { message = "You do not have 'CashEvidence.Create' permission." });
-        if (!await _db.Payments.AnyAsync(p => p.Id == id && !p.IsDeleted))
-            return NotFound(new { message = "Payment not found." });
+        var isCash = await _db.Payments.AsNoTracking().Include(p => p.PaymentMode)
+            .AnyAsync(p => p.Id == id && !p.IsDeleted && p.PaymentMode.ModeCode == "CASH", ct);
+        if (!isCash) return Conflict(new { message = "Payment evidence is available only for an existing Cash payment." });
+
+        if (request?.PurchaseId is > 0)
+        {
+            var result = await capture.CaptureForPaymentPurchaseAsync(id, request.PurchaseId.Value, _current.UserId,
+                request.ReplaceExisting, ct);
+            if (!result.Success)
+                return Conflict(new { message = result.Error ?? "Payment evidence could not be captured.", result });
+            return Ok(new
+            {
+                message = request.ReplaceExisting ? "Payment evidence retaken successfully." : "Payment evidence captured successfully.",
+                result
+            });
+        }
+
+        // Compatibility for a pre-upgrade Windows client: capture all linked paid purchases.
         var results = await capture.CaptureForPaymentAsync(id, _current.UserId, ct);
         var okCount = results.Count(r => r.Success);
         return Ok(new
@@ -548,18 +878,19 @@ public class PaymentController : ControllerBase
         var extension = Path.GetExtension(image.FileName).ToLowerInvariant();
         if (extension is not (".jpg" or ".jpeg" or ".png"))
             return BadRequest(new { message = "Only JPG, JPEG or PNG evidence images are allowed." });
-        var payment = await _db.Payments.Include(p => p.Season)
+        var payment = await _db.Payments.Include(p => p.PaymentMode)
             .FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
         if (payment == null) return NotFound(new { message = "Payment not found." });
+        if (!string.Equals(payment.PaymentMode.ModeCode, "CASH", StringComparison.OrdinalIgnoreCase))
+            return Conflict(new { message = "Payment evidence is available only for Cash payments." });
         var setting = await _db.SystemSettings.AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot", ct);
-        var root = string.IsNullOrWhiteSpace(setting?.Value)
-            ? Path.Combine(Path.GetTempPath(), "CanePaymentData") : setting.Value;
+            .FirstOrDefaultAsync(s => s.Key == "PaymentEvidenceRoot", ct);
+        var root = string.IsNullOrWhiteSpace(setting?.Value) ? @"C:\WeighmentImage\Payment" : Path.GetFullPath(setting.Value);
         var now = DateTime.Now;
-        var folder = Path.Combine(root, payment.Season?.SeasonName ?? "Default", "PaymentImages",
-            now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"PAY-{id}");
+        var folder = Path.Combine(root, now.ToString("yyyy-MM-dd"));
         Directory.CreateDirectory(folder);
-        var imageName = $"CASH-UPLOAD-{now:HHmmssfff}-{Guid.NewGuid():N}{extension}";
+        var code = new string(payment.GrowerCode.ToUpperInvariant().Where(char.IsLetterOrDigit).ToArray());
+        var imageName = $"{(string.IsNullOrWhiteSpace(code) ? "UNKNOWN" : code)}-{payment.AdviceNumber}-UPLOAD-{id}-{now:HHmmssfff}{extension}";
         var filePath = Path.Combine(folder, imageName);
         await using (var output = System.IO.File.Create(filePath))
             await image.CopyToAsync(output, ct);

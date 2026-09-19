@@ -99,6 +99,7 @@ public class ReportExportService : IReportExportService
                         t.CurrentPageNumber().FontSize(7);
                         t.Span(" of ");
                         t.TotalPages().FontSize(7);
+                        t.Span("   •   Warrior Softech").Bold().FontSize(7);
                     });
                 });
             });

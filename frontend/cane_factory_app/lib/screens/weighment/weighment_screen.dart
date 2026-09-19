@@ -25,6 +25,10 @@ class WeighmentScreen extends StatefulWidget {
 class _WeighmentScreenState extends State<WeighmentScreen> {
   bool _grossMode = true;
   final _sound = SoundController.instance;
+  // The desktop layout moves this panel between compact and wide branches when
+  // the window is restored/maximized.  A stable GlobalKey preserves the live
+  // MJPEG connection instead of disposing it and reconnecting on every resize.
+  final _cameraPreviewKey = GlobalKey();
 
   // GROSS state
   final _growerCode = TextEditingController();
@@ -812,6 +816,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       Expanded(
           flex: _capturedImages.isEmpty ? 1 : 3,
           child: CameraLivePreviewPanel(
+              key: _cameraPreviewKey,
               cameras: _cameras, compact: true, squareCards: true)),
       if (_capturedImages.isNotEmpty) ...[
         const Divider(height: 12),

@@ -59,8 +59,24 @@ public class SmsConfig : BaseEntity
     public string? RequestBodyTemplate { get; set; } // placeholders: {Mobile} {Message} {ApiKey} {ApiSecret} {SenderId} {EntityId}
     public string? ResponseSuccessPath { get; set; } // dotted JSON field path, e.g. "status"; empty = any 2xx is success
     public string? ResponseSuccessValue { get; set; } // expected value at ResponseSuccessPath, e.g. "success"
-    /// <summary>Comma-separated operational recipients for completed SalePurchase weighments.</summary>
-    public string? SalePurchaseRecipients { get; set; }
+    /// <summary>Independent event gates. The master Enabled switch must also be ON.</summary>
+    public bool CanePurchaseSmsEnabled { get; set; } = true;
+    public bool CanePaymentSmsEnabled { get; set; } = true;
+    public bool SalePurchaseSmsEnabled { get; set; } = true;
+}
+
+/// <summary>
+/// Named operational/owner recipients.  One person can opt into any combination
+/// of cane-final, grower-payment and sale-purchase-final notifications.
+/// Status is the user-controlled active/inactive switch inherited from BaseEntity.
+/// </summary>
+public class SmsRecipient : BaseEntity
+{
+    public string RecipientName { get; set; } = string.Empty;
+    public string MobileNumber { get; set; } = string.Empty;
+    public bool ReceiveCanePurchase { get; set; } = true;
+    public bool ReceivePayment { get; set; } = true;
+    public bool ReceiveSalePurchase { get; set; } = true;
 }
 
 public class SmsTemplate : BaseEntity

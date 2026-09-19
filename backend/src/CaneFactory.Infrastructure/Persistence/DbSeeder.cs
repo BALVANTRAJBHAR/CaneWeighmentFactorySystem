@@ -318,6 +318,9 @@ public static class DbSeeder
             // Blank means the capture service selects the ready C:/D:/E: drive
             // with the most free space and creates WeighmentImage there.
             ["ImageStorageRoot"] = "",
+            // Set to 1 immediately after any saved weight; cleared only when the live
+            // indicator reports an empty (zero) platform.
+            ["WeighbridgePlatformClearRequired"] = "0",
             ["Health.Cpu.Warning"] = "70",
             ["Health.Cpu.Critical"] = "90",
             ["Health.Ram.Warning"] = "70",

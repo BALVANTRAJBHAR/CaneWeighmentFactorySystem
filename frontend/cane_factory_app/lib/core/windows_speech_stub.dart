@@ -4,6 +4,10 @@ class WindowsSpeech {
 
   Future<List<String>> getVoices() async => const [];
 
+  Future<List<String>> getHindiVoices() async => const [];
+
+  Future<bool> hasHindiVoice() async => false;
+
   Future<void> speak({
     required String text,
     required bool preferHindi,

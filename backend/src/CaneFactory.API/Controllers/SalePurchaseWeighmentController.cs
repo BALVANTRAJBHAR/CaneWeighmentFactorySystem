@@ -101,7 +101,7 @@ public class SalePurchaseWeighmentController : ControllerBase
             return Conflict(new { message = deviceError });
         if (req.ItemId <= 0 || req.PartyId <= 0 || req.VehicleTypeId <= 0)
             return BadRequest(new { message = "Item, Party and Vehicle Type are required." });
-        var vehicle = Validators.NormUpper(req.VehicleNumber);
+        var vehicle = Validators.NormalizeVehicleNumber(req.VehicleNumber);
         var driver = Validators.Norm(req.DriverName);
         if (vehicle.Length is < 4 or > 15) return BadRequest(new { message = "Vehicle Number must be 4-15 characters." });
         if (driver.Length < 2 || driver.Length > 100) return BadRequest(new { message = "Driver Name must be 2-100 characters." });
@@ -115,6 +115,8 @@ public class SalePurchaseWeighmentController : ControllerBase
         if (await MinimumWeightErrorAsync(tare, applyGross: false) is { } tareError)
             return Conflict(new { message = tareError });
         var now = DateTime.UtcNow;
+        var eligibilityError = await CanStartNewSaleTareAsync(vehicle, now);
+        if (eligibilityError != null) return Conflict(new { message = eligibilityError, soundEvent = "WEIGHING_ACTIVE" });
         SalePurchase? record = null;
         try
         {
@@ -130,6 +132,8 @@ public class SalePurchaseWeighmentController : ControllerBase
                 WeighmentStatus = "TARE_PENDING_GROSS", CreatedBy = _current.UserId
             };
             _db.SalePurchases.Add(record);
+            await _db.SaveChangesAsync();
+            await MarkPlatformClearRequiredAsync();
             await _db.SaveChangesAsync();
             });
         }
@@ -189,6 +193,8 @@ public class SalePurchaseWeighmentController : ControllerBase
                 record.UpdatedAt = DateTime.UtcNow;
                 record.UpdatedBy = _current.UserId;
                 await _db.SaveChangesAsync();
+                await MarkPlatformClearRequiredAsync();
+                await _db.SaveChangesAsync();
             }, System.Data.IsolationLevel.Serializable);
         }
         catch (SalePurchaseStateException ex)
@@ -208,29 +214,29 @@ public class SalePurchaseWeighmentController : ControllerBase
         var captureResults = await CaptureEvidenceAsync(completedRecord.Id, "GROSS");
         var party = await _db.Parties.AsNoTracking().Where(x => x.Id == completedRecord.PartyId)
             .Select(x => new { x.PartyName, x.Mobile, x.Status, x.IsDeleted }).FirstAsync();
-        var configuredRecipients = await _db.SmsConfigs.AsNoTracking().Where(x => !x.IsDeleted && x.Enabled)
-            .Select(x => x.SalePurchaseRecipients).FirstOrDefaultAsync() ?? "";
-        var recipients = configuredRecipients.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(x => x.Length == 10 && x.All(char.IsDigit)).Distinct().ToList();
         var placeholders = new Dictionary<string, string>
             {
                 ["SalePurchaseId"] = completedRecord.Id.ToString(), ["PartyName"] = party.PartyName, ["FinalWeight"] = finalWeight.ToString("F2"),
                 ["Amount"] = completedRecord.Amount?.ToString("F2") ?? ""
             };
-        // A Party is mandatory for the transaction; successful-event SMS is additionally gated by
-        // explicit configured recipient numbers, never implicitly sent to an arbitrary party mobile.
-        bool[] queued;
+        // A completed sale purchase informs the selected Party as well as all active owner/operational
+        // recipients opted into this event. ISmsService applies the master + event enable switches.
+        var queued = new List<bool>();
         try
         {
-            queued = party.Status && !party.IsDeleted
-                ? await Task.WhenAll(recipients.Select((mobile, index) => _sms.QueueForPartyAsync("SALE_PURCHASE_COMPLETED",
-                    completedRecord.PartyId, mobile, $"SP-{completedRecord.Id}-{index}", placeholders)))
-                : Array.Empty<bool>();
+            if (party.Status && !party.IsDeleted)
+                queued.Add(await _sms.QueueForPartyAsync("SALE_PURCHASE_COMPLETED", completedRecord.PartyId, party.Mobile,
+                    $"SP-{completedRecord.Id}-PARTY", placeholders));
+            var recipients = await _db.SmsRecipients.AsNoTracking()
+                .Where(x => !x.IsDeleted && x.Status && x.ReceiveSalePurchase).ToListAsync();
+            foreach (var recipient in recipients)
+                queued.Add(await _sms.QueueForOperationalRecipientAsync("SALE_PURCHASE_COMPLETED", recipient.MobileNumber,
+                    $"SP-{completedRecord.Id}-OWNER-{recipient.Id}", placeholders));
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "SalePurchase {SalePurchaseId} SMS queue failed after commit", completedRecord.Id);
-            queued = Array.Empty<bool>();
+            queued.Clear();
         }
         var smsQueued = queued.Any(x => x);
         return Ok(new { message = $"SalePurchase {completedRecord.Id} completed successfully. Final Weight: {finalWeight:F2} Quintal.",
@@ -271,6 +277,45 @@ public class SalePurchaseWeighmentController : ControllerBase
         public SalePurchaseStateException(int statusCode, string message) : base(message) => StatusCode = statusCode;
     }
 
+    private async Task<string?> CanStartNewSaleTareAsync(string vehicleNumber, DateTime now)
+    {
+        var platformLock = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Key == "WeighbridgePlatformClearRequired");
+        if (platformLock?.Value == "1")
+            return "The previous vehicle has not yet cleared the platform. Wait until the indicator returns to zero before starting a new tare weighment.";
+
+        var pending = await _db.SalePurchases.AsNoTracking().FirstOrDefaultAsync(p =>
+            !p.IsDeleted && p.VehicleNumber == vehicleNumber && p.WeighmentStatus == "TARE_PENDING_GROSS");
+        if (pending != null)
+            return $"Vehicle {vehicleNumber} already has pending gross for SalePurchase ID {pending.Id}. Complete its gross/final weighment before another tare.";
+
+        var rules = await _db.WeightRules.AsNoTracking().FirstOrDefaultAsync(r => !r.IsDeleted);
+        var cooldown = Math.Max(0, rules?.VehicleReweighCooldownMinutes ?? 30);
+        if (cooldown == 0) return null;
+        var lastCompletedAt = await _db.SalePurchases.AsNoTracking()
+            .Where(p => !p.IsDeleted && p.VehicleNumber == vehicleNumber && p.WeighmentStatus == "COMPLETED" && p.GrossDateTime != null)
+            .OrderByDescending(p => p.GrossDateTime).Select(p => p.GrossDateTime).FirstOrDefaultAsync();
+        if (lastCompletedAt is not DateTime completedAt) return null;
+        var releaseAt = completedAt.AddMinutes(cooldown);
+        if (now < releaseAt)
+        {
+            var remaining = Math.Max(1, (int)Math.Ceiling((releaseAt - now).TotalMinutes));
+            return $"Vehicle {vehicleNumber} was finalized at {completedAt.ToLocalTime():dd-MMM-yyyy HH:mm}. Reweigh is allowed after {cooldown} minutes; wait about {remaining} more minute(s).";
+        }
+        return null;
+    }
+
+    private async Task MarkPlatformClearRequiredAsync()
+    {
+        var setting = await _db.SystemSettings.FirstOrDefaultAsync(s => s.Key == "WeighbridgePlatformClearRequired");
+        if (setting == null)
+        {
+            setting = new CaneFactory.Domain.Entities.SystemSetting { Key = "WeighbridgePlatformClearRequired", Value = "1" };
+            _db.SystemSettings.Add(setting);
+        }
+        else setting.Value = "1";
+    }
+
     private async Task<string?> MinimumWeightErrorAsync(decimal weightQuintal, bool applyGross)
     {
         var rule = await _db.WeightRules.AsNoTracking().FirstOrDefaultAsync(r => !r.IsDeleted && r.Enabled);
@@ -309,3 +354,5 @@ public class SalePurchaseWeighmentController : ControllerBase
         return false;
     }
 }
+
+

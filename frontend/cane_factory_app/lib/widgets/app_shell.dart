@@ -15,13 +15,16 @@ import '../screens/developer/settings_screens.dart';
 import '../screens/expenses/expense_screen.dart';
 import '../screens/farmer/farmer_dashboard_screen.dart';
 import '../screens/guide/user_guide_screen.dart';
+import '../screens/images/image_view_screen.dart';
 import '../screens/loans/loan_screens.dart';
 import '../screens/masters/grower_screen.dart';
 import '../screens/masters/master_screens.dart';
 import '../screens/payments/payment_screens.dart';
 import '../screens/reports/reports_screen.dart';
+import '../screens/reprint/reprint_screen.dart';
 import '../screens/sale_purchase/sale_purchase_weighment_screen.dart';
 import '../screens/search/grower_search_screen.dart';
+import '../screens/sms/sms_broadcast_screen.dart';
 import '../screens/users/users_screen.dart';
 import '../screens/weighment/weighment_screen.dart';
 import 'warrior_branding_footer.dart';
@@ -32,8 +35,9 @@ class _NavItem {
   final String permission;
   final Widget Function() builder;
   final String? roleOnly;
+  final List<String> anyPermissions;
   const _NavItem(this.label, this.icon, this.permission, this.builder,
-      {this.roleOnly});
+      {this.roleOnly, this.anyPermissions = const []});
 }
 
 /// Role-aware application shell. Menu items are hidden without permission,
@@ -78,6 +82,13 @@ class _AppShellState extends State<AppShell> {
         'Loans', Icons.savings_outlined, 'Loan.View', () => const LoanScreen()),
     _NavItem('Reports', Icons.summarize_outlined, 'Report.View',
         () => const ReportsScreen()),
+    _NavItem('View Images', Icons.photo_library_outlined, 'Image.View',
+        () => const ImageViewScreen(), anyPermissions: ['CashEvidence.View']),
+    _NavItem('Print / Reprint', Icons.print_outlined, 'Weighment.Print',
+        () => const ReprintScreen(),
+        anyPermissions: ['SalePurchase.Print', 'Payment.Print']),
+    _NavItem('Send SMS', Icons.sms_outlined, 'Sms.Configure',
+        () => const SmsBroadcastScreen()),
     _NavItem('Users & Roles', Icons.group_outlined, 'User.View',
         () => const UsersScreen()),
     _NavItem('Weighing Device', Icons.settings_input_component_outlined,
@@ -124,7 +135,7 @@ class _AppShellState extends State<AppShell> {
     final theme = context.watch<ThemeProvider>();
     final items = _allItems
         .where((i) =>
-            auth.can(i.permission) &&
+            (auth.can(i.permission) || i.anyPermissions.any(auth.can)) &&
             (i.roleOnly == null || auth.hasRole(i.roleOnly!)))
         .toList();
     if (items.isEmpty) {
@@ -292,3 +303,4 @@ class _AppShellState extends State<AppShell> {
     'Amber Brown': Color(0xFF8D5B00),
   };
 }
+

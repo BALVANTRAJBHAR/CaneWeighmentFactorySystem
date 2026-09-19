@@ -56,6 +56,7 @@ public class AppDbContext : DbContext
     public DbSet<PrintConfig> PrintConfigs => Set<PrintConfig>();
     public DbSet<SmsConfig> SmsConfigs => Set<SmsConfig>();
     public DbSet<SmsTemplate> SmsTemplates => Set<SmsTemplate>();
+    public DbSet<SmsRecipient> SmsRecipients => Set<SmsRecipient>();
     public DbSet<SmsLog> SmsLogs => Set<SmsLog>();
     public DbSet<BackupConfig> BackupConfigs => Set<BackupConfig>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
@@ -110,7 +111,9 @@ public class AppDbContext : DbContext
             e.Property(x => x.Id).ValueGeneratedNever();
             e.HasIndex(x => new { x.VillageId, x.GrowerSequence }).IsUnique();
             e.HasIndex(x => x.GrowerCode).IsUnique();
-            e.HasIndex(x => x.AadhaarHash).IsUnique().HasFilter(null);
+            // Aadhaar is optional.  A filtered unique index both protects entered
+            // Aadhaar numbers and permits any number of growers without Aadhaar.
+            e.HasIndex(x => x.AadhaarHash).IsUnique().HasFilter("[AadhaarHash] IS NOT NULL");
             e.HasIndex(x => x.Mobile);
             e.Property(x => x.GrowerCode).HasMaxLength(20);
             e.Property(x => x.GrowerNameHi).HasMaxLength(100);
@@ -157,6 +160,7 @@ public class AppDbContext : DbContext
         b.Entity<Purchase>(e =>
         {
             e.Property(x => x.Id).ValueGeneratedNever(); // continuous business serial
+            e.Property(x => x.VehicleNumber).HasMaxLength(15).IsRequired();
             e.HasIndex(x => x.GrowerCode);
             e.HasIndex(x => x.VillageId);
             e.HasIndex(x => x.AdviceNumber);
@@ -164,6 +168,9 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.GrossTareStatus);
             e.HasIndex(x => x.GrossDateTime);
             e.HasIndex(x => x.LockStatus);
+            // One cane gross per normalized vehicle may remain pending tare at a time.
+            e.HasIndex(x => x.VehicleNumber).HasDatabaseName("UX_Purchases_ActiveVehicle")
+                .IsUnique().HasFilter("[IsDeleted] = 0 AND [GrossTareStatus] = 'GROSS_DONE'");
             foreach (var p in new[] { "ScaleReadingGrossKg", "GrossWeightQuintal", "ScaleReadingTareKg", "TareWeightQuintal",
                 "NetWeightQuintal", "CuttingPercent", "CuttingWeightQuintal", "TaxPercent", "TaxWeightQuintal",
                 "FinalWeightQuintal", "Rate" })
@@ -189,6 +196,9 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.TareDateTime);
             e.HasIndex(x => x.GrossDateTime);
             e.HasIndex(x => new { x.PartyId, x.VehicleNumber });
+            // One sale/purchase tare per normalized vehicle may remain pending gross at a time.
+            e.HasIndex(x => x.VehicleNumber).HasDatabaseName("UX_SalePurchases_ActiveVehicle")
+                .IsUnique().HasFilter("[IsDeleted] = 0 AND [WeighmentStatus] = 'TARE_PENDING_GROSS'");
             foreach (var p in new[] { "ScaleReadingTareKg", "TareWeightQuintal", "ScaleReadingGrossKg", "GrossWeightQuintal", "FinalWeightQuintal", "Rate" })
                 e.Property(p).HasPrecision(12, 2);
             e.Property(x => x.Amount).HasPrecision(14, 2);
@@ -227,9 +237,16 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.GrowerCode);
             e.HasIndex(x => x.AdviceNumber);
             e.HasIndex(x => x.PaymentStatus);
+            e.HasIndex(x => x.BatchPrintToken);
             e.Property(x => x.TotalPurchaseAmount).HasPrecision(14, 2);
             e.Property(x => x.LoanDeductedAmount).HasPrecision(14, 2);
             e.Property(x => x.NetPayableAmount).HasPrecision(14, 2);
+            e.Property(x => x.AccountHolderNameAtPayment).HasMaxLength(150);
+            e.Property(x => x.BankNameAtPayment).HasMaxLength(150);
+            e.Property(x => x.BankBranchAtPayment).HasMaxLength(150);
+            e.Property(x => x.BankIfscAtPayment).HasMaxLength(32);
+            e.Property(x => x.BankAccountNumberAtPayment).HasMaxLength(64);
+            e.Property(x => x.BatchPrintToken).HasMaxLength(32);
             e.HasOne(x => x.Grower).WithMany().HasForeignKey(x => x.GrowerId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.PaymentMode).WithMany().HasForeignKey(x => x.PaymentModeId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Season).WithMany().HasForeignKey(x => x.SeasonId).OnDelete(DeleteBehavior.Restrict);
@@ -243,6 +260,7 @@ public class AppDbContext : DbContext
             e.HasOne(x => x.Purchase).WithMany().HasForeignKey(x => x.PurchaseId).OnDelete(DeleteBehavior.Restrict);
         });
         b.Entity<PaymentImage>().HasIndex(x => x.PaymentId);
+        b.Entity<PaymentImage>().HasIndex(x => new { x.PaymentId, x.PurchaseId });
 
         b.Entity<CashBookEntry>(e =>
         {
@@ -263,6 +281,13 @@ public class AppDbContext : DbContext
         });
 
         b.Entity<SmsTemplate>().HasIndex(x => new { x.EventCode, x.Language }).IsUnique();
+        b.Entity<SmsRecipient>(e =>
+        {
+            // A removed recipient is soft-deleted and may later be added back with the same number.
+            e.HasIndex(x => x.MobileNumber).IsUnique().HasFilter("[IsDeleted] = 0");
+            e.Property(x => x.RecipientName).HasMaxLength(100).IsRequired();
+            e.Property(x => x.MobileNumber).HasMaxLength(10).IsRequired();
+        });
         b.Entity<SmsLog>(e =>
         {
             e.HasIndex(x => new { x.EventCode, x.ReferenceId }).IsUnique();
@@ -276,6 +301,7 @@ public class AppDbContext : DbContext
             e.Property(x => x.MinimumWeightQuintal).HasPrecision(12, 2);
             e.Property(x => x.DefaultCuttingPercent).HasPrecision(5, 2);
             e.Property(x => x.DefaultTaxPercent).HasPrecision(5, 2);
+            e.Property(x => x.VehicleReweighCooldownMinutes).HasDefaultValue(30);
         });
         b.Entity<SoundConfig>().Property(x => x.SpeechRate).HasPrecision(4, 2);
         b.Entity<SystemSetting>().HasIndex(x => x.Key).IsUnique();

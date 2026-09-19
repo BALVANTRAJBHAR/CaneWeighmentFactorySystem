@@ -135,6 +135,15 @@ public class DevicesController : ControllerBase
         var device = await _db.WeighingDevices.FirstOrDefaultAsync(d => d.Id == id && !d.IsDeleted);
         if (device == null) return NotFound(new { message = "Weighing device not found." });
         if (!device.ActiveConfiguration) return Conflict(new { message = "Activate this configuration before connecting." });
+        if (string.Equals(device.ConnectionType, "RemoteAgent", StringComparison.OrdinalIgnoreCase))
+        {
+            device.DesiredConnectionState = "Connected";
+            device.DesiredReaderRunning = true;
+            await _db.SaveChangesAsync();
+            await LogHistory(id, "RemoteAgentConnect", null, null,
+                "Waiting for the Scale Bridge on the PC where the USB/COM converter is connected.");
+            return Ok(new { message = "Remote mode enabled. The server will not open this COM port; start CaneFactory Scale Bridge on the USB/COM PC." });
+        }
         // Persist intent before the physical attempt so a temporary unavailable COM port is
         // recovered after restart. Explicit Stop/Disconnect/Deactivate clear this intent.
         device.DesiredConnectionState = "Connected";
@@ -164,6 +173,8 @@ public class DevicesController : ControllerBase
         active.DesiredConnectionState = "Connected";
         active.DesiredReaderRunning = true;
         await _db.SaveChangesAsync();
+        if (string.Equals(active.ConnectionType, "RemoteAgent", StringComparison.OrdinalIgnoreCase))
+            return Ok(new { message = "Waiting for the remote Scale Bridge to start reading on the USB/COM PC." });
         var (ok, message) = _weighing.StartReading();
         return ok ? Ok(new { message }) : Conflict(new { message });
     }

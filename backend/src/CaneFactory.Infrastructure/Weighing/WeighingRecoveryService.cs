@@ -33,6 +33,13 @@ public sealed class WeighingRecoveryService : BackgroundService
                         stoppingToken);
                 if (desired != null)
                 {
+                    // RemoteAgent means the USB/RS232 converter is connected to another LAN PC.
+                    // That PC runs Scale Bridge; a server process cannot open its COM port.
+                    if (string.Equals(desired.ConnectionType, "RemoteAgent", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                        continue;
+                    }
                     if (!_weighing.Connected)
                     {
                         var (ok, message) = await _weighing.ConnectAsync(desired.Id);

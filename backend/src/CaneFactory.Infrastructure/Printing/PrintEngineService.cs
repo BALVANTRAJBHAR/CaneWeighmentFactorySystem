@@ -68,13 +68,69 @@ public class PrintEngineService : IPrintEngineService
     public async Task<PrintDocument> BuildPaymentSlipAsync(int paymentId, string generatedByUserName)
     {
         var p = await LoadPaymentAsync(paymentId);
-        var purchaseIds = await _db.PaymentPurchases.Where(pp => pp.PaymentId == paymentId)
-            .OrderBy(pp => pp.PurchaseId).Select(pp => pp.PurchaseId).ToListAsync();
+        // PaymentPurchase preserves the final amount at the time of payment. The purchase itself
+        // supplies the completed final weight and rate for a single-purchase advice slip.
+        var paymentPurchases = await _db.PaymentPurchases.AsNoTracking().Where(pp => pp.PaymentId == paymentId)
+            .OrderBy(pp => pp.PurchaseId)
+            .Select(pp => new { pp.PurchaseId, pp.Purchase.FinalWeightQuintal, pp.Purchase.Rate, pp.PurchaseAmountAtPayment })
+            .ToListAsync();
+        var purchases = paymentPurchases.Select(pp => new PaymentPurchasePrintLine(
+            pp.PurchaseId, pp.FinalWeightQuintal, pp.Rate, pp.PurchaseAmountAtPayment)).ToList();
         var doc = await BaseDocAsync(p.Season?.SeasonName, generatedByUserName);
         doc.TitleHindi = "भुगतान पर्ची";
         doc.TitleEnglish = "Payment Slip";
         doc.QrValue = p.Id;
-        doc.Rows = PaymentRows(p, purchaseIds, doc.Language);
+        doc.Rows = PaymentRows(p, purchases, doc.Language);
+        if (purchases.Count > 1)
+            doc.Tables.Add(PaymentPurchaseTable(purchases));
+        return doc;
+    }
+
+    public async Task<PrintDocument> BuildPaymentBatchSlipAsync(IReadOnlyCollection<int> paymentIds, string generatedByUserName)
+    {
+        var ids = paymentIds.Where(id => id > 0).Distinct().OrderBy(id => id).ToArray();
+        if (ids.Length == 0) throw new ArgumentException("At least one payment ID is required.");
+
+        var payments = await _db.Payments.AsNoTracking()
+            .Include(x => x.Grower).ThenInclude(g => g.Village)
+            .Include(x => x.Grower).ThenInclude(g => g.Bank)
+            .Include(x => x.PaymentMode).Include(x => x.Season)
+            .Where(x => ids.Contains(x.Id) && !x.IsDeleted)
+            .OrderBy(x => x.AdviceNumber).ToListAsync();
+        if (payments.Count != ids.Length)
+            throw new KeyNotFoundException("One or more payment records do not exist.");
+
+        var sourceLines = await _db.PaymentPurchases.AsNoTracking()
+            .Where(pp => ids.Contains(pp.PaymentId))
+            .OrderBy(pp => pp.Payment.AdviceNumber).ThenBy(pp => pp.PurchaseId)
+            .Select(pp => new
+            {
+                pp.PaymentId,
+                pp.Payment.AdviceNumber,
+                pp.Payment.GrowerCode,
+                GrowerName = pp.Payment.Grower.GrowerName,
+                pp.PurchaseId,
+                pp.Purchase.FinalWeightQuintal,
+                pp.Purchase.Rate,
+                pp.PurchaseAmountAtPayment
+            }).ToListAsync();
+        var purchaseLines = sourceLines.Select(line => new PaymentBatchPurchasePrintLine(
+            line.PaymentId, line.AdviceNumber, line.GrowerCode, line.GrowerName, line.PurchaseId,
+            line.FinalWeightQuintal, line.Rate, line.PurchaseAmountAtPayment)).ToList();
+
+        var doc = await BaseDocAsync(payments[0].Season?.SeasonName, generatedByUserName);
+        doc.TitleHindi = "दिनांक-सीमा भुगतान विवरण";
+        doc.TitleEnglish = "Date-Range Payment Details";
+        doc.IsLandscape = true;
+        doc.Rows = new()
+        {
+            new("भुगतान संख्या", "Payment Count", payments.Count.ToString()),
+            new("कुल क्रय राशि (₹)", "Total Purchase Amount (Rs)", payments.Sum(p => p.TotalPurchaseAmount).ToString("F2")),
+            new("कुल ऋण कटौती (₹)", "Total Loan Deducted (Rs)", payments.Sum(p => p.LoanDeductedAmount).ToString("F2")),
+            new("कुल देय राशि (₹)", "Total Net Payable (Rs)", payments.Sum(p => p.NetPayableAmount).ToString("F2"))
+        };
+        doc.Tables.Add(PaymentBatchBankTable(payments));
+        doc.Tables.Add(PaymentBatchPurchaseTable(purchaseLines));
         return doc;
     }
 
@@ -157,6 +213,7 @@ public class PrintEngineService : IPrintEngineService
     private async Task<Payment> LoadPaymentAsync(int paymentId)
     {
         var p = await _db.Payments.Include(x => x.Grower).ThenInclude(g => g.Village)
+            .Include(x => x.Grower).ThenInclude(g => g.Bank)
             .Include(x => x.PaymentMode).Include(x => x.Season)
             .AsNoTracking().FirstOrDefaultAsync(x => x.Id == paymentId);
         if (p == null) throw new KeyNotFoundException($"Payment {paymentId} not found.");
@@ -293,22 +350,138 @@ public class PrintEngineService : IPrintEngineService
         new("बकाया शेष (₹)", "Remaining Outstanding (Rs)", r.Loan.OutstandingAmount.ToString("F2")),
     };
 
-    private static List<PrintRow> PaymentRows(Payment p, List<int> purchaseIds, string language) => new()
+    private sealed record PaymentPurchasePrintLine(int PurchaseId, decimal? FinalWeightQuintal, decimal Rate, decimal FinalAmount);
+    private sealed record PaymentBatchPurchasePrintLine(int PaymentId, int AdviceNumber, string GrowerCode,
+        string GrowerName, int PurchaseId, decimal? FinalWeightQuintal, decimal Rate, decimal FinalAmount);
+
+    private static List<PrintRow> PaymentRows(Payment p, List<PaymentPurchasePrintLine> purchases, string language)
     {
-        new("भुगतान क्रमांक", "Payment ID", p.Id.ToString()),
-        new("अग्रिम क्रमांक", "Advice Number", p.AdviceNumber.ToString()),
-        new("किसान कोड", "Grower Code", p.GrowerCode),
-        new("किसान का नाम", "Grower Name", Text(p.Grower.GrowerName, p.Grower.GrowerNameHi, language)),
-        new("गाँव", "Village", Text(p.Grower.Village.VillageName, p.Grower.Village.VillageNameHi, language)),
-        new("क्रय क्रमांक", "Purchase IDs", purchaseIds.Count == 0 ? "-" : string.Join(", ", purchaseIds)),
-        new("कुल क्रय राशि (₹)", "Total Purchase Amount (Rs)", p.TotalPurchaseAmount.ToString("F2")),
-        new("ऋण कटौती (₹)", "Loan Deducted (Rs)", p.LoanDeductedAmount.ToString("F2")),
-        new("शुद्ध देय राशि (₹)", "Net Payable (Rs)", p.NetPayableAmount.ToString("F2")),
-        new("भुगतान माध्यम", "Payment Mode", p.PaymentMode.ModeName),
-        new("संदर्भ क्रमांक", "Transaction Ref", p.TransactionRefNumber ?? "-"),
-        new("भुगतान तिथि", "Payment Date", p.PaymentDate.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
-        new("भुगतान कर्ता", "Paid By", p.PaidByUserName),
+        var rows = new List<PrintRow>
+        {
+            new("भुगतान क्रमांक", "Payment ID", p.Id.ToString()),
+            new("अग्रिम क्रमांक", "Advice Number", p.AdviceNumber.ToString()),
+            new("किसान कोड", "Grower Code", p.GrowerCode),
+            new("किसान का नाम", "Grower Name", Text(p.Grower.GrowerName, p.Grower.GrowerNameHi, language)),
+            new("पिता का नाम", "Father's Name", Text(p.Grower.FatherName, p.Grower.FatherNameHi, language)),
+            new("गाँव", "Village", Text(p.Grower.Village.VillageName, p.Grower.Village.VillageNameHi, language))
+        };
+
+        if (purchases.Count == 1)
+        {
+            var purchase = purchases[0];
+            rows.AddRange(new[]
+            {
+                new PrintRow("क्रय क्रमांक", "Purchase ID", purchase.PurchaseId.ToString()),
+                new PrintRow("अंतिम वजन (क्विंटल)", "Final Weight (Qtl)", purchase.FinalWeightQuintal?.ToString("F2") ?? "-"),
+                new PrintRow("दर (प्रति क्विंटल)", "Rate (per Qtl)", purchase.Rate.ToString("F2")),
+                new PrintRow("अंतिम राशि (₹)", "Final Amount (Rs)", purchase.FinalAmount.ToString("F2"))
+            });
+        }
+        else if (purchases.Count == 0)
+            rows.Add(new PrintRow("क्रय क्रमांक", "Purchase IDs", "-"));
+
+        if (IsBankPayment(p))
+        {
+            rows.AddRange(new[]
+            {
+                new PrintRow("खाताधारक का नाम", "Account Holder Name", SnapshotOrCurrent(p.AccountHolderNameAtPayment, p.Grower.AccountHolderName)),
+                new PrintRow("बैंक का नाम", "Bank Name", SnapshotOrCurrent(p.BankNameAtPayment, p.Grower.Bank?.BankName)),
+                new PrintRow("शाखा", "Branch", SnapshotOrCurrent(p.BankBranchAtPayment, p.Grower.Bank?.BranchName)),
+                new PrintRow("आईएफएससी कोड", "IFSC Code", SnapshotOrCurrent(p.BankIfscAtPayment, p.Grower.Bank?.IFSC)),
+                new PrintRow("खाता क्रमांक", "Account Number", SnapshotOrCurrent(p.BankAccountNumberAtPayment, p.Grower.BankAccountNumber))
+            });
+        }
+
+        rows.AddRange(new[]
+        {
+            new PrintRow("कुल क्रय राशि (₹)", "Total Purchase Amount (Rs)", p.TotalPurchaseAmount.ToString("F2")),
+            new PrintRow("ऋण कटौती (₹)", "Loan Deducted (Rs)", p.LoanDeductedAmount.ToString("F2")),
+            new PrintRow("शुद्ध देय राशि (₹)", "Net Payable (Rs)", p.NetPayableAmount.ToString("F2")),
+            new PrintRow("भुगतान माध्यम", "Payment Mode", p.PaymentMode.ModeName),
+            new PrintRow("संदर्भ क्रमांक", "Transaction Ref", p.TransactionRefNumber ?? "-"),
+            new PrintRow("भुगतान तिथि", "Payment Date", p.PaymentDate.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
+            new PrintRow("भुगतान कर्ता", "Paid By", p.PaidByUserName)
+        });
+        return rows;
+    }
+
+    private static PrintTable PaymentBatchBankTable(List<Payment> payments) => new()
+    {
+        TitleHindi = "किसान / बैंक / देय राशि विवरण (पंक्ति-वार)",
+        TitleEnglish = "Grower / Bank / Payable Details (Row-wise)",
+        Columns = new()
+        {
+            new("अग्रिम क्रमांक", "Advice No"),
+            new("किसान", "Grower"),
+            new("खाताधारक", "Account Holder"),
+            new("बैंक", "Bank"),
+            new("शाखा", "Branch"),
+            new("आईएफएससी", "IFSC"),
+            new("खाता क्रमांक", "Account No"),
+            new("देय राशि (₹)", "Payable Amount (Rs)")
+        },
+        Rows = payments.Select(payment => new List<string>
+        {
+            payment.AdviceNumber.ToString(),
+            payment.Grower.GrowerName,
+            IsBankPayment(payment) ? SnapshotOrCurrent(payment.AccountHolderNameAtPayment, payment.Grower.AccountHolderName) : "-",
+            IsBankPayment(payment) ? SnapshotOrCurrent(payment.BankNameAtPayment, payment.Grower.Bank?.BankName) : "-",
+            IsBankPayment(payment) ? SnapshotOrCurrent(payment.BankBranchAtPayment, payment.Grower.Bank?.BranchName) : "-",
+            IsBankPayment(payment) ? SnapshotOrCurrent(payment.BankIfscAtPayment, payment.Grower.Bank?.IFSC) : "-",
+            IsBankPayment(payment) ? SnapshotOrCurrent(payment.BankAccountNumberAtPayment, payment.Grower.BankAccountNumber) : "-",
+            payment.NetPayableAmount.ToString("F2")
+        }).ToList()
     };
+
+    private static PrintTable PaymentBatchPurchaseTable(List<PaymentBatchPurchasePrintLine> purchases) => new()
+    {
+        TitleHindi = "क्रय विवरण (पंक्ति-वार)",
+        TitleEnglish = "Purchase Details (Row-wise)",
+        Columns = new()
+        {
+            new("अग्रिम क्रमांक", "Advice No"),
+            new("किसान", "Grower"),
+            new("क्रय क्रमांक", "Purchase ID"),
+            new("अंतिम वजन (क्विंटल)", "Final Weight (Qtl)"),
+            new("दर (प्रति क्विंटल)", "Rate (per Qtl)"),
+            new("अंतिम राशि (₹)", "Final Amount (Rs)")
+        },
+        Rows = purchases.Select(purchase => new List<string>
+        {
+            purchase.AdviceNumber.ToString(),
+            purchase.GrowerName,
+            purchase.PurchaseId.ToString(),
+            purchase.FinalWeightQuintal?.ToString("F2") ?? "-",
+            purchase.Rate.ToString("F2"),
+            purchase.FinalAmount.ToString("F2")
+        }).ToList()
+    };
+
+    private static PrintTable PaymentPurchaseTable(List<PaymentPurchasePrintLine> purchases) => new()
+    {
+        TitleHindi = "क्रय विवरण (पंक्ति-वार)",
+        TitleEnglish = "Purchase Details (Row-wise)",
+        Columns = new()
+        {
+            new("क्रय क्रमांक", "Purchase ID"),
+            new("अंतिम वजन (क्विंटल)", "Final Weight (Qtl)"),
+            new("दर (प्रति क्विंटल)", "Rate (per Qtl)"),
+            new("अंतिम राशि (₹)", "Final Amount (Rs)")
+        },
+        Rows = purchases.Select(purchase => new List<string>
+        {
+            purchase.PurchaseId.ToString(),
+            purchase.FinalWeightQuintal?.ToString("F2") ?? "-",
+            purchase.Rate.ToString("F2"),
+            purchase.FinalAmount.ToString("F2")
+        }).ToList()
+    };
+
+    private static bool IsBankPayment(Payment payment) =>
+        string.Equals(payment.PaymentMode.ModeCode, "BANK", StringComparison.OrdinalIgnoreCase);
+
+    private static string SnapshotOrCurrent(string? snapshot, string? current) =>
+        !string.IsNullOrWhiteSpace(snapshot) ? snapshot : current ?? "-";
 
     private static List<PrintRow> SalePurchaseRows(SalePurchase p, string stage, string language)
     {
@@ -338,3 +511,4 @@ public class PrintEngineService : IPrintEngineService
         return rows;
     }
 }
+

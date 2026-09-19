@@ -180,20 +180,21 @@ class _PaymentScreenState extends State<PaymentScreen> {
           _paymentModeId = null;
         });
         _load();
-        final autoPrint = res.data['autoPrint'];
-        if (autoPrint != null) {
-          if (autoPrint['shouldAutoPrint'] != true) {
-            await openPdfAfterSave(context, autoPrint['documentUrl'],
-                'payment-${res.data['paymentId']}.pdf');
+        if (res.data['isBatch'] == true) {
+          // One landscape PDF keeps every farmer's Advice/bank/payable row and all
+          // purchase lines together, so a date-range payment is auditable as one batch.
+          final batchAutoPrint = res.data['autoPrint'];
+          if (batchAutoPrint != null) {
+            await _handleAutoPrint(batchAutoPrint, 'date-range-batch');
           } else {
-            final outcome = await PrintService.printDocument(
-              documentUrl: autoPrint['documentUrl'],
-              printerType: autoPrint['printerType'] ?? 'DotMatrix',
-              printerName: autoPrint['printerName'] ?? '',
-              copies: autoPrint['copies'] ?? 1,
-            );
-            if (mounted) _toast(outcome.message, error: !outcome.success);
+            // Compatibility fallback for an API that has not yet been upgraded.
+            for (final raw in (res.data['payments'] as List? ?? [])) {
+              final payment = Map<String, dynamic>.from(raw as Map);
+              await _handleAutoPrint(payment['autoPrint'], payment['paymentId']);
+            }
           }
+        } else {
+          await _handleAutoPrint(res.data['autoPrint'], res.data['paymentId']);
         }
       } else {
         _toast(ApiClient.errorMessage(res), error: true);
@@ -203,6 +204,21 @@ class _PaymentScreenState extends State<PaymentScreen> {
     } finally {
       if (mounted) setState(() => _paying = false);
     }
+  }
+
+  Future<void> _handleAutoPrint(dynamic autoPrint, dynamic paymentId) async {
+    if (autoPrint == null) return;
+    if (autoPrint['shouldAutoPrint'] != true) {
+      await openPdfAfterSave(context, autoPrint['documentUrl'], 'payment-$paymentId.pdf');
+      return;
+    }
+    final outcome = await PrintService.printDocument(
+      documentUrl: autoPrint['documentUrl'],
+      printerType: autoPrint['printerType'] ?? 'DotMatrix',
+      printerName: autoPrint['printerName'] ?? '',
+      copies: autoPrint['copies'] ?? 1,
+    );
+    if (mounted) _toast(outcome.message, error: !outcome.success);
   }
 
   Future<void> _cancelPayment(int paymentId) async {
@@ -246,11 +262,19 @@ class _PaymentScreenState extends State<PaymentScreen> {
     _load();
   }
 
-  Future<void> _captureEvidence(int paymentId) async {
-    final res = await ApiClient.instance.dio.post('/api/payments/$paymentId/images/capture');
+  Future<void> _openPaymentEvidence(int paymentId) async {
+    final res =
+        await ApiClient.instance.dio.get('/api/payments/$paymentId/evidence-context');
     if (!mounted) return;
-    _toast(res.statusCode == 200 ? res.data['message'] : ApiClient.errorMessage(res),
-        error: res.statusCode != 200);
+    if (res.statusCode != 200) {
+      _toast(ApiClient.errorMessage(res), error: true);
+      return;
+    }
+    await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _PaymentEvidenceDialog(
+            paymentId: paymentId, initialContext: Map<String, dynamic>.from(res.data)));
   }
 
   Future<void> _uploadEvidence(int paymentId) async {
@@ -328,7 +352,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
           SegmentedButton<String>(
             segments: const [
               ButtonSegment(value: 'SINGLE', label: Text('Single Purchase')),
-              ButtonSegment(value: 'DATE_RANGE', label: Text('Date Range')),
+              ButtonSegment(value: 'DATE_RANGE', label: Text('Date Range (All Farmers)')),
               ButtonSegment(
                   value: 'FARMER', label: Text('Farmer-wise (All Pending)')),
             ],
@@ -445,6 +469,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
   Widget _buildPreview(BuildContext context) {
     final eligible = _preview!['eligiblePurchases'] as List;
     final loans = _preview!['outstandingLoans'] as List;
+    final batch = _preview!['isBatch'] == true;
+    final batchGrowers = _preview!['batchGrowers'] as List? ?? [];
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Container(
@@ -460,8 +486,21 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     color: Theme.of(context).colorScheme.error,
                     fontWeight: FontWeight.w700)),
           Text(
-              'Purchase Count: ${_preview!['purchaseCount'] ?? eligible.length}  •  Final Weight: ${((_preview!['totalFinalWeight'] ?? 0) as num).toStringAsFixed(2)} Qtl  •  Total: Rs ${(_preview!['totalPurchaseAmount'] as num).toStringAsFixed(2)}',
+              '${batch ? 'Farmers: ${_preview!['growerCount'] ?? batchGrowers.length}  •  ' : ''}Purchase Count: ${_preview!['purchaseCount'] ?? eligible.length}  •  Final Weight: ${((_preview!['totalFinalWeight'] ?? 0) as num).toStringAsFixed(2)} Qtl  •  Total: Rs ${(_preview!['totalPurchaseAmount'] as num).toStringAsFixed(2)}',
               style: const TextStyle(fontWeight: FontWeight.w700)),
+          if (batch) ...[
+            const SizedBox(height: 8),
+            const Text('Each row will create a separate Payment ID, Advice Number, PDF slip and cash-evidence capture.',
+                style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+            const SizedBox(height: 5),
+            for (final raw in batchGrowers)
+              Builder(builder: (_) {
+                final g = Map<String, dynamic>.from(raw as Map);
+                return Text('${g['growerCode']} • ${g['growerName']} — ${g['purchaseCount']} purchase(s), '
+                    'Rs ${(g['estimatedNetPayable'] as num).toStringAsFixed(2)} net',
+                    style: const TextStyle(fontSize: 12));
+              }),
+          ],
           if (loans.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
@@ -522,8 +561,18 @@ class _PaymentScreenState extends State<PaymentScreen> {
               if (canEvidence)
                 DataCell(p['paymentModeName']?.toString().toUpperCase() == 'CASH'
                     ? Row(mainAxisSize: MainAxisSize.min, children: [
-                        IconButton(tooltip: 'Capture via configured camera', icon: const Icon(Icons.camera_alt_outlined, size: 18), onPressed: () => _captureEvidence(p['paymentId'])),
-                        IconButton(tooltip: 'Upload evidence image', icon: const Icon(Icons.upload_file_outlined, size: 18), onPressed: () => _uploadEvidence(p['paymentId'])),
+                        IconButton(
+                            tooltip: 'Open live camera / Capture or Retake',
+                            icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                            onPressed: () => _openPaymentEvidence(p['paymentId'] as int)),
+                        IconButton(
+                            tooltip: 'View saved evidence / Retake if needed',
+                            icon: const Icon(Icons.photo_library_outlined, size: 18),
+                            onPressed: () => _viewEvidence(p['paymentId'] as int)),
+                        IconButton(
+                            tooltip: 'Upload evidence image',
+                            icon: const Icon(Icons.upload_file_outlined, size: 18),
+                            onPressed: () => _uploadEvidence(p['paymentId'] as int)),
                       ])
                     : const Text('-')),
               if (canCancel)
@@ -536,6 +585,249 @@ class _PaymentScreenState extends State<PaymentScreen> {
             ]),
         ]),
       ),
+    );
+  }
+}
+
+/// Cash payment proof is intentionally captured only after the operator can see a real live frame.
+/// Existing evidence changes are not deleted: a retake creates a new active JPG and retires the prior row.
+class _PaymentEvidenceDialog extends StatefulWidget {
+  const _PaymentEvidenceDialog(
+      {required this.paymentId, required this.initialContext});
+
+  final int paymentId;
+  final Map<String, dynamic> initialContext;
+
+  @override
+  State<_PaymentEvidenceDialog> createState() => _PaymentEvidenceDialogState();
+}
+
+class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
+  late Map<String, dynamic> _contextData;
+  int? _purchaseId;
+  Uint8List? _preview;
+  String? _previewError;
+  bool _previewLoading = false;
+  bool _capturing = false;
+  Timer? _previewTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _contextData = Map<String, dynamic>.from(widget.initialContext);
+    _selectFirstPurchase();
+    _refreshPreview();
+    _previewTimer = Timer.periodic(
+        const Duration(seconds: 2), (_) {
+      if (mounted && !_capturing) _refreshPreview(silent: true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _previewTimer?.cancel();
+    super.dispose();
+  }
+
+  List<dynamic> get _purchases =>
+      List<dynamic>.from(_contextData['purchases'] as List? ?? const []);
+
+  void _selectFirstPurchase() {
+    final purchases = _purchases;
+    if (purchases.isEmpty) return;
+    final ids = purchases
+        .map((purchase) => (purchase as Map)['purchaseId'] as num)
+        .map((id) => id.toInt())
+        .toSet();
+    if (_purchaseId == null || !ids.contains(_purchaseId)) {
+      _purchaseId = ids.first;
+    }
+  }
+
+  Map<dynamic, dynamic>? get _selectedPurchase {
+    for (final purchase in _purchases) {
+      final item = purchase as Map;
+      if ((item['purchaseId'] as num).toInt() == _purchaseId) return item;
+    }
+    return null;
+  }
+
+  Future<void> _refreshPreview({bool silent = false}) async {
+    if (_previewLoading || _capturing) return;
+    if (!silent && mounted) setState(() => _previewLoading = true);
+    _previewLoading = true;
+    try {
+      final res = await ApiClient.instance.dio.get(
+          '/api/payments/${widget.paymentId}/evidence/preview',
+          options: Options(
+              responseType: ResponseType.bytes,
+              validateStatus: (status) => status != null && status < 500));
+      if (!mounted) return;
+      if (res.statusCode == 200 && res.data != null) {
+        setState(() {
+          _preview = Uint8List.fromList(List<int>.from(res.data as List));
+          _previewError = null;
+        });
+      } else {
+        setState(() => _previewError = ApiClient.errorMessage(res));
+      }
+    } catch (error) {
+      if (mounted) setState(() => _previewError = ApiClient.exceptionMessage(error));
+    } finally {
+      _previewLoading = false;
+      if (!silent && mounted) setState(() {});
+    }
+  }
+
+  Future<void> _reloadContext() async {
+    final res = await ApiClient.instance.dio
+        .get('/api/payments/${widget.paymentId}/evidence-context');
+    if (res.statusCode != 200) {
+      if (mounted) setState(() => _previewError = ApiClient.errorMessage(res));
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _contextData = Map<String, dynamic>.from(res.data);
+      _selectFirstPurchase();
+    });
+  }
+
+  Future<void> _capture() async {
+    final selected = _selectedPurchase;
+    if (selected == null || _capturing) return;
+    final evidence = selected['evidence'];
+    final retake = evidence != null;
+    setState(() => _capturing = true);
+    try {
+      final res = await ApiClient.instance.dio.post(
+          '/api/payments/${widget.paymentId}/images/capture',
+          data: {
+            'purchaseId': _purchaseId,
+            'replaceExisting': retake,
+          });
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        await _reloadContext();
+        await _refreshPreview();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(res.data['message']?.toString() ??
+                  (retake ? 'Evidence retaken.' : 'Evidence captured.'))));
+        }
+      } else {
+        setState(() => _previewError = ApiClient.errorMessage(res));
+      }
+    } catch (error) {
+      if (mounted) setState(() => _previewError = ApiClient.exceptionMessage(error));
+    } finally {
+      if (mounted) setState(() => _capturing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final camera = _contextData['camera'] as Map?;
+    final selected = _selectedPurchase;
+    final hasEvidence = selected?['evidence'] != null;
+    final purchases = _purchases;
+    return AlertDialog(
+      insetPadding: const EdgeInsets.all(24),
+      title: Text('Cash Payment Evidence • Advice ' +
+          (_contextData['adviceNumber']?.toString() ?? '-')),
+      content: SizedBox(
+          width: 800,
+          height: 570,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text(
+                'Grower: ' +
+                    (_contextData['growerCode']?.toString() ?? '-') +
+                    ' • Net payable: Rs ' +
+                    ((_contextData['netPayableAmount'] as num?)?.toStringAsFixed(2) ?? '-'),
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            if (camera == null)
+              const Text(
+                  'Payment Evidence Camera is not configured. Developer: choose an active camera in Configuration > Cameras.',
+                  style: TextStyle(color: Colors.red))
+            else
+              Text(
+                  'Live camera: Camera ' +
+                      ((camera['cameraNumber'] as num?)?.toInt().toString().padLeft(2, '0') ?? '-') +
+                      ' • ' +
+                      (camera['vendor']?.toString() ?? '')),
+            const SizedBox(height: 10),
+            Expanded(
+                child: Container(
+                    color: Colors.black,
+                    alignment: Alignment.center,
+                    child: _preview != null
+                        ? Image.memory(_preview!, fit: BoxFit.contain,
+                            gaplessPlayback: true)
+                        : Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                            if (_previewLoading) const CircularProgressIndicator(),
+                            const SizedBox(height: 10),
+                            Text(_previewError ?? 'Connecting to live camera...',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: Colors.white)),
+                          ]))),
+            const SizedBox(height: 12),
+            Row(children: [
+              const Text('Purchase ID: '),
+              const SizedBox(width: 8),
+              SizedBox(
+                  width: 240,
+                  child: DropdownButtonFormField<int>(
+                      value: _purchaseId,
+                      isExpanded: true,
+                      items: [
+                        for (final purchase in purchases)
+                          DropdownMenuItem<int>(
+                              value: ((purchase as Map)['purchaseId'] as num).toInt(),
+                              child: Text('Purchase ' +
+                                  purchase['purchaseId'].toString() +
+                                  ' • Vehicle ' +
+                                  (purchase['vehicleNumber']?.toString() ?? '-')))
+                      ],
+                      onChanged: (value) => setState(() => _purchaseId = value))),
+              const SizedBox(width: 18),
+              Expanded(
+                  child: Text(
+                      hasEvidence
+                          ? 'Existing evidence found. Capture will safely RETAKE it.'
+                          : 'No active evidence for this purchase.',
+                      style: TextStyle(
+                          color: hasEvidence ? Colors.orange : Colors.grey.shade700,
+                          fontWeight: FontWeight.w600))),
+            ]),
+            const SizedBox(height: 8),
+            Text(
+                'Save path: ' +
+                    (_contextData['configuredPath']?.toString() ?? r'C:\WeighmentImage\Payment') +
+                    r'\yyyy-MM-dd\GrowerCode-AdviceNo-PurchaseId-PaymentId.jpg',
+                style: const TextStyle(fontSize: 12)),
+          ])),
+      actions: [
+        TextButton(
+            onPressed: _capturing ? null : () => _refreshPreview(),
+            child: const Text('Refresh Live View')),
+        TextButton(
+            onPressed: _capturing ? null : () => Navigator.pop(context),
+            child: const Text('Close')),
+        FilledButton.icon(
+            onPressed: camera == null || selected == null || _capturing
+                ? null
+                : _capture,
+            icon: _capturing
+                ? const SizedBox(
+                    width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : Icon(hasEvidence ? Icons.refresh : Icons.camera_alt_outlined),
+            label: Text(_capturing
+                ? 'Saving...'
+                : hasEvidence
+                    ? 'Retake Image'
+                    : 'Capture Image')),
+      ],
     );
   }
 }
