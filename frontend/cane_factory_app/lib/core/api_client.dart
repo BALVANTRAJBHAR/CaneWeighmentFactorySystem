@@ -1,4 +1,6 @@
 import 'package:dio/dio.dart';
+
+export 'package:dio/dio.dart' show Response;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Central API client. Base URL comes from --dart-define=API_BASE_URL (never hard-coded secrets).

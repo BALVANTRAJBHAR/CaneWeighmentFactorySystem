@@ -7,7 +7,7 @@ Agent and does not support `WITH COMPRESSION`; the application deliberately uses
 
 Open **Configuration → Backup** on the PC running the API and SQL Server.
 
-1. Set **Backup Folder Path** to a folder on that server, for example `D:\CaneFactoryBackup`.
+1. Set **Backup Folder Path** to a folder on the **SQL Server PC**, for example `D:\CaneFactoryBackup`.
    The API creates the folder when the policy is saved.
 2. Set frequency and time, turn **Backup Enabled** on, and click **Save Backup Policy**.
    - `Hourly` with `01:00` means 01:00, 02:00, 03:00, and so on.
@@ -18,6 +18,22 @@ Open **Configuration → Backup** on the PC running the API and SQL Server.
 
 The SQL Server service account and the API/IIS application-pool account must both have **Modify**
 permission on the backup folder. SQL Server resolves the folder on the server, never on a LAN client.
+
+### One-time SQL permission
+
+The SQL login used by the CaneFactory API needs `db_backupoperator` in the CaneFactory database.
+Run the following in SSMS as `sa`/a SQL Server administrator, replacing `CaneFactoryApiLogin` with the login named in the API connection string. Do not grant `sysadmin` just for backups.
+
+```sql
+USE [AFFLLPCaneFactory];
+GO
+CREATE USER [CaneFactoryApiLogin] FOR LOGIN [CaneFactoryApiLogin]; -- run only if the user does not already exist
+GO
+ALTER ROLE [db_backupoperator] ADD MEMBER [CaneFactoryApiLogin];
+GO
+```
+
+The API backup uses `WITH CHECKSUM`; it deliberately does not run `RESTORE VERIFYONLY` automatically because that would require broad server-level restore/create-database permission. A SQL administrator should periodically restore the latest `.bak` to a test database and run `DBCC CHECKDB`.
 
 ## Current manual backup download
 

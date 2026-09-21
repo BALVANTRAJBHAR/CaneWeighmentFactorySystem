@@ -160,6 +160,11 @@ public class AppDbContext : DbContext
         b.Entity<Purchase>(e =>
         {
             e.Property(x => x.Id).ValueGeneratedNever(); // continuous business serial
+            // Reject stale payment/finalization/correction writes atomically, including all
+            // single, farmer and date-range payments. Uses existing columns (no schema change).
+            e.Property(x => x.UpdatedAt).IsConcurrencyToken();
+            e.Property(x => x.PaymentFlag).IsConcurrencyToken();
+            e.Property(x => x.PaymentStatus).IsConcurrencyToken();
             e.Property(x => x.VehicleNumber).HasMaxLength(15).IsRequired();
             e.HasIndex(x => x.GrowerCode);
             e.HasIndex(x => x.VillageId);
@@ -186,6 +191,7 @@ public class AppDbContext : DbContext
         b.Entity<SalePurchase>(e =>
         {
             e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.UpdatedAt).IsConcurrencyToken();
             // SalePurchase validation already limits a vehicle number to 4-15 characters;
             // persist that same domain limit because it participates in a composite index.
             e.Property(x => x.VehicleNumber).HasMaxLength(15).IsRequired();

@@ -142,6 +142,7 @@ class MastersHubScreen extends StatelessWidget {
         ],
       ),
       'Rates': const RateScreen(),
+      'Sale Rates': const SaleItemRateScreen(),
       'Items': const MasterCrudScreen(
         title: 'Item',
         module: 'Item',
@@ -253,6 +254,139 @@ class RateScreen extends StatefulWidget {
   const RateScreen({super.key});
   @override
   State<RateScreen> createState() => _RateScreenState();
+}
+
+/// Independent, versioned rate history for non-cane Sale Weighment items.
+class SaleItemRateScreen extends StatefulWidget {
+  const SaleItemRateScreen({super.key});
+  @override
+  State<SaleItemRateScreen> createState() => _SaleItemRateScreenState();
+}
+
+class _SaleItemRateScreenState extends State<SaleItemRateScreen> {
+  List _rates = [];
+  List _items = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final results = await Future.wait([
+        ApiClient.instance.dio
+            .get('/api/sale-item-rates', queryParameters: {'includeInactive': true}),
+        ApiClient.instance.dio.get('/api/items'),
+      ]);
+      if (results[0].statusCode == 200) _rates = results[0].data['items'] ?? [];
+      if (results[1].statusCode == 200) _items = results[1].data['items'] ?? [];
+    } catch (_) {}
+    if (mounted) setState(() => _loading = false);
+  }
+
+  String _date(dynamic value) => value == null
+      ? 'Open'
+      : DateFormat('dd-MM-yyyy').format(DateTime.parse('$value').toLocal());
+
+  Future<void> _newRate({Map<String, dynamic>? revisionOf}) async {
+    int? itemId = revisionOf?['itemId'] as int?;
+    final rateCtl = TextEditingController(
+        text: revisionOf == null ? '' : '${revisionOf['rate']}');
+    DateTime from = DateTime.now();
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: Text(revisionOf == null ? 'New Sale Rate Period' : 'Revise Sale Rate'),
+          content: SizedBox(
+            width: 400,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              DropdownButtonFormField<int>(
+                value: itemId,
+                decoration: const InputDecoration(labelText: 'Item'),
+                items: [
+                  for (final item in _items)
+                    DropdownMenuItem(value: item['id'] as int, child: Text('${item['itemName']}')),
+                ],
+                onChanged: revisionOf == null ? (value) => setD(() => itemId = value) : null,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: rateCtl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Rate (per Quintal)', hintText: 'Example: 375.00'),
+              ),
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(child: Text('Effective From: ${DateFormat('dd-MM-yyyy').format(from)}')),
+                TextButton(
+                  onPressed: () async {
+                    final date = await showDatePicker(context: ctx, initialDate: from, firstDate: DateTime(2020), lastDate: DateTime(2035));
+                    if (date != null) setD(() => from = date);
+                  },
+                  child: const Text('Pick Date'),
+                ),
+              ]),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(revisionOf == null ? 'Save' : 'Save Revision')),
+          ],
+        ),
+      ),
+    );
+    if (save != true || itemId == null) return;
+    final response = await ApiClient.instance.dio.post('/api/sale-item-rates', data: {
+      'itemId': itemId,
+      'rate': double.tryParse(rateCtl.text) ?? 0,
+      'effectiveFrom': from.toIso8601String(),
+    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(response.statusCode == 200 ? response.data['message'] : ApiClient.errorMessage(response)),
+      backgroundColor: response.statusCode == 200 ? const Color(0xFF2E7D32) : Theme.of(context).colorScheme.error,
+    ));
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            Text('Sale Rate Master (item-wise)', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+            const Spacer(),
+            FilledButton.icon(onPressed: _newRate, icon: const Icon(Icons.add), label: const Text('New Sale Rate Period')),
+          ]),
+          const SizedBox(height: 10),
+          Expanded(
+            child: Card(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(columns: const [
+                        DataColumn(label: Text('ID')), DataColumn(label: Text('Item')), DataColumn(label: Text('Rate')),
+                        DataColumn(label: Text('Effective From')), DataColumn(label: Text('Effective To')), DataColumn(label: Text('Action')),
+                      ], rows: [
+                        for (final rate in _rates)
+                          DataRow(cells: [
+                            DataCell(Text('${rate['id']}')), DataCell(Text('${rate['itemName']}')),
+                            DataCell(Text((rate['rate'] as num).toStringAsFixed(2))),
+                            DataCell(Text(_date(rate['effectiveFrom']))), DataCell(Text(_date(rate['effectiveTo']))),
+                            DataCell(TextButton.icon(onPressed: () => _newRate(revisionOf: Map<String, dynamic>.from(rate)), icon: const Icon(Icons.edit_calendar_outlined, size: 16), label: const Text('Revise'))),
+                          ]),
+                      ]),
+                    ),
+            ),
+          ),
+        ]),
+      );
 }
 
 class _RateScreenState extends State<RateScreen> {

@@ -1,6 +1,7 @@
 using CaneFactory.Application.Common;
 using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Interfaces;
+using CaneFactory.API.Services;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
 using CaneFactory.Infrastructure.Weighing;
@@ -160,8 +161,6 @@ public class SalePurchaseWeighmentController : ControllerBase
         if (Duplicate(req.IdempotencyKey, out var duplicate)) return duplicate!;
         if (!_weighing.TryGetUsableWeight(out var liveKg, out var deviceError))
             return Conflict(new { message = deviceError });
-        if (req.Rate is < 0) return BadRequest(new { message = "Rate cannot be negative." });
-
         SalePurchase? record = null;
         decimal gross = 0;
         decimal finalWeight = 0;
@@ -176,6 +175,10 @@ public class SalePurchaseWeighmentController : ControllerBase
                 if (record.WeighmentStatus == "CANCELLED") throw new SalePurchaseStateException(409, "Cancelled SalePurchase cannot be processed.");
                 if (record.WeighmentStatus != "TARE_PENDING_GROSS") throw new SalePurchaseStateException(409, "Gross is already completed for this SalePurchase.");
 
+                var itemRate = await SaleItemRateStore.CurrentAsync(_db, record.ItemId, DateTime.UtcNow.Date);
+                if (itemRate == null)
+                    throw new SalePurchaseStateException(409, "No active Sale Rate exists for this Item. Configure Sale Rates first.");
+
                 gross = WeightCalculator.KgToQuintal(liveKg);
                 var minimumError = await MinimumWeightErrorAsync(gross, applyGross: true);
                 if (minimumError != null) throw new SalePurchaseStateException(409, minimumError);
@@ -187,8 +190,9 @@ public class SalePurchaseWeighmentController : ControllerBase
                 record.GrossDateTime = DateTime.UtcNow;
                 record.GrossByUserId = _current.UserId;
                 record.GrossByUserName = _current.Username ?? "";
-                record.Rate = req.Rate.HasValue ? WeightCalculator.R2(req.Rate.Value) : null;
-                record.Amount = record.Rate.HasValue ? WeightCalculator.R2(finalWeight * record.Rate.Value) : null;
+                // Snapshot the item rate at final/gross time.  A later rate revision never alters this completed sale.
+                record.Rate = WeightCalculator.R2(itemRate.Rate);
+                record.Amount = WeightCalculator.R2(finalWeight * record.Rate.Value);
                 record.WeighmentStatus = "COMPLETED";
                 record.UpdatedAt = DateTime.UtcNow;
                 record.UpdatedBy = _current.UserId;
@@ -354,5 +358,4 @@ public class SalePurchaseWeighmentController : ControllerBase
         return false;
     }
 }
-
 

@@ -242,16 +242,11 @@ class _SalePurchaseWeighmentScreenState
       return _toast(
           'Double-click a pending row or enter a SalePurchase ID and press ENTER.',
           error: true);
-    final rate =
-        _rate.text.trim().isEmpty ? null : double.tryParse(_rate.text.trim());
-    if (_rate.text.trim().isNotEmpty && rate == null)
-      return _toast('Rate must be a valid number.', error: true);
     setState(() => _saving = true);
     try {
       final res = await ApiClient.instance.dio
           .post('/api/sale-purchase-weighment/gross', data: {
         'salePurchaseId': _selected!['salePurchaseId'],
-        'rate': rate,
         'idempotencyKey':
             'sp-gross-${_selected!['salePurchaseId']}-${DateTime.now().microsecondsSinceEpoch}'
       });
@@ -366,6 +361,12 @@ class _SalePurchaseWeighmentScreenState
               constraints: const BoxConstraints(minHeight: 72),
               alignment: Alignment.center,
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+              decoration: BoxDecoration(
+                border: Border.all(
+                    color: live.isLive ? const Color(0xFF2E7D32) : Colors.red,
+                    width: 2),
+                borderRadius: BorderRadius.circular(12),
+              ),
               child: Text(
                 '${live.weightQuintal.toStringAsFixed(2)} Qtl',
                 textAlign: TextAlign.center,
@@ -394,7 +395,9 @@ class _SalePurchaseWeighmentScreenState
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      live.deviceConnected ? 'CONNECTED' : 'DISCONNECTED',
+                      live.deviceConnected
+                          ? 'CONNECTED • ${live.readerState.replaceAll('_', ' ')} • ${live.stable ? 'STABLE' : 'UNSTABLE'}'
+                          : 'DISCONNECTED',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
@@ -402,10 +405,6 @@ class _SalePurchaseWeighmentScreenState
                             ? const Color(0xFF2E7D32)
                             : Colors.red,
                       ),
-                    ),
-                    Text(
-                      '${live.readerState.replaceAll('_', ' ')} • ${live.stable ? 'STABLE' : 'UNSTABLE'}',
-                      style: const TextStyle(fontSize: 11),
                     ),
                     Text(
                       live.lastReceivedAt == null
@@ -500,14 +499,24 @@ class _SalePurchaseWeighmentScreenState
                   },
                   icon: const Icon(Icons.search),
                   label: const Text('Lookup')),
-              SizedBox(
-                  width: 180,
-                  child: TextField(
-                      controller: _rate,
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
-                      decoration:
-                          const InputDecoration(labelText: 'Rate (optional)'))),
+              if (_selected != null)
+                FutureBuilder(
+                  future: ApiClient.instance.dio.get(
+                      '/api/sale-item-rates/current/${_selected!['itemId']}'),
+                  builder: (context, snapshot) {
+                    final response = snapshot.data;
+                    final rate = response is Response && response.statusCode == 200
+                        ? (response.data['rate'] as num?)?.toStringAsFixed(2)
+                        : null;
+                    return SizedBox(
+                      width: 220,
+                      child: InputDecorator(
+                        decoration: const InputDecoration(labelText: 'Item Rate (automatic)'),
+                        child: Text(rate == null ? 'Configure Sale Rate Master' : '$rate / Qtl'),
+                      ),
+                    );
+                  },
+                ),
               FilledButton.icon(
                   onPressed: _saving ? null : _saveGross,
                   icon: const Icon(Icons.save),
@@ -529,7 +538,9 @@ class _SalePurchaseWeighmentScreenState
             Text(
                 'Live Gross: ${context.watch<LiveWeightProvider>().current.weightQuintal.toStringAsFixed(2)} Qtl'),
             Text('Final: ${(finalWeight ?? 0).toStringAsFixed(2)} Qtl',
-                style: const TextStyle(fontWeight: FontWeight.bold))
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('Rate: automatic from Sale Rate Master'),
+            Text('Amount: calculated automatically on Save Gross'),
           ])
       ]);
 

@@ -26,6 +26,10 @@ public class PrintDocument
     /// DUPLICATE / REPRINT marker so the copy cannot be mistaken for the original.</summary>
     public bool IsDuplicate { get; set; }
 
+    /// <summary>Allows compact historical weighment reprints while payment advice tables
+    /// continue to paginate normally when they contain many purchase lines.</summary>
+    public bool IsPaymentDocument { get; set; }
+
     /// <summary>Rendered two-per-line (left pair / right pair) by both renderers.</summary>
     public List<PrintRow> Rows { get; set; } = new();
 

@@ -13,8 +13,8 @@ enum _ReprintType {
   payment;
 
   String get label => switch (this) {
-        _ReprintType.purchase => 'Cane Purchase',
-        _ReprintType.salePurchase => 'Sale / Purchase',
+        _ReprintType.purchase => 'Cane Weighment',
+        _ReprintType.salePurchase => 'Sale Weighment',
         _ReprintType.payment => 'Payment',
       };
 }
@@ -165,9 +165,9 @@ class _ReprintScreenState extends State<ReprintScreen> {
     }
     final selected = available.contains(_type) ? _type : available.first;
     final identifierLabel = selected == _ReprintType.purchase
-        ? 'Purchase ID'
+        ? 'Cane Weighment ID'
         : selected == _ReprintType.salePurchase
-            ? 'Sale / Purchase ID'
+            ? 'Sale Weighment ID'
             : _paymentLookup == _PaymentLookup.paymentId
                 ? 'Payment ID'
                 : 'Advice Number';

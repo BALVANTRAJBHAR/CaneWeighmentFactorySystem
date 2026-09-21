@@ -79,6 +79,7 @@ public class PrintEngineService : IPrintEngineService
         var doc = await BaseDocAsync(p.Season?.SeasonName, generatedByUserName);
         doc.TitleHindi = "भुगतान पर्ची";
         doc.TitleEnglish = "Payment Slip";
+        doc.IsPaymentDocument = true;
         doc.QrValue = p.Id;
         doc.Rows = PaymentRows(p, purchases, doc.Language);
         if (purchases.Count > 1)
@@ -361,9 +362,9 @@ public class PrintEngineService : IPrintEngineService
             new("भुगतान क्रमांक", "Payment ID", p.Id.ToString()),
             new("अग्रिम क्रमांक", "Advice Number", p.AdviceNumber.ToString()),
             new("किसान कोड", "Grower Code", p.GrowerCode),
-            new("किसान का नाम", "Grower Name", Text(p.Grower.GrowerName, p.Grower.GrowerNameHi, language)),
-            new("पिता का नाम", "Father's Name", Text(p.Grower.FatherName, p.Grower.FatherNameHi, language)),
-            new("गाँव", "Village", Text(p.Grower.Village.VillageName, p.Grower.Village.VillageNameHi, language))
+            new("किसान का नाम", "Grower Name", Text(p.Grower?.GrowerName, p.Grower?.GrowerNameHi, language)),
+            new("पिता का नाम", "Father's Name", Text(p.Grower?.FatherName, p.Grower?.FatherNameHi, language)),
+            new("गाँव", "Village", Text(p.Grower?.Village?.VillageName, p.Grower?.Village?.VillageNameHi, language))
         };
 
         if (purchases.Count == 1)
@@ -384,11 +385,11 @@ public class PrintEngineService : IPrintEngineService
         {
             rows.AddRange(new[]
             {
-                new PrintRow("खाताधारक का नाम", "Account Holder Name", SnapshotOrCurrent(p.AccountHolderNameAtPayment, p.Grower.AccountHolderName)),
-                new PrintRow("बैंक का नाम", "Bank Name", SnapshotOrCurrent(p.BankNameAtPayment, p.Grower.Bank?.BankName)),
-                new PrintRow("शाखा", "Branch", SnapshotOrCurrent(p.BankBranchAtPayment, p.Grower.Bank?.BranchName)),
-                new PrintRow("आईएफएससी कोड", "IFSC Code", SnapshotOrCurrent(p.BankIfscAtPayment, p.Grower.Bank?.IFSC)),
-                new PrintRow("खाता क्रमांक", "Account Number", SnapshotOrCurrent(p.BankAccountNumberAtPayment, p.Grower.BankAccountNumber))
+                new PrintRow("खाताधारक का नाम", "Account Holder Name", SnapshotOrCurrent(p.AccountHolderNameAtPayment, p.Grower?.AccountHolderName)),
+                new PrintRow("बैंक का नाम", "Bank Name", SnapshotOrCurrent(p.BankNameAtPayment, p.Grower?.Bank?.BankName)),
+                new PrintRow("शाखा", "Branch", SnapshotOrCurrent(p.BankBranchAtPayment, p.Grower?.Bank?.BranchName)),
+                new PrintRow("आईएफएससी कोड", "IFSC Code", SnapshotOrCurrent(p.BankIfscAtPayment, p.Grower?.Bank?.IFSC)),
+                new PrintRow("खाता क्रमांक", "Account Number", SnapshotOrCurrent(p.BankAccountNumberAtPayment, p.Grower?.BankAccountNumber))
             });
         }
 
@@ -397,7 +398,7 @@ public class PrintEngineService : IPrintEngineService
             new PrintRow("कुल क्रय राशि (₹)", "Total Purchase Amount (Rs)", p.TotalPurchaseAmount.ToString("F2")),
             new PrintRow("ऋण कटौती (₹)", "Loan Deducted (Rs)", p.LoanDeductedAmount.ToString("F2")),
             new PrintRow("शुद्ध देय राशि (₹)", "Net Payable (Rs)", p.NetPayableAmount.ToString("F2")),
-            new PrintRow("भुगतान माध्यम", "Payment Mode", p.PaymentMode.ModeName),
+            new PrintRow("भुगतान माध्यम", "Payment Mode", p.PaymentMode?.ModeName ?? "-"),
             new PrintRow("संदर्भ क्रमांक", "Transaction Ref", p.TransactionRefNumber ?? "-"),
             new PrintRow("भुगतान तिथि", "Payment Date", p.PaymentDate.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
             new PrintRow("भुगतान कर्ता", "Paid By", p.PaidByUserName)
@@ -478,7 +479,7 @@ public class PrintEngineService : IPrintEngineService
     };
 
     private static bool IsBankPayment(Payment payment) =>
-        string.Equals(payment.PaymentMode.ModeCode, "BANK", StringComparison.OrdinalIgnoreCase);
+        string.Equals(payment.PaymentMode?.ModeCode, "BANK", StringComparison.OrdinalIgnoreCase);
 
     private static string SnapshotOrCurrent(string? snapshot, string? current) =>
         !string.IsNullOrWhiteSpace(snapshot) ? snapshot : current ?? "-";
@@ -488,9 +489,9 @@ public class PrintEngineService : IPrintEngineService
         var rows = new List<PrintRow>
         {
             new("बिक्री/खरीद क्रमांक", "SalePurchase ID", p.Id.ToString()),
-            new("वस्तु", "Item", Text(p.Item.ItemName, p.Item.ItemNameHi, language)),
-            new("पार्टी", "Party", Text(p.Party.PartyName, p.Party.PartyNameHi, language)),
-            new("वाहन प्रकार", "Vehicle Type", Text(p.VehicleType.VehicleTypeName, p.VehicleType.VehicleTypeNameHi, language)),
+            new("वस्तु", "Item", Text(p.Item?.ItemName, p.Item?.ItemNameHi, language)),
+            new("पार्टी", "Party", Text(p.Party?.PartyName, p.Party?.PartyNameHi, language)),
+            new("वाहन प्रकार", "Vehicle Type", Text(p.VehicleType?.VehicleTypeName, p.VehicleType?.VehicleTypeNameHi, language)),
             new("वाहन क्रमांक", "Vehicle Number", p.VehicleNumber),
             new("चालक", "Driver", p.DriverName),
             new("टिप्पणी", "Remark", p.Remark ?? "-"),
@@ -511,4 +512,3 @@ public class PrintEngineService : IPrintEngineService
         return rows;
     }
 }
-

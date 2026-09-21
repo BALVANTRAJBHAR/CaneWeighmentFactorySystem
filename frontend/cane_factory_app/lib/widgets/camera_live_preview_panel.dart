@@ -189,8 +189,8 @@ class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
               ? constraints.maxWidth
               : (constraints.maxWidth - ((columns - 1) * 8)) / columns;
           final cardExtent = widget.squareCards
-              ? cardWidth + 52
-              : (widget.compact ? 205.0 : 230.0);
+              ? cardWidth + 72
+              : (widget.compact ? 225.0 : 250.0);
           return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -222,6 +222,7 @@ class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
     final frame = _frames[id];
     final error = _errors[id];
     final cameraNo = '${camera['cameraNumber'] ?? '-'}'.padLeft(2, '0');
+    final configuredName = camera['cameraName'] ?? camera['name'] ?? camera['displayName'];
     return DecoratedBox(
       decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
@@ -231,7 +232,12 @@ class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
           child: ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
             child: frame != null
-                ? Image.memory(frame, fit: BoxFit.cover, gaplessPlayback: true)
+                // Contain preserves camera OSD at all four edges: date/time at the top-right
+                // and the configured Front/Back Kanta label at the bottom-left.
+                ? Container(
+                    color: Colors.black,
+                    alignment: Alignment.center,
+                    child: Image.memory(frame, fit: BoxFit.contain, gaplessPlayback: true))
                 : Container(
                     color: Colors.black87,
                     alignment: Alignment.center,
@@ -255,9 +261,11 @@ class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
           child: Text(
-              'Camera $cameraNo • ${camera['vendor'] ?? ''} ${camera['model'] ?? ''}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              configuredName?.toString().trim().isNotEmpty == true
+                  ? configuredName.toString()
+                  : 'Camera $cameraNo • ${camera['vendor'] ?? ''} ${camera['model'] ?? ''}',
+              maxLines: 2,
+              overflow: TextOverflow.visible,
               style:
                   const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
         ),

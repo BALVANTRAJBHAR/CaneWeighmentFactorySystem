@@ -37,12 +37,54 @@ public partial class AddVehicleReweighSafety : Migration
             oldClrType: typeof(string),
             oldType: "nvarchar(max)");
 
+        // Older installations could create more than one gross-pending record for the
+        // same vehicle. Do not delete that business history merely to add the safety
+        // index. Keep the oldest pending gross (the transaction that was first opened)
+        // and cancel/lock every later duplicate so it cannot be weighed or paid by mistake.
+        // The operator can still see the retained record and complete its tare.
+        migrationBuilder.Sql(@"
+;WITH duplicates AS (
+    SELECT [Id], ROW_NUMBER() OVER (
+        PARTITION BY [VehicleNumber]
+        ORDER BY [GrossDateTime] ASC, [Id] ASC
+    ) AS [rn]
+    FROM [Purchases]
+    WHERE [IsDeleted] = 0 AND [GrossTareStatus] = 'GROSS_DONE'
+)
+UPDATE p
+SET [GrossTareStatus] = 'CANCELLED',
+    [LockStatus] = 'LOCKED',
+    [PaymentStatus] = 'NOT_ELIGIBLE',
+    [PaymentFlag] = 'N',
+    [UpdatedAt] = SYSUTCDATETIME()
+FROM [Purchases] p
+INNER JOIN duplicates d ON d.[Id] = p.[Id]
+WHERE d.[rn] > 1;");
+
         migrationBuilder.CreateIndex(
             name: "UX_Purchases_ActiveVehicle",
             table: "Purchases",
             column: "VehicleNumber",
             unique: true,
             filter: "[IsDeleted] = 0 AND [GrossTareStatus] = 'GROSS_DONE'");
+
+        // Apply the same non-destructive repair to historical sale/purchase tare
+        // duplicates before its filtered unique index is created.
+        migrationBuilder.Sql(@"
+;WITH duplicates AS (
+    SELECT [Id], ROW_NUMBER() OVER (
+        PARTITION BY [VehicleNumber]
+        ORDER BY [TareDateTime] ASC, [Id] ASC
+    ) AS [rn]
+    FROM [SalePurchases]
+    WHERE [IsDeleted] = 0 AND [WeighmentStatus] = 'TARE_PENDING_GROSS'
+)
+UPDATE sp
+SET [WeighmentStatus] = 'CANCELLED',
+    [UpdatedAt] = SYSUTCDATETIME()
+FROM [SalePurchases] sp
+INNER JOIN duplicates d ON d.[Id] = sp.[Id]
+WHERE d.[rn] > 1;");
 
         migrationBuilder.CreateIndex(
             name: "UX_SalePurchases_ActiveVehicle",

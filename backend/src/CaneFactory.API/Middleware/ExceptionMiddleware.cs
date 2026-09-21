@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CaneFactory.API.Services;
+using Microsoft.EntityFrameworkCore;
 
 namespace CaneFactory.API.Middleware;
 
@@ -23,6 +24,20 @@ public class ExceptionMiddleware
                 ctx.RequestServices.GetRequiredService<IServiceScopeFactory>(),
                 ctx.RequestServices.GetRequiredService<ILoggerFactory>());
             await _next(ctx);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            _log.LogWarning(ex, "Concurrent update on {Path}", ctx.Request.Path);
+            if (!ctx.Response.HasStarted)
+            {
+                ctx.Response.StatusCode = StatusCodes.Status409Conflict;
+                ctx.Response.ContentType = "application/json";
+                await ctx.Response.WriteAsync(JsonSerializer.Serialize(new
+                {
+                    code = "STALE_RECORD",
+                    message = "The record was changed or paid by another user. Nothing from this operation was saved. Reload and try again."
+                }));
+            }
         }
         catch (Exception ex)
         {

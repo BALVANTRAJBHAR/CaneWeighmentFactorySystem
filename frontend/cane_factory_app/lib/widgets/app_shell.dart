@@ -27,6 +27,7 @@ import '../screens/search/grower_search_screen.dart';
 import '../screens/sms/sms_broadcast_screen.dart';
 import '../screens/users/users_screen.dart';
 import '../screens/weighment/weighment_screen.dart';
+import '../screens/weighment/weighment_corrections_screen.dart';
 import 'warrior_branding_footer.dart';
 
 class _NavItem {
@@ -36,8 +37,9 @@ class _NavItem {
   final Widget Function() builder;
   final String? roleOnly;
   final List<String> anyPermissions;
+  final List<String> anyRoles;
   const _NavItem(this.label, this.icon, this.permission, this.builder,
-      {this.roleOnly, this.anyPermissions = const []});
+      {this.roleOnly, this.anyPermissions = const [], this.anyRoles = const []});
 }
 
 /// Role-aware application shell. Menu items are hidden without permission,
@@ -78,6 +80,9 @@ class _AppShellState extends State<AppShell> {
         () => const ExpenseScreen()),
     _NavItem('SalePurchase Weighment', Icons.local_shipping_outlined,
         'SalePurchase.View', () => const SalePurchaseWeighmentScreen()),
+    _NavItem('Weighment Corrections', Icons.edit_note_outlined,
+        'Purchase.Edit', () => const WeighmentCorrectionsScreen(),
+        anyPermissions: ['SalePurchase.Edit'], anyRoles: ['Admin', 'Developer']),
     _NavItem(
         'Loans', Icons.savings_outlined, 'Loan.View', () => const LoanScreen()),
     _NavItem('Reports', Icons.summarize_outlined, 'Report.View',
@@ -136,7 +141,8 @@ class _AppShellState extends State<AppShell> {
     final items = _allItems
         .where((i) =>
             (auth.can(i.permission) || i.anyPermissions.any(auth.can)) &&
-            (i.roleOnly == null || auth.hasRole(i.roleOnly!)))
+            (i.roleOnly == null || auth.hasRole(i.roleOnly!)) &&
+            (i.anyRoles.isEmpty || i.anyRoles.any(auth.hasRole)))
         .toList();
     if (items.isEmpty) {
       return Scaffold(
@@ -303,4 +309,3 @@ class _AppShellState extends State<AppShell> {
     'Amber Brown': Color(0xFF8D5B00),
   };
 }
-

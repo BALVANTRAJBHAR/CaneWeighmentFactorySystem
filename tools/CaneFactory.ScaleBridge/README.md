@@ -18,6 +18,16 @@ In CaneFactory **Weighing Device** configuration:
 
 Edit `appsettings.json`: API URL, same AgentKey, DeviceId, the local `COMx` port shown in Device Manager, and serial/parser settings.
 
+## Build the deployable folder
+
+From the repository root in PowerShell, create a self-contained Windows package (the target PC does not need a separate .NET installation):
+
+```powershell
+.\tools\build-scale-bridge.ps1 -OutputDirectory .\artifacts\scale-bridge-20260921
+```
+
+The output is the exact folder to copy to the USB/COM PC.
+
 ## Recommended: install as a background Windows Service
 
 This is the recommended production setup. Keep the complete published bridge folder in a permanent path such as `C:\WARRIOR SOFTECH\ScaleBridge`; do not use Downloads or Desktop. After `appsettings.json` is correct, open **PowerShell as Administrator** in that folder and run:

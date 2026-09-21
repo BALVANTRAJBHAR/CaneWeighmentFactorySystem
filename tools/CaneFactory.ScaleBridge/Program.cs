@@ -132,7 +132,13 @@ sealed class ScaleBridge
             {
                 deviceId = _cfg.DeviceId, weightKg = kg, stable, readerState = state, error
             }), Encoding.UTF8, "application/json");
-            using var response = await _http.PostAsync($"{_cfg.ApiBaseUrl.TrimEnd('/')}/api/scale-bridge/reading", content, stoppingToken);
+            // This unattended LAN client does not have a user JWT. The server authenticates
+            // every reading with the same secret configured as CANE_SCALE_AGENT_KEY.
+            using var request = new HttpRequestMessage(HttpMethod.Post,
+                $"{_cfg.ApiBaseUrl.TrimEnd('/')}/api/scale-bridge/reading")
+            { Content = content };
+            request.Headers.TryAddWithoutValidation("X-Cane-Scale-Key", _cfg.AgentKey);
+            using var response = await _http.SendAsync(request, stoppingToken);
             if (response.IsSuccessStatusCode)
             {
                 // A display does not need every serial frame. This keeps the LAN/API responsive

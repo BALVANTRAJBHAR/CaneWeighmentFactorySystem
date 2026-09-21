@@ -80,6 +80,17 @@ public class RateMaster : BaseEntity
     public DateTime? EffectiveTo { get; set; }
 }
 
+/// <summary>Effective-dated non-cane sale/purchase rate.  Rates are immutable history:
+/// a correction is entered as a new period rather than overwriting a completed weighment.</summary>
+public class SaleItemRateMaster : BaseEntity
+{
+    public int ItemId { get; set; }
+    public Item Item { get; set; } = null!;
+    public decimal Rate { get; set; }
+    public DateTime EffectiveFrom { get; set; }
+    public DateTime? EffectiveTo { get; set; }
+}
+
 public class Item : BaseEntity
 {
     public string ItemName { get; set; } = string.Empty;

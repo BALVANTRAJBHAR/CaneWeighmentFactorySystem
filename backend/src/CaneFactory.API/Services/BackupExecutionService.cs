@@ -134,7 +134,11 @@ public sealed class BackupExecutionService
                 : string.Empty;
             _log.LogInformation("{Kind} backup completed for {Database}; file {FileName}",
                 kind, databaseName, Path.GetFileName(attempt.Path));
-            return new(true, $"{attempt.Label} backup completed and verified.{locationNote}", attempt.Path);
+            // WITH CHECKSUM makes SQL Server validate the pages while creating the backup.
+            // RESTORE VERIFYONLY requires CREATE DATABASE/server-level restore permissions,
+            // which would be an unnecessarily powerful grant for the API account. A DBA can
+            // still perform a periodic restore verification separately.
+            return new(true, $"{attempt.Label} backup completed with SQL Server checksum.{locationNote}", attempt.Path);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -168,10 +172,7 @@ public sealed class BackupExecutionService
         {
             await using var command = connection.CreateCommand();
             command.CommandTimeout = 600;
-            command.CommandText = $"DECLARE @backupPath nvarchar(4000) = @path; {statement}" +
-                (kind == BackupKind.Full
-                    ? " RESTORE VERIFYONLY FROM DISK = @backupPath WITH CHECKSUM;"
-                    : string.Empty);
+            command.CommandText = $"DECLARE @backupPath nvarchar(4000) = @path; {statement}";
             var pathParameter = command.CreateParameter();
             pathParameter.ParameterName = "@path";
             pathParameter.Value = path;

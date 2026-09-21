@@ -85,9 +85,16 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
 
   Future<void> _loadRefs() async {
     try {
-      final vt = await ApiClient.instance.dio.get('/api/vehicle-types');
-      final vart = await ApiClient.instance.dio.get('/api/variety-types');
-      final cams = await ApiClient.instance.dio.get('/api/config/cameras');
+      final results = await Future.wait([
+        ApiClient.instance.dio.get('/api/vehicle-types'),
+        ApiClient.instance.dio.get('/api/variety-types'),
+        ApiClient.instance.dio.get('/api/config/cameras'),
+        ApiClient.instance.dio.get('/api/config/weight-rules'),
+      ]);
+      final vt = results[0];
+      final vart = results[1];
+      final cams = results[2];
+      final rules = results[3];
       if (!mounted) return;
       setState(() {
         if (vt.statusCode == 200) _vehicleTypes = vt.data['items'];
@@ -99,6 +106,13 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                   c['liveViewEnabled'] == true &&
                   c['status'] == true)
               .toList();
+        }
+        // The configured defaults are visible and submitted with every new cane gross.
+        // Operators can still adjust them before saving when an authorised exception is needed.
+        if (rules.statusCode == 200 && rules.data is Map) {
+          final values = Map<String, dynamic>.from(rules.data);
+          _cutting.text = ((values['defaultCuttingPercent'] as num?) ?? 0).toStringAsFixed(2);
+          _tax.text = ((values['defaultTaxPercent'] as num?) ?? 0).toStringAsFixed(2);
         }
       });
     } catch (_) {}
