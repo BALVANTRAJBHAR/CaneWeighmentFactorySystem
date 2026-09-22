@@ -347,8 +347,9 @@ public class PrintController : ControllerBase
 
         var payment = await _db.Payments.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
         if (payment == null) return NotFound(new { message = $"Payment {id} not found." });
-        if (payment.PaymentStatus == "CANCELLED")
-            return Conflict(new { message = $"Payment {id} is cancelled and cannot be reprinted as a valid receipt." });
+        // A cancelled payment remains a historical accounting record. Reprint the saved
+        // receipt for audit/reference using the same behavior as the normal payment print.
+        // It must not force the operator to use a different ID or advice-number workflow.
         var doc = await _engine.BuildPaymentSlipAsync(id, _current.Username ?? "");
         MarkDuplicate(doc);
         var rendered = _engine.Render(doc, resolvedTarget.target!, format == "preview");
@@ -405,4 +406,3 @@ public class PrintController : ControllerBase
         return File(bytes, contentType, $"PrintTest.{ext}");
     }
 }
-

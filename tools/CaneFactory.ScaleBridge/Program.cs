@@ -40,6 +40,9 @@ sealed class ScaleBridge
     private decimal _lastWeight;
     private DateTime _lastChangedAt = DateTime.UtcNow;
     private DateTime _nextServerSendAt = DateTime.MinValue;
+    private DateTime _lastSerialByteAt = DateTime.UtcNow;
+    private DateTime _lastNoDataNoticeAt = DateTime.MinValue;
+    private DateTime _lastRawNoticeAt = DateTime.MinValue;
 
     public ScaleBridge(IOptions<ScaleBridgeOptions> options, HttpClient http, ILogger<ScaleBridge> logger) =>
         (_cfg, _http, _logger) = (options.Value, http, logger);
@@ -58,6 +61,11 @@ sealed class ScaleBridge
                 };
                 port.Open();
                 _logger.LogInformation("Connected to local {ComPort} at {BaudRate} baud.", _cfg.ComPort, _cfg.BaudRate);
+                _lastSerialByteAt = DateTime.UtcNow;
+                // Tell the API that the bridge has opened the local port even before
+                // the indicator sends its first complete frame. This is a connection
+                // status only: no weight is invented or marked as live.
+                await SendAsync(0, false, "CONNECTED", null, stoppingToken);
                 using var registration = stoppingToken.Register(port.Close);
                 await ReadLoopAsync(port, stoppingToken);
             }
@@ -74,18 +82,53 @@ sealed class ScaleBridge
     private async Task ReadLoopAsync(SerialPort port, CancellationToken stoppingToken)
     {
         var bytes = new byte[1024];
-        while (port.IsOpen)
+        while (port.IsOpen && !stoppingToken.IsCancellationRequested)
         {
-            var count = await port.BaseStream.ReadAsync(bytes.AsMemory(), stoppingToken);
-            if (count <= 0) continue;
-            foreach (var frame in ExtractFrames(bytes.AsSpan(0, count)))
+            var count = port.BytesToRead;
+            if (count > 0)
             {
-                if (!TryParseWeight(frame, out var kg)) continue;
-                var now = DateTime.UtcNow;
-                if (kg != _lastWeight) { _lastWeight = kg; _lastChangedAt = now; }
-                var stable = now - _lastChangedAt >= TimeSpan.FromMilliseconds(Math.Max(0, _cfg.StableWeightDurationMs));
-                await SendAsync(kg, stable, "READING", null, stoppingToken);
+                count = port.Read(bytes, 0, Math.Min(bytes.Length, count));
+                if (count > 0)
+                {
+                    _lastSerialByteAt = DateTime.UtcNow;
+                    if (_lastSerialByteAt - _lastRawNoticeAt >= TimeSpan.FromSeconds(5))
+                    {
+                        _lastRawNoticeAt = _lastSerialByteAt;
+                        _logger.LogInformation("Received serial bytes from {ComPort}. Raw HEX: {RawHex}",
+                            _cfg.ComPort, Convert.ToHexString(bytes, 0, count));
+                    }
+                    foreach (var frame in ExtractFrames(bytes.AsSpan(0, count)))
+                    {
+                        if (!TryParseWeight(frame, out var kg, out var reason))
+                        {
+                            _logger.LogWarning(
+                                "Ignored serial frame from {ComPort}: {Reason}. Raw HEX: {RawHex}",
+                                _cfg.ComPort, reason, Convert.ToHexString(frame));
+                            continue;
+                        }
+
+                        var now = DateTime.UtcNow;
+                        if (kg != _lastWeight) { _lastWeight = kg; _lastChangedAt = now; }
+                        var stable = now - _lastChangedAt >= TimeSpan.FromMilliseconds(Math.Max(0, _cfg.StableWeightDurationMs));
+                        await SendAsync(kg, stable, "READING", null, stoppingToken);
+                    }
+                }
             }
+            else
+            {
+                var now = DateTime.UtcNow;
+                if (now - _lastSerialByteAt >= TimeSpan.FromSeconds(5)
+                    && now - _lastNoDataNoticeAt >= TimeSpan.FromSeconds(15))
+                {
+                    _lastNoDataNoticeAt = now;
+                    _logger.LogWarning(
+                        "No serial bytes received from {ComPort} for {Seconds} seconds. Verify the indicator is powered and configured to transmit continuously, then verify baud/parity/data bits/stop bits.",
+                        _cfg.ComPort, (int)(now - _lastSerialByteAt).TotalSeconds);
+                    await SendAsync(0, false, "CONNECTED", null, stoppingToken);
+                }
+            }
+
+            await Task.Delay(Math.Max(20, _cfg.ReadIntervalMs), stoppingToken);
         }
     }
 
@@ -108,13 +151,22 @@ sealed class ScaleBridge
         return frames;
     }
 
-    private bool TryParseWeight(byte[] frame, out decimal kg)
+    private bool TryParseWeight(byte[] frame, out decimal kg, out string reason)
     {
         kg = 0;
+        reason = string.Empty;
         var start = Math.Max(0, _cfg.WeightStartPosition - 1);
-        if (start + _cfg.WeightLength > frame.Length) return false;
+        if (start + _cfg.WeightLength > frame.Length)
+        {
+            reason = $"WeightStartPosition {_cfg.WeightStartPosition} and WeightLength {_cfg.WeightLength} exceed frame length {frame.Length}";
+            return false;
+        }
         var text = Encoding.ASCII.GetString(frame, start, _cfg.WeightLength).Replace(' ', '0').Trim();
-        if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out kg)) return false;
+        if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out kg))
+        {
+            reason = $"weight field '{text}' is not numeric";
+            return false;
+        }
         if (_cfg.DecimalPlaces > 0 && !text.Contains('.')) kg /= (decimal)Math.Pow(10, _cfg.DecimalPlaces);
         var negative = HexByte(_cfg.NegativeSignHex);
         if (negative.HasValue && _cfg.SignPosition > 0 && _cfg.SignPosition <= frame.Length

@@ -24,10 +24,10 @@ class _SalePurchaseWeighmentScreenState
   final _driver = TextEditingController();
   final _remark = TextEditingController();
   final _id = TextEditingController();
-  final _rate = TextEditingController();
   List _items = [], _parties = [], _vehicles = [], _pending = [], _cameras = [];
   int? _itemId, _partyId, _vehicleTypeId;
   Map<String, dynamic>? _selected;
+  Map<String, dynamic>? _itemRate;
   bool _gross = false, _saving = false;
   late final LiveWeightProvider _liveWeightProvider;
 
@@ -49,7 +49,6 @@ class _SalePurchaseWeighmentScreenState
     _driver.dispose();
     _remark.dispose();
     _id.dispose();
-    _rate.dispose();
     super.dispose();
   }
 
@@ -111,8 +110,22 @@ class _SalePurchaseWeighmentScreenState
       _vehicle.text = data['vehicleNumber'] ?? '';
       _driver.text = data['driverName'] ?? '';
       _remark.text = data['remark'] ?? '';
-      _rate.text = data['rate']?.toString() ?? '';
     });
+    await _loadItemRate(data['itemId'] as int?);
+  }
+
+  Future<void> _loadItemRate(int? itemId) async {
+    if (itemId == null) return;
+    try {
+      final res = await ApiClient.instance.dio
+          .get('/api/sale-item-rates/current/$itemId');
+      if (!mounted) return;
+      setState(() => _itemRate = res.statusCode == 200 && res.data is Map
+          ? Map<String, dynamic>.from(res.data)
+          : null);
+    } catch (_) {
+      if (mounted) setState(() => _itemRate = null);
+    }
   }
 
   Future<void> _print(dynamic print) async {
@@ -267,7 +280,7 @@ class _SalePurchaseWeighmentScreenState
       setState(() {
         _selected = null;
         _id.clear();
-        _rate.clear();
+        _itemRate = null;
         _gross = false;
       });
       _load();
@@ -499,24 +512,10 @@ class _SalePurchaseWeighmentScreenState
                   },
                   icon: const Icon(Icons.search),
                   label: const Text('Lookup')),
-              if (_selected != null)
-                FutureBuilder(
-                  future: ApiClient.instance.dio.get(
-                      '/api/sale-item-rates/current/${_selected!['itemId']}'),
-                  builder: (context, snapshot) {
-                    final response = snapshot.data;
-                    final rate = response is Response && response.statusCode == 200
-                        ? (response.data['rate'] as num?)?.toStringAsFixed(2)
-                        : null;
-                    return SizedBox(
-                      width: 220,
-                      child: InputDecorator(
-                        decoration: const InputDecoration(labelText: 'Item Rate (automatic)'),
-                        child: Text(rate == null ? 'Configure Sale Rate Master' : '$rate / Qtl'),
-                      ),
-                    );
-                  },
-                ),
+              if (_selected != null) ...[
+                _calculationBox('Item Rate (automatic)', _rateText),
+                _calculationBox('Amount (automatic)', _amountText(finalWeight)),
+              ],
               FilledButton.icon(
                   onPressed: _saving ? null : _saveGross,
                   icon: const Icon(Icons.save),
@@ -539,10 +538,30 @@ class _SalePurchaseWeighmentScreenState
                 'Live Gross: ${context.watch<LiveWeightProvider>().current.weightQuintal.toStringAsFixed(2)} Qtl'),
             Text('Final: ${(finalWeight ?? 0).toStringAsFixed(2)} Qtl',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
-            Text('Rate: automatic from Sale Rate Master'),
-            Text('Amount: calculated automatically on Save Gross'),
+            Text('Rate: $_rateText / Qtl',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('Amount: ${_amountText(finalWeight)}',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
           ])
       ]);
+
+  String get _rateText {
+    final rate = (_itemRate?['rate'] as num?)?.toDouble();
+    return rate == null ? 'Configure Sale Rate Master' : rate.toStringAsFixed(2);
+  }
+
+  String _amountText(double? finalWeight) {
+    final rate = (_itemRate?['rate'] as num?)?.toDouble();
+    if (rate == null || finalWeight == null) return '—';
+    return (finalWeight * rate).toStringAsFixed(2);
+  }
+
+  Widget _calculationBox(String label, String value) => SizedBox(
+      width: 220,
+      child: InputDecorator(
+          decoration: InputDecoration(labelText: label),
+          child: Text(value,
+              style: const TextStyle(fontWeight: FontWeight.w700))));
 
   Widget _pendingGrid() => _pending.isEmpty
       ? const Center(

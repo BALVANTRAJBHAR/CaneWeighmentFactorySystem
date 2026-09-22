@@ -20,13 +20,6 @@ public class A4PdfRenderer : IPrintRenderer
     {
         var fontFamily = string.Equals(doc.Language, "hi", StringComparison.OrdinalIgnoreCase) ? "CaneDevanagari" : "CaneLatin";
         var hindi = string.Equals(doc.Language, "hi", StringComparison.OrdinalIgnoreCase);
-        // Historical weighment copies normally contain the same evidence photos as the
-        // original slip.  Keep those compact so an A4 reprint remains one practical page.
-        // Payment tables deliberately retain their normal flowing layout and may span pages.
-        var compactReprint = doc.IsDuplicate && !doc.IsPaymentDocument;
-        var pageMargin = compactReprint ? 16f : 28f;
-        var rowPadding = compactReprint ? 1.5f : 3f;
-        var rowFontSize = compactReprint ? 7.5f : 9f;
         byte[]? qr = doc.QrValue.HasValue ? QrCodeHelper.GeneratePng(doc.QrValue.Value.ToString(), 8) : null;
         byte[]? logo = !string.IsNullOrWhiteSpace(doc.LogoPath) && File.Exists(doc.LogoPath) ? File.ReadAllBytes(doc.LogoPath) : null;
 
@@ -35,7 +28,7 @@ public class A4PdfRenderer : IPrintRenderer
             container.Page(page =>
             {
                 page.Size(doc.IsLandscape ? PageSizes.A4.Landscape() : PageSizes.A4);
-                page.Margin(pageMargin);
+                page.Margin(28);
                 page.DefaultTextStyle(t => t.FontFamily(fontFamily).FontSize(10).FontColor(Colors.Black));
 
                 page.Header().Column(col =>
@@ -55,7 +48,7 @@ public class A4PdfRenderer : IPrintRenderer
                             .FontSize(7).Bold().FontColor(Colors.Red.Darken2);
                 });
 
-                page.Content().PaddingTop(compactReprint ? 4 : 10).Column(content =>
+                page.Content().PaddingTop(10).Column(content =>
                 {
                     content.Item().Table(table =>
                     {
@@ -68,10 +61,10 @@ public class A4PdfRenderer : IPrintRenderer
                         {
                             var r1 = doc.Rows[i];
                             var r2 = i + 1 < doc.Rows.Count ? doc.Rows[i + 1] : null;
-                            AddCell(table, hindi ? r1.LabelHindi : r1.LabelEnglish, true, rowPadding, rowFontSize);
-                            AddCell(table, r1.Value, false, rowPadding, rowFontSize);
-                            AddCell(table, r2 != null ? (hindi ? r2.LabelHindi : r2.LabelEnglish) : "", true, rowPadding, rowFontSize);
-                            AddCell(table, r2?.Value ?? "", false, rowPadding, rowFontSize);
+                            AddCell(table, hindi ? r1.LabelHindi : r1.LabelEnglish, true);
+                            AddCell(table, r1.Value, false);
+                            AddCell(table, r2 != null ? (hindi ? r2.LabelHindi : r2.LabelEnglish) : "", true);
+                            AddCell(table, r2?.Value ?? "", false);
                         }
                     });
 
@@ -111,8 +104,8 @@ public class A4PdfRenderer : IPrintRenderer
                         // Keep a clear blank line between the detail grid and the
                         // evidence section so printed photos never look attached
                         // to the final detail row.
-                        content.Item().PaddingTop(compactReprint ? 5 : 18).Text(hindi ? "तौल चित्र" : "Weighment Images")
-                            .FontSize(compactReprint ? 8 : 10).Bold().FontColor(Colors.Blue.Darken2);
+                        content.Item().PaddingTop(18).Text(hindi ? "तौल चित्र" : "Weighment Images")
+                            .FontSize(10).Bold().FontColor(Colors.Blue.Darken2);
                         content.Item().PaddingTop(2).Table(imagesTable =>
                         {
                             imagesTable.ColumnsDefinition(columns =>
@@ -123,13 +116,11 @@ public class A4PdfRenderer : IPrintRenderer
 
                             foreach (var image in printableImages)
                             {
-                                imagesTable.Cell().Padding(compactReprint ? 2 : 4).Column(imageCell =>
+                                imagesTable.Cell().Padding(4).Column(imageCell =>
                                 {
-                                    imageCell.Item().AlignCenter().Text(image.Label).FontSize(compactReprint ? 6 : 8)
+                                    imageCell.Item().AlignCenter().Text(image.Label).FontSize(8)
                                         .FontColor(Colors.Grey.Darken1);
-                                    // Reprints keep two evidence frames on the original A4 page.
-                                    // Standard slips retain the larger, more easily inspected photo.
-                                    imageCell.Item().PaddingTop(1).Height(compactReprint ? 105 : 174).AlignCenter()
+                                    imageCell.Item().PaddingTop(2).Height(174).AlignCenter()
                                         .Image(File.ReadAllBytes(image.FilePath)).FitArea();
                                 });
                             }
@@ -160,10 +151,10 @@ public class A4PdfRenderer : IPrintRenderer
         return document.GeneratePdf();
     }
 
-    private static void AddCell(TableDescriptor table, string text, bool isLabel, float padding, float fontSize)
+    private static void AddCell(TableDescriptor table, string text, bool isLabel)
     {
-        var cell = table.Cell().Padding(padding).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2);
-        if (isLabel) cell.Text(text).FontSize(fontSize).Bold().FontColor(Colors.Blue.Darken2);
-        else cell.Text(text).FontSize(fontSize).FontColor(Colors.Black);
+        var cell = table.Cell().Padding(3).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2);
+        if (isLabel) cell.Text(text).FontSize(9).Bold().FontColor(Colors.Blue.Darken2);
+        else cell.Text(text).FontSize(9).FontColor(Colors.Black);
     }
 }
