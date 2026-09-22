@@ -1,3 +1,5 @@
+using CaneFactory.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -6,6 +8,8 @@ namespace CaneFactory.Infrastructure.Migrations;
 
 /// <summary>Preserves the recipient-bank details used for each completed BANK payment.
 /// Historical rows remain nullable and use the grower master as a display fallback.</summary>
+[DbContext(typeof(AppDbContext))]
+[Migration("20260919110000_AddPaymentBankSnapshots")]
 public partial class AddPaymentBankSnapshots : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)

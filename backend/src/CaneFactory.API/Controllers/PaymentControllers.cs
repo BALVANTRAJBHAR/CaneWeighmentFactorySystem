@@ -186,16 +186,41 @@ public class PaymentController : ControllerBase
             return await PreviewDateRangeBatchAsync(fromDate, toDate);
 
         Grower? grower;
-        try { grower = await ResolveSelectionGrowerAsync(mode, growerCode, purchaseId, fromDate, toDate); }
+        try { grower = await ResolveSelectionGrowerAsync(mode, growerCode, purchaseId, fromDate, toDate, includeVillage: true); }
         catch (PaymentSelectionException ex) { return Conflict(new { message = ex.Message }); }
         if (grower == null) return NotFound(new { message = mode == "SINGLE"
             ? $"Purchase ID {purchaseId} does not exist." : "No eligible grower was found for the selected criteria." });
 
+        object? selectedPurchase = null;
         if (mode == "SINGLE")
         {
             var selected = await _db.Purchases.AsNoTracking().FirstAsync(p => p.Id == purchaseId && !p.IsDeleted);
-            if (selected.PaymentStatus == "PAID")
-                return Ok(new { growerCode = grower.GrowerCode, eligiblePurchases = Array.Empty<object>(),
+            selectedPurchase = new
+            {
+                purchaseId = selected.Id,
+                selected.VehicleNumber,
+                selected.GrossTareStatus,
+                selected.GrossWeightQuintal,
+                selected.TareWeightQuintal,
+                selected.FinalWeightQuintal,
+                selected.Rate,
+                selected.PurchaseAmount,
+                selected.TareDateTime
+            };
+            if (selected.GrossTareStatus != "TARE_DONE" || !selected.FinalWeightQuintal.HasValue)
+                return Conflict(new
+                {
+                    message = $"Purchase ID {purchaseId} is not final yet. Tare is pending; payment is allowed only after Final Weight is saved.",
+                    growerCode = grower.GrowerCode,
+                    growerName = grower.GrowerName,
+                    fatherName = grower.FatherName,
+                    villageName = grower.Village?.VillageName ?? "-",
+                    selectedPurchase
+                });
+            if (selected.PaymentStatus != "PENDING")
+                return Ok(new { growerCode = grower.GrowerCode, growerName = grower.GrowerName,
+                    fatherName = grower.FatherName, villageName = grower.Village?.VillageName ?? "-", selectedPurchase,
+                    eligiblePurchases = Array.Empty<object>(),
                     outstandingLoans = Array.Empty<object>(), totalPurchaseAmount = 0m, totalOutstandingLoan = 0m,
                     estimatedLoanDeduction = 0m, estimatedNetPayable = 0m, alreadyPaid = true,
                     statusMessage = $"Payment already done for Purchase ID {purchaseId}." });
@@ -214,6 +239,10 @@ public class PaymentController : ControllerBase
         return Ok(new
         {
             growerCode = grower.GrowerCode,
+            growerName = grower.GrowerName,
+            fatherName = grower.FatherName,
+            villageName = grower.Village?.VillageName ?? "-",
+            selectedPurchase,
             eligiblePurchases = eligible,
             purchaseCount = eligible.Count,
             totalFinalWeight,

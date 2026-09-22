@@ -115,17 +115,30 @@ class _SalePurchaseWeighmentScreenState
   }
 
   Future<void> _loadItemRate(int? itemId) async {
-    if (itemId == null) return;
+    if (itemId == null) {
+      if (mounted) setState(() => _itemRate = null);
+      return;
+    }
     try {
       final res = await ApiClient.instance.dio
           .get('/api/sale-item-rates/current/$itemId');
-      if (!mounted) return;
+      // A slower response for an item selected previously must never replace
+      // the rate for the item currently shown in the form.
+      if (!mounted || _itemId != itemId) return;
       setState(() => _itemRate = res.statusCode == 200 && res.data is Map
           ? Map<String, dynamic>.from(res.data)
           : null);
     } catch (_) {
-      if (mounted) setState(() => _itemRate = null);
+      if (mounted && _itemId == itemId) setState(() => _itemRate = null);
     }
+  }
+
+  void _changeTareItem(int? itemId) {
+    setState(() {
+      _itemId = itemId;
+      _itemRate = null;
+    });
+    unawaited(_loadItemRate(itemId));
   }
 
   Future<void> _print(dynamic print) async {
@@ -455,8 +468,7 @@ class _SalePurchaseWeighmentScreenState
           runSpacing: 14,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            _dropdown('Item', _itemId, _items,
-                (v) => setState(() => _itemId = v), 'itemName'),
+            _dropdown('Item', _itemId, _items, _changeTareItem, 'itemName'),
             _dropdown('Party', _partyId, _parties,
                 (v) => setState(() => _partyId = v), 'partyName'),
             _dropdown('Vehicle Type', _vehicleTypeId, _vehicles,
@@ -480,6 +492,11 @@ class _SalePurchaseWeighmentScreenState
                     controller: _remark,
                     decoration:
                         const InputDecoration(labelText: 'Remark (optional)'))),
+            if (_itemId != null) ...[
+              _calculationBox('Item Rate (automatic)', _rateText),
+              _calculationBox(
+                  'Amount (after Final Gross)', 'Calculated automatically'),
+            ],
             FilledButton.icon(
                 onPressed: _saving ? null : _saveTare,
                 icon: const Icon(Icons.save),

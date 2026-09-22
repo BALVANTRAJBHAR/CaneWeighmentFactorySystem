@@ -2,6 +2,7 @@ using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Interfaces;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
+using CaneFactory.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace CaneFactory.Infrastructure.Printing;
@@ -149,6 +150,17 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleEnglish = stage == "TARE" ? "Sale/Purchase Weighment Slip - Tare" : "Sale/Purchase Weighment Slip - Final";
         doc.QrValue = p.Id;
         doc.Rows = SalePurchaseRows(p, stage, doc.Language);
+        if (stage == "TARE")
+        {
+            // A tare slip is printed before the final/gross weight exists.  Show
+            // the effective master rate as provisional, but never invent an
+            // amount that has not yet been calculated from the final weight.
+            var tareDate = p.TareDateTime.Date;
+            var rate = await SaleItemRateLookup.CurrentAsync(_db, p.ItemId, tareDate);
+            doc.Rows.Add(new PrintRow("वर्तमान दर (अनंतिम)", "Current Rate (Provisional)",
+                rate?.ToString("F2") ?? "Sale Rate Master not configured"));
+            doc.Rows.Add(new PrintRow("राशि (₹)", "Amount (Rs)", "Calculated after Final Gross"));
+        }
         doc.Images = !doc.PrintImages ? new() : stage == "TARE"
             ? await LoadSalePurchaseImagesForPrintAsync(p.Id, "TARE")
             : await LoadSalePurchaseImagesForPrintAsync(p.Id, "GROSS", "TARE");

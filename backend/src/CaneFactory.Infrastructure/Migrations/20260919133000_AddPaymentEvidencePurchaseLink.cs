@@ -1,3 +1,5 @@
+using CaneFactory.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -5,6 +7,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace CaneFactory.Infrastructure.Migrations;
 
 /// <inheritdoc />
+[DbContext(typeof(AppDbContext))]
+[Migration("20260919133000_AddPaymentEvidencePurchaseLink")]
 public partial class AddPaymentEvidencePurchaseLink : Migration
 {
     /// <inheritdoc />

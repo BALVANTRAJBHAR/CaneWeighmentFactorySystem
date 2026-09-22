@@ -25,6 +25,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
   final _search = TextEditingController();
   final _dateFormat = DateFormat('dd-MM-yyyy');
   String _sourceType = 'BANK';
+  String _entryTab = 'RECEIPT';
   DateTime _receiptDate = DateTime.now();
   DateTime _paymentDate = DateTime.now();
   DateTime? _fromDate;
@@ -226,11 +227,11 @@ class _CashBookScreenState extends State<CashBookScreen> {
                 .textTheme
                 .titleLarge
                 ?.copyWith(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
         if (canCreate) ...[
-          _receiptForm(),
-          const SizedBox(height: 10),
-          _otherPaymentForm(),
+          _entryTabs(),
+          const SizedBox(height: 12),
+          _entryTab == 'RECEIPT' ? _receiptForm() : _otherPaymentForm(),
         ],
         const SizedBox(height: 10),
         _filters(),
@@ -242,6 +243,45 @@ class _CashBookScreenState extends State<CashBookScreen> {
         const SizedBox(height: 8),
         Expanded(child: _table()),
       ]),
+    );
+  }
+
+  /// Cash entry types have separate, focused forms. The running register remains
+  /// below the tabs, so operators can still verify every entry in one place.
+  Widget _entryTabs() => Container(
+        decoration: BoxDecoration(
+            border: Border(
+                bottom: BorderSide(
+                    color: Theme.of(context).dividerColor.withValues(alpha: 0.6)))),
+        child: Row(children: [
+          _entryTabButton('Cash Receipt', 'RECEIPT', Icons.south_west_outlined),
+          _entryTabButton(
+              'Other Cash Payment', 'PAYMENT', Icons.north_east_outlined),
+        ]),
+      );
+
+  Widget _entryTabButton(String label, String value, IconData icon) {
+    final selected = _entryTab == value;
+    final color = selected ? Theme.of(context).colorScheme.primary : null;
+    return InkWell(
+      onTap: () => setState(() => _entryTab = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(
+              bottom: BorderSide(
+                  color: selected ? Theme.of(context).colorScheme.primary : Colors.transparent,
+                  width: 3)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 8),
+          Text(label,
+              style: TextStyle(
+                  color: color,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600)),
+        ]),
+      ),
     );
   }
 
