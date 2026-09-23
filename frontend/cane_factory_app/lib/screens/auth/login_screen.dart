@@ -50,7 +50,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           Icon(Icons.factory_outlined,
                               size: 56, color: scheme.primary),
                           const SizedBox(height: 12),
-                          Text('AFF LLP Cane Factory Management',
+                          Text('AFF LLP Cane Sugar Factory Management',
                               textAlign: TextAlign.center,
                               style: Theme.of(context)
                                   .textTheme

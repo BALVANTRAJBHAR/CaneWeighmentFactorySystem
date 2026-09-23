@@ -237,14 +237,13 @@ class _SalePurchaseWeighmentScreenState
         return _toast(ApiClient.errorMessage(res), error: true);
       _toast(res.data['message']);
       await _sound.onWeighmentSaved();
+      await _print(res.data['autoPrint']);
       final salePurchaseId = res.data['salePurchaseId'] as int;
       final captured = await _waitForCapturedImages(salePurchaseId, 'TARE');
       if (!captured || !_hasConnectedCameraEvidence(res.data)) {
         _toast(
             'Tare saved, but camera evidence was not captured: ${_captureFailure(res.data) ?? 'Check Camera Configuration.'}',
             error: true);
-      } else {
-        await _print(res.data['autoPrint']);
       }
       setState(() {
         _itemId = null;
@@ -281,14 +280,13 @@ class _SalePurchaseWeighmentScreenState
         return _toast(ApiClient.errorMessage(res), error: true);
       _toast(res.data['message']);
       await _sound.onWeighmentSaved();
+      await _print(res.data['autoPrint']);
       final salePurchaseId = res.data['salePurchaseId'] as int;
       final captured = await _waitForCapturedImages(salePurchaseId, 'GROSS');
       if (!captured || !_hasConnectedCameraEvidence(res.data)) {
         _toast(
             'Gross saved, but camera evidence was not captured: ${_captureFailure(res.data) ?? 'Check Camera Configuration.'}',
             error: true);
-      } else {
-        await _print(res.data['autoPrint']);
       }
       setState(() {
         _selected = null;

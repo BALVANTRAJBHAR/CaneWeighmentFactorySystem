@@ -88,7 +88,36 @@ public class WeighingService
         _log = log;
     }
 
-    public LiveWeightDto Current { get { lock (_lock) return _current; } }
+    public LiveWeightDto Current
+    {
+        get
+        {
+            lock (_lock)
+            {
+                // Remote Scale Bridge readings live only in this server process; they are never
+                // restored from the database. Do not display its last value after the bridge has
+                // stopped sending data, because a stale value can look like a live vehicle.
+                var stale = _current.IsLive && _current.LastReceivedAt != default &&
+                    DateTime.UtcNow - _current.LastReceivedAt > TimeSpan.FromSeconds(5);
+                if (!stale) return _current;
+
+                return new LiveWeightDto
+                {
+                    WeightKg = 0,
+                    WeightQuintal = 0,
+                    WeightUnit = _current.WeightUnit,
+                    Stable = false,
+                    DeviceConnected = _current.DeviceConnected,
+                    ReaderRunning = false,
+                    IsLive = false,
+                    ReaderState = "STALE",
+                    LastReceivedAt = _current.LastReceivedAt,
+                    DeviceName = _current.DeviceName,
+                    Error = "No recent reading received from the Scale Bridge."
+                };
+            }
+        }
+    }
 
     public static string[] AvailablePorts()
     {
@@ -379,7 +408,6 @@ public class WeighingService
         }
     }
 }
-
 
 
 

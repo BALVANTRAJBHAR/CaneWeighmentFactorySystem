@@ -151,8 +151,9 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     if (res.statusCode == 200 && mounted) setState(() => _varieties = res.data);
   }
 
-  /// The server saves evidence before it returns. This confirms that the persisted
-  /// image metadata is available before the A4 PDF is requested for printing.
+  /// Evidence confirmation is intentionally independent of PDF/auto-print. A
+  /// camera outage must warn the operator, but must never block a saved weighment
+  /// from printing.
   Future<bool> _loadCapturedImages(int purchaseId, String stage) async {
     _lastCapturedPurchaseId = purchaseId;
     for (var attempt = 0; attempt < 24; attempt++) {
@@ -293,13 +294,12 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           _capturedImages = [];
         });
         _loadPending();
+        await _autoPrint(res.data['autoPrint']);
         final captured = await _loadCapturedImages(purchaseId, 'GROSS');
         if (!captured || !_hasConnectedCameraEvidence(res.data)) {
           _toast(
               'Gross saved, but camera evidence was not captured: ${_captureFailure(res.data) ?? 'Check Camera Configuration.'}',
               error: true);
-        } else {
-          await _autoPrint(res.data['autoPrint']);
         }
       } else {
         _toast(ApiClient.errorMessage(res), error: true);
@@ -341,13 +341,12 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           _capturedImages = [];
         });
         _loadPending();
+        await _autoPrint(res.data['autoPrint']);
         final captured = await _loadCapturedImages(purchaseId, 'TARE');
         if (!captured || !_hasConnectedCameraEvidence(res.data)) {
           _toast(
               'Tare saved, but camera evidence was not captured: ${_captureFailure(res.data) ?? 'Check Camera Configuration.'}',
               error: true);
-        } else {
-          await _autoPrint(res.data['autoPrint']);
         }
       } else {
         _toast(ApiClient.errorMessage(res), error: true);

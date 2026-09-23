@@ -283,10 +283,24 @@ public class SalePurchaseWeighmentController : ControllerBase
 
     private async Task<string?> CanStartNewSaleTareAsync(string vehicleNumber, DateTime now)
     {
-        var platformLock = await _db.SystemSettings.AsNoTracking()
+        var platformLock = await _db.SystemSettings
             .FirstOrDefaultAsync(s => s.Key == "WeighbridgePlatformClearRequired");
         if (platformLock?.Value == "1")
-            return "The previous vehicle has not yet cleared the platform. Wait until the indicator returns to zero before starting a new tare weighment.";
+        {
+            // A fresh zero from the indicator is authoritative. Clear a persisted lock here as
+            // well as in WeighingService, so an old lock can never block the operator due to a
+            // missed/restarted remote Scale Bridge notification.
+            if (_weighing.TryGetUsableWeight(out var liveKg, out _) && Math.Abs(liveKg) <= 0.01m)
+            {
+                platformLock.Value = "0";
+                await _db.SaveChangesAsync();
+                _log.LogInformation("Released stale platform-clear lock using fresh zero reading");
+            }
+            else
+            {
+                return "The previous vehicle has not yet cleared the platform. Wait until the indicator returns to zero before starting a new tare weighment.";
+            }
+        }
 
         var pending = await _db.SalePurchases.AsNoTracking().FirstOrDefaultAsync(p =>
             !p.IsDeleted && p.VehicleNumber == vehicleNumber && p.WeighmentStatus == "TARE_PENDING_GROSS");
@@ -358,4 +372,3 @@ public class SalePurchaseWeighmentController : ControllerBase
         return false;
     }
 }
-
