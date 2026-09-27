@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -25,6 +26,7 @@ import '../screens/reprint/reprint_screen.dart';
 import '../screens/sale_purchase/sale_purchase_weighment_screen.dart';
 import '../screens/search/grower_search_screen.dart';
 import '../screens/sms/sms_broadcast_screen.dart';
+import '../screens/sms/android_sim_gateway_screen.dart';
 import '../screens/users/users_screen.dart';
 import '../screens/weighment/weighment_screen.dart';
 import '../screens/weighment/weighment_corrections_screen.dart';
@@ -38,8 +40,12 @@ class _NavItem {
   final String? roleOnly;
   final List<String> anyPermissions;
   final List<String> anyRoles;
+  final bool androidOnly;
   const _NavItem(this.label, this.icon, this.permission, this.builder,
-      {this.roleOnly, this.anyPermissions = const [], this.anyRoles = const []});
+      {this.roleOnly,
+      this.anyPermissions = const [],
+      this.anyRoles = const [],
+      this.androidOnly = false});
 }
 
 /// Role-aware application shell. Menu items are hidden without permission,
@@ -80,20 +86,25 @@ class _AppShellState extends State<AppShell> {
         () => const ExpenseScreen()),
     _NavItem('Sale Weighment', Icons.local_shipping_outlined,
         'SalePurchase.View', () => const SalePurchaseWeighmentScreen()),
-    _NavItem('Weighment Corrections', Icons.edit_note_outlined,
-        'Purchase.Edit', () => const WeighmentCorrectionsScreen(),
-        anyPermissions: ['SalePurchase.Edit'], anyRoles: ['Admin', 'Developer']),
+    _NavItem('Weighment Corrections', Icons.edit_note_outlined, 'Purchase.Edit',
+        () => const WeighmentCorrectionsScreen(),
+        anyPermissions: ['SalePurchase.Edit'],
+        anyRoles: ['Admin', 'Developer']),
     _NavItem(
         'Loans', Icons.savings_outlined, 'Loan.View', () => const LoanScreen()),
     _NavItem('Reports', Icons.summarize_outlined, 'Report.View',
         () => const ReportsScreen()),
     _NavItem('View Images', Icons.photo_library_outlined, 'Image.View',
-        () => const ImageViewScreen(), anyPermissions: ['CashEvidence.View']),
+        () => const ImageViewScreen(),
+        anyPermissions: ['CashEvidence.View']),
     _NavItem('Print / Reprint', Icons.print_outlined, 'Weighment.Print',
         () => const ReprintScreen(),
         anyPermissions: ['SalePurchase.Print', 'Payment.Print']),
     _NavItem('Send SMS', Icons.sms_outlined, 'Sms.Configure',
         () => const SmsBroadcastScreen()),
+    _NavItem('SIM Gateway', Icons.phone_android_outlined, 'Sms.Configure',
+        () => const AndroidSimGatewayScreen(),
+        androidOnly: true),
     _NavItem('Users & Roles', Icons.group_outlined, 'User.View',
         () => const UsersScreen()),
     _NavItem('Weighing Device', Icons.settings_input_component_outlined,
@@ -142,6 +153,7 @@ class _AppShellState extends State<AppShell> {
         .where((i) =>
             (auth.can(i.permission) || i.anyPermissions.any(auth.can)) &&
             (i.roleOnly == null || auth.hasRole(i.roleOnly!)) &&
+            (!i.androidOnly || Platform.isAndroid) &&
             (i.anyRoles.isEmpty || i.anyRoles.any(auth.hasRole)))
         .toList();
     if (items.isEmpty) {

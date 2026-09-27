@@ -60,7 +60,9 @@ public class WeighingService
             d.LastReceivedAt = live ? DateTime.UtcNow : default;
             d.Error = error;
         });
-        // A disconnect has no physical weight information. Never treat it as a zero-platform\n        // event; otherwise toggling the digitizer could bypass the persisted safety lock.\n        if (live) ObservePlatformEmpty(weightKg);
+        // A disconnect has no physical weight information. Never treat it as a zero-platform
+        // event; otherwise toggling the digitizer could bypass the persisted safety lock.
+        if (live) ObservePlatformEmpty(weightKg);
         _ = _broadcaster.BroadcastAsync(Current);
     }
 

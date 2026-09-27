@@ -1686,6 +1686,32 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.ToTable("Seasons");
                 });
 
+            modelBuilder.Entity("CaneFactory.Domain.Entities.AndroidSmsGatewayDevice", b =>
+                {
+                    b.Property<int>("Id").ValueGeneratedOnAdd().HasColumnType("int");
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+                    b.Property<string>("ApiKeyHash").IsRequired().HasMaxLength(256).HasColumnType("nvarchar(256)");
+                    b.Property<string>("ApiKeySalt").IsRequired().HasMaxLength(128).HasColumnType("nvarchar(128)");
+                    b.Property<string>("ConfigurationName").IsRequired().HasMaxLength(150).HasColumnType("nvarchar(150)");
+                    b.Property<DateTime>("CreatedAt").HasColumnType("datetime2");
+                    b.Property<int?>("CreatedBy").HasColumnType("int");
+                    b.Property<DateTime?>("DeletedAt").HasColumnType("datetime2");
+                    b.Property<int?>("DeletedBy").HasColumnType("int");
+                    b.Property<string>("DeviceId").IsRequired().HasMaxLength(100).HasColumnType("nvarchar(100)");
+                    b.Property<bool>("IsDeleted").HasColumnType("bit");
+                    b.Property<DateTime?>("LastHeartbeatAt").HasColumnType("datetime2");
+                    b.Property<string>("LastSeenIp").HasColumnType("nvarchar(max)");
+                    b.Property<DateTime>("PairedAt").HasColumnType("datetime2");
+                    b.Property<int>("PollIntervalSeconds").HasColumnType("int");
+                    b.Property<string>("SimSlot").IsRequired().HasMaxLength(16).HasColumnType("nvarchar(16)").HasDefaultValue("DEFAULT");
+                    b.Property<bool>("Status").HasColumnType("bit");
+                    b.Property<DateTime?>("UpdatedAt").HasColumnType("datetime2");
+                    b.Property<int?>("UpdatedBy").HasColumnType("int");
+                    b.HasKey("Id");
+                    b.HasIndex("DeviceId").IsUnique().HasFilter("[IsDeleted] = 0");
+                    b.ToTable("AndroidSmsGatewayDevices");
+                });
+
             modelBuilder.Entity("CaneFactory.Domain.Entities.SmsConfig", b =>
                 {
                     b.Property<int>("Id")
@@ -1706,6 +1732,28 @@ namespace CaneFactory.Infrastructure.Migrations
 
                     b.Property<string>("AuthorizationHeader")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("AndroidCredentialVerified")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("AndroidConnectionStatus")
+                        .IsRequired().HasMaxLength(32).HasColumnType("nvarchar(32)")
+                        .HasDefaultValue("NOT_PAIRED");
+
+                    b.Property<string>("AndroidDeviceId")
+                        .HasMaxLength(100).HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("AndroidLastHeartbeatAt").HasColumnType("datetime2");
+                    b.Property<DateTime?>("AndroidLastVerifiedAt").HasColumnType("datetime2");
+
+                    b.Property<int>("AndroidPollIntervalSeconds")
+                        .HasColumnType("int").HasDefaultValue(5);
+
+                    b.Property<string>("AndroidSimSlot")
+                        .IsRequired().HasMaxLength(16).HasColumnType("nvarchar(16)")
+                        .HasDefaultValue("DEFAULT");
+
+                    b.Property<string>("ConfigurationName").HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -1745,6 +1793,10 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<string>("ProviderName")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ProviderType")
+                        .IsRequired().HasMaxLength(24).HasColumnType("nvarchar(24)")
+                        .HasDefaultValue("HTTP");
 
                     b.Property<string>("RequestBodyTemplate")
                         .HasColumnType("nvarchar(max)");
@@ -1860,6 +1912,10 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<string>("FailureReason")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<DateTime?>("FailedAt").HasColumnType("datetime2");
+
+                    b.Property<string>("DeviceId").HasMaxLength(100).HasColumnType("nvarchar(100)");
+
                     b.Property<int>("GrowerId")
                         .HasColumnType("int");
 
@@ -1874,12 +1930,22 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<DateTime?>("NextAttemptAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<DateTime?>("PickedAt").HasColumnType("datetime2");
+
+                    b.Property<string>("ProviderMessageId").HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ProviderType")
+                        .IsRequired().HasMaxLength(24).HasColumnType("nvarchar(24)")
+                        .HasDefaultValue("HTTP");
+
                     b.Property<string>("ReferenceId")
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
 
                     b.Property<DateTime?>("SentAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<string>("SimSlot").HasMaxLength(16).HasColumnType("nvarchar(16)");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -1893,6 +1959,8 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.HasIndex("GrowerId");
 
                     b.HasIndex("Status");
+
+                    b.HasIndex("ProviderType", "DeviceId", "Status");
 
                     b.HasIndex("EventCode", "ReferenceId")
                         .IsUnique();

@@ -176,7 +176,7 @@ public class WeighmentController : ControllerBase
             };
             _db.Purchases.Add(purchase);
             await _db.SaveChangesAsync();
-            await MarkPlatformClearRequiredAsync();
+            await MarkPlatformClearRequiredAsync(liveKg);
             await _db.SaveChangesAsync();
         });
 
@@ -237,7 +237,7 @@ public class WeighmentController : ControllerBase
         p.UpdatedAt = DateTime.UtcNow;
         p.UpdatedBy = _current.UserId;
         await _db.SaveChangesAsync();
-        await MarkPlatformClearRequiredAsync();
+        await MarkPlatformClearRequiredAsync(liveKg);
         await _db.SaveChangesAsync();
 
         await _audit.LogAsync("TareWeighment", "Weighment", "Purchase", p.Id.ToString(),
@@ -336,15 +336,18 @@ public class WeighmentController : ControllerBase
         return null;
     }
 
-    private async Task MarkPlatformClearRequiredAsync()
+    private async Task MarkPlatformClearRequiredAsync(decimal savedWeightKg)
     {
+        // A saved zero is already an empty platform. Do not require another
+        // nonzero-to-zero transition before the next weighment.
+        var required = Math.Abs(savedWeightKg) > 0.01m ? "1" : "0";
         var setting = await _db.SystemSettings.FirstOrDefaultAsync(s => s.Key == "WeighbridgePlatformClearRequired");
         if (setting == null)
         {
-            setting = new CaneFactory.Domain.Entities.SystemSetting { Key = "WeighbridgePlatformClearRequired", Value = "1" };
+            setting = new CaneFactory.Domain.Entities.SystemSetting { Key = "WeighbridgePlatformClearRequired", Value = required };
             _db.SystemSettings.Add(setting);
         }
-        else setting.Value = "1";
+        else setting.Value = required;
     }
 
     private async Task<string?> MinimumWeightErrorAsync(decimal weightQuintal, bool applyGross)

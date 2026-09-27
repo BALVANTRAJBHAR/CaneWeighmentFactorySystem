@@ -3,6 +3,7 @@ using CaneFactory.Application.Interfaces;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
 using CaneFactory.Infrastructure.Camera;
+using CaneFactory.API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text;
@@ -467,7 +468,7 @@ public class ConfigController : ControllerBase
         return Ok(new { message = "Print configuration saved successfully." });
     }
 
-    // ---------------------------------------------------------------- SMS (generic HTTP provider - Phase 10)
+    // ---------------------------------------------------------------- SMS (generic HTTP providers + Android SIM gateway)
     [HasPermission("Sms.View")]
     [HttpGet("sms")]
     public async Task<IActionResult> GetSms()
@@ -478,10 +479,15 @@ public class ConfigController : ControllerBase
         {
             config = s == null ? null : new
             {
-                s.Id, s.ProviderName, s.ApiBaseUrl, s.HttpMethod,
+                s.Id, s.ProviderType, s.ProviderName, s.ApiBaseUrl, s.HttpMethod,
                 HasApiKey = s.ApiKeyEncrypted != null, HasApiSecret = s.ApiSecretEncrypted != null,
                 s.AuthorizationHeader, s.SenderId, s.EntityId, s.Enabled,
-                s.Language, s.RequestContentType, s.RequestBodyTemplate, s.ResponseSuccessPath, s.ResponseSuccessValue
+                s.Language, s.RequestContentType, s.RequestBodyTemplate, s.ResponseSuccessPath, s.ResponseSuccessValue,
+                s.CanePurchaseSmsEnabled, s.CanePaymentSmsEnabled, s.SalePurchaseSmsEnabled,
+                s.ConfigurationName, s.AndroidDeviceId, s.AndroidSimSlot, s.AndroidPollIntervalSeconds,
+                s.AndroidCredentialVerified, s.AndroidLastVerifiedAt, s.AndroidLastHeartbeatAt,
+                connectionStatus = AndroidConnectionStatus(s),
+                maskedDeviceApiKey = s.AndroidCredentialVerified ? "********" : null
             },
             templates
         });
@@ -489,12 +495,48 @@ public class ConfigController : ControllerBase
 
     [HasPermission("Sms.Configure")]
     [HttpPut("sms")]
-    public async Task<IActionResult> UpdateSms([FromBody] SmsSaveRequest req)
+    public async Task<IActionResult> UpdateSms([FromBody] SmsSaveRequest req,
+        [FromServices] AndroidGatewayCredentialService credentials)
     {
+        var providerType = string.Equals(req.ProviderType, "ANDROID_SIM", StringComparison.OrdinalIgnoreCase)
+            ? "ANDROID_SIM" : "HTTP";
         var s = await _db.SmsConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
         var isNew = s == null;
         s ??= new SmsConfig { CreatedBy = _current.UserId };
+        if (providerType == "ANDROID_SIM")
+        {
+            if (string.IsNullOrWhiteSpace(req.ConfigurationName) || string.IsNullOrWhiteSpace(req.AndroidDeviceId) ||
+                req.AndroidPollIntervalSeconds is < 2 or > 300 ||
+                req.AndroidSimSlot is not ("DEFAULT" or "SIM1" or "SIM2"))
+                return BadRequest(new { message = "Configuration Name, Device ID, valid SIM slot and poll interval (2-300 seconds) are required." });
+
+            var device = await _db.AndroidSmsGatewayDevices.FirstOrDefaultAsync(d =>
+                d.DeviceId == req.AndroidDeviceId.Trim() && d.Status && !d.IsDeleted);
+            var keyMatches = device != null &&
+                (!string.IsNullOrWhiteSpace(req.AndroidDeviceApiKey)
+                    ? credentials.Verify(req.AndroidDeviceApiKey, device.ApiKeyHash, device.ApiKeySalt)
+                    : s.AndroidCredentialVerified && s.AndroidDeviceId == req.AndroidDeviceId.Trim());
+            if (!keyMatches)
+                return BadRequest(new { message = "Android SIM Gateway credentials are invalid." });
+
+            s.ConfigurationName = req.ConfigurationName.Trim();
+            s.AndroidDeviceId = req.AndroidDeviceId.Trim();
+            s.AndroidSimSlot = req.AndroidSimSlot;
+            s.AndroidPollIntervalSeconds = req.AndroidPollIntervalSeconds;
+            s.AndroidCredentialVerified = true;
+            s.AndroidLastVerifiedAt = DateTime.UtcNow;
+            s.AndroidLastHeartbeatAt = device!.LastHeartbeatAt;
+            s.AndroidConnectionStatus = IsRecent(device.LastHeartbeatAt, req.AndroidPollIntervalSeconds) ? "CONNECTED" : "OFFLINE";
+            s.ProviderName = "Android SIM";
+            device.ConfigurationName = s.ConfigurationName;
+            device.SimSlot = s.AndroidSimSlot;
+            device.PollIntervalSeconds = s.AndroidPollIntervalSeconds;
+            device.UpdatedAt = DateTime.UtcNow;
+            device.UpdatedBy = _current.UserId;
+        }
+        s.ProviderType = providerType;
         s.ProviderName = req.ProviderName; s.ApiBaseUrl = req.ApiBaseUrl; s.HttpMethod = req.HttpMethod;
+        if (providerType == "ANDROID_SIM") s.ProviderName = "Android SIM";
         if (!string.IsNullOrEmpty(req.ApiKey)) s.ApiKeyEncrypted = _protector.Protect(req.ApiKey);
         if (!string.IsNullOrEmpty(req.ApiSecret)) s.ApiSecretEncrypted = _protector.Protect(req.ApiSecret);
         s.AuthorizationHeader = req.AuthorizationHeader; s.SenderId = req.SenderId;
@@ -504,12 +546,50 @@ public class ConfigController : ControllerBase
         s.RequestBodyTemplate = req.RequestBodyTemplate;
         s.ResponseSuccessPath = req.ResponseSuccessPath;
         s.ResponseSuccessValue = req.ResponseSuccessValue;
+        s.CanePurchaseSmsEnabled = req.CanePurchaseSmsEnabled;
+        s.CanePaymentSmsEnabled = req.CanePaymentSmsEnabled;
+        s.SalePurchaseSmsEnabled = req.SalePurchaseSmsEnabled;
         if (isNew) _db.SmsConfigs.Add(s);
         else { s.UpdatedAt = DateTime.UtcNow; s.UpdatedBy = _current.UserId; }
         await _db.SaveChangesAsync();
+        if (!s.Enabled || s.ProviderType != "ANDROID_SIM")
+        {
+            await _db.SmsLogs.Where(x => x.ProviderType == "ANDROID_SIM" &&
+                    (x.Status == "QUEUED" || x.Status == "RETRY_PENDING"))
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Status, "CANCELLED")
+                    .SetProperty(x => x.NextAttemptAt, (DateTime?)null)
+                    .SetProperty(x => x.FailureReason, "Android SIM provider disabled before delivery."));
+        }
         await _audit.LogAsync("SystemSettingChange", "Sms", "SmsConfig", s.Id.ToString(),
-            newValue: new { s.ProviderName, s.ApiBaseUrl, s.Enabled, s.Language }); // secrets never audited in plaintext
+            newValue: new { s.ProviderType, s.ProviderName, s.ApiBaseUrl, s.Enabled, s.Language, s.AndroidDeviceId }); // secrets never audited
         return Ok(new { message = $"SMS configuration for provider '{s.ProviderName}' saved. Credentials stored encrypted." });
+    }
+
+    /// <summary>Pairs or rotates one Android gateway device. The returned key is never persisted in plaintext.</summary>
+    [HasPermission("Sms.Configure")]
+    [HttpPost("sms/android/register-device")]
+    public async Task<IActionResult> RegisterAndroidDevice([FromBody] AndroidDeviceRegistrationRequest req,
+        [FromServices] AndroidGatewayCredentialService credentials)
+    {
+        if (string.IsNullOrWhiteSpace(req.DeviceId) || string.IsNullOrWhiteSpace(req.ApiKey) || req.ApiKey.Length < 12)
+            return BadRequest(new { message = "Device ID and an API key of at least 12 characters are required." });
+        var id = req.DeviceId.Trim();
+        var device = await _db.AndroidSmsGatewayDevices.FirstOrDefaultAsync(d => d.DeviceId == id && !d.IsDeleted);
+        var isNew = device == null;
+        device ??= new AndroidSmsGatewayDevice { DeviceId = id, CreatedBy = _current.UserId };
+        var (hash, salt) = credentials.Hash(req.ApiKey);
+        device.ApiKeyHash = hash;
+        device.ApiKeySalt = salt;
+        device.ConfigurationName = string.IsNullOrWhiteSpace(req.ConfigurationName) ? id : req.ConfigurationName.Trim();
+        device.Status = true;
+        device.PairedAt = DateTime.UtcNow;
+        if (isNew) _db.AndroidSmsGatewayDevices.Add(device);
+        else { device.UpdatedAt = DateTime.UtcNow; device.UpdatedBy = _current.UserId; }
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("AndroidGatewayPaired", "Sms", "AndroidSmsGatewayDevice", device.Id.ToString(),
+            newValue: new { device.DeviceId, device.ConfigurationName });
+        return Ok(new { message = "Android SIM Gateway device registered. Save the SMS configuration with the same key." });
     }
 
     /// <summary>Create or update the message template for one EventCode+Language combination.
@@ -547,6 +627,21 @@ public class ConfigController : ControllerBase
     public async Task<IActionResult> TestSmsConnection()
     {
         var cfg = await _db.SmsConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
+        if (cfg?.ProviderType == "ANDROID_SIM")
+        {
+            if (!cfg.AndroidCredentialVerified || string.IsNullOrWhiteSpace(cfg.AndroidDeviceId))
+                return BadRequest(new { message = "Android SIM Gateway credentials are invalid." });
+            var device = await _db.AndroidSmsGatewayDevices.AsNoTracking().FirstOrDefaultAsync(d =>
+                d.DeviceId == cfg.AndroidDeviceId && d.Status && !d.IsDeleted);
+            if (device == null) return BadRequest(new { message = "Android SIM Gateway credentials are invalid." });
+            var connected = IsRecent(device.LastHeartbeatAt, cfg.AndroidPollIntervalSeconds);
+            return Ok(new
+            {
+                connected,
+                status = connected ? "CONNECTED" : "OFFLINE",
+                message = connected ? "Android SIM Gateway is connected." : "Credentials Valid / Device Offline."
+            });
+        }
         if (cfg == null || string.IsNullOrWhiteSpace(cfg.ApiBaseUrl))
             return BadRequest(new { message = "Configure the SMS provider API Base URL first." });
         try
@@ -579,12 +674,32 @@ public class ConfigController : ControllerBase
         var apiSecret = cfg.ApiSecretEncrypted != null ? _protector.Unprotect(cfg.ApiSecretEncrypted) : null;
         var message = string.IsNullOrWhiteSpace(req.Message) ? "This is a test SMS from CaneFactory System." : req.Message;
         var mobile = req.MobileNumber.Trim();
+        if (cfg.ProviderType == "ANDROID_SIM")
+        {
+            if (mobile.Length != 10 || !mobile.All(char.IsDigit)) return BadRequest(new { message = "Enter a valid 10-digit Indian mobile number." });
+            var smsService = HttpContext.RequestServices.GetRequiredService<ISmsService>();
+            var queued = await smsService.QueueRawAsync("TEST", null, null, mobile,
+                $"TEST-{Guid.NewGuid():N}", message);
+            return queued
+                ? Accepted(new { success = true, message = "Test SMS queued for Android SIM Gateway." })
+                : Conflict(new { success = false, message = "Test SMS could not be queued. Check that Android SIM is active." });
+        }
         var (success, _, error) = await provider.SendAsync(cfg, apiKey, apiSecret, mobile, message, ct);
 
         await _audit.LogAsync(success ? "SmsSent" : "SmsFailed", "Sms", "SmsConfig", cfg.Id.ToString(),
             newValue: new { EventCode = "TEST", MaskedMobile = CaneFactory.Application.Common.SmsMask.Number(mobile) },
             success: success, failureReason: success ? null : error);
         return Ok(new { success, message = success ? "Test SMS sent successfully." : $"Test SMS failed: {error}" });
+    }
+
+    private static bool IsRecent(DateTime? heartbeat, int pollSeconds) => heartbeat.HasValue &&
+        heartbeat.Value >= DateTime.UtcNow.AddSeconds(-Math.Max(60, pollSeconds * 6));
+
+    private static string AndroidConnectionStatus(SmsConfig cfg)
+    {
+        if (!cfg.Enabled) return "DISABLED";
+        if (!cfg.AndroidCredentialVerified) return "NOT_PAIRED";
+        return IsRecent(cfg.AndroidLastHeartbeatAt, cfg.AndroidPollIntervalSeconds) ? "CONNECTED" : "OFFLINE";
     }
 
     // ---------------------------------------------------------------- COMPANY
@@ -666,6 +781,7 @@ public class CameraSaveRequest
 
 public class SmsSaveRequest
 {
+    public string ProviderType { get; set; } = "HTTP";
     public string ProviderName { get; set; } = string.Empty;
     public string ApiBaseUrl { get; set; } = string.Empty;
     public string HttpMethod { get; set; } = "POST";
@@ -681,6 +797,21 @@ public class SmsSaveRequest
     public string? ResponseSuccessPath { get; set; }
     public string? ResponseSuccessValue { get; set; }
     public string? SalePurchaseRecipients { get; set; }
+    public bool CanePurchaseSmsEnabled { get; set; } = true;
+    public bool CanePaymentSmsEnabled { get; set; } = true;
+    public bool SalePurchaseSmsEnabled { get; set; } = true;
+    public string? ConfigurationName { get; set; }
+    public string? AndroidDeviceId { get; set; }
+    public string? AndroidDeviceApiKey { get; set; }
+    public string AndroidSimSlot { get; set; } = "DEFAULT";
+    public int AndroidPollIntervalSeconds { get; set; } = 5;
+}
+
+public class AndroidDeviceRegistrationRequest
+{
+    public string DeviceId { get; set; } = string.Empty;
+    public string ApiKey { get; set; } = string.Empty;
+    public string? ConfigurationName { get; set; }
 }
 
 public class SmsTemplateSaveRequest

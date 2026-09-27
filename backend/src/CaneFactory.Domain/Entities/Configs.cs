@@ -43,6 +43,7 @@ public class PrintConfig : BaseEntity
 
 public class SmsConfig : BaseEntity
 {
+    public string ProviderType { get; set; } = "HTTP"; // HTTP | ANDROID_SIM
     public string ProviderName { get; set; } = string.Empty;
     public string ApiBaseUrl { get; set; } = string.Empty;
     public string HttpMethod { get; set; } = "POST";
@@ -63,6 +64,31 @@ public class SmsConfig : BaseEntity
     public bool CanePurchaseSmsEnabled { get; set; } = true;
     public bool CanePaymentSmsEnabled { get; set; } = true;
     public bool SalePurchaseSmsEnabled { get; set; } = true;
+
+    // Android SIM gateway settings. The device secret is never stored here; only the
+    // registered device owns a salted one-way hash of that secret.
+    public string? ConfigurationName { get; set; }
+    public string? AndroidDeviceId { get; set; }
+    public string AndroidSimSlot { get; set; } = "DEFAULT";
+    public int AndroidPollIntervalSeconds { get; set; } = 5;
+    public bool AndroidCredentialVerified { get; set; }
+    public DateTime? AndroidLastVerifiedAt { get; set; }
+    public DateTime? AndroidLastHeartbeatAt { get; set; }
+    public string AndroidConnectionStatus { get; set; } = "NOT_PAIRED";
+}
+
+/// <summary>A paired Android phone. API keys are salted PBKDF2 hashes and cannot be recovered.</summary>
+public class AndroidSmsGatewayDevice : BaseEntity
+{
+    public string DeviceId { get; set; } = string.Empty;
+    public string ConfigurationName { get; set; } = string.Empty;
+    public string ApiKeyHash { get; set; } = string.Empty;
+    public string ApiKeySalt { get; set; } = string.Empty;
+    public string SimSlot { get; set; } = "DEFAULT";
+    public int PollIntervalSeconds { get; set; } = 5;
+    public DateTime? LastHeartbeatAt { get; set; }
+    public string? LastSeenIp { get; set; }
+    public DateTime PairedAt { get; set; } = DateTime.UtcNow;
 }
 
 /// <summary>
@@ -101,10 +127,16 @@ public class SmsLog
     public string ReferenceId { get; set; } = string.Empty; // e.g. PUR-105, PAY-12 - idempotency key
     public int? TemplateId { get; set; }
     public string MessageText { get; set; } = string.Empty;
+    public string ProviderType { get; set; } = "HTTP";
+    public string? DeviceId { get; set; }
+    public string? SimSlot { get; set; }
     public string Status { get; set; } = "QUEUED"; // QUEUED | PROCESSING | SENT | FAILED | RETRY_PENDING
     public int AttemptCount { get; set; }
     public DateTime? NextAttemptAt { get; set; }
     public DateTime? SentAt { get; set; }
+    public DateTime? PickedAt { get; set; }
+    public DateTime? FailedAt { get; set; }
+    public string? ProviderMessageId { get; set; }
     public string? FailureReason { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

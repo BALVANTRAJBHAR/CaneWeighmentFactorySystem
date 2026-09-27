@@ -44,10 +44,14 @@ public class SmsQueueProcessor : BackgroundService
 
         var cfg = await db.SmsConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted, ct);
         if (cfg == null) return;
+        // Android SIM rows are pulled by the authenticated phone. While Android SIM is selected,
+        // pause historical HTTP rows instead of sending them with the wrong provider settings.
+        if (cfg.ProviderType == "ANDROID_SIM") return;
 
         var now = DateTime.UtcNow;
         var batch = await db.SmsLogs
-            .Where(l => (l.Status == "QUEUED" || l.Status == "RETRY_PENDING") && (l.NextAttemptAt == null || l.NextAttemptAt <= now))
+            .Where(l => l.ProviderType != "ANDROID_SIM" &&
+                (l.Status == "QUEUED" || l.Status == "RETRY_PENDING") && (l.NextAttemptAt == null || l.NextAttemptAt <= now))
             .OrderBy(l => l.CreatedAt).Take(20).ToListAsync(ct);
         if (batch.Count == 0) return;
 

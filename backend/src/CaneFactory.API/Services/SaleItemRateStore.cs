@@ -1,6 +1,7 @@
 using System.Data;
 using CaneFactory.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace CaneFactory.API.Services;
 
@@ -27,6 +28,10 @@ public static class SaleItemRateStore
         {
             await using var command = connection.CreateCommand();
             command.CommandText = sql;
+            // Gross completion runs inside a serializable EF transaction. A raw
+            // DbCommand on that connection must explicitly join it; otherwise
+            // SQL Server rejects ExecuteReader with a pending-transaction error.
+            command.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
             var p = command.CreateParameter(); p.ParameterName = "@includeInactive"; p.Value = includeInactive ? 1 : 0;
             command.Parameters.Add(p);
             await using var reader = await command.ExecuteReaderAsync(ct);

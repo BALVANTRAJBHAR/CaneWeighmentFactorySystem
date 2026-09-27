@@ -68,7 +68,8 @@ public class SalePurchaseWeighmentController : ControllerBase
             {
                 salePurchaseId = x.Id, Item = x.Item.ItemName, Party = x.Party.PartyName,
                 VehicleType = x.VehicleType.VehicleTypeName, x.VehicleNumber, x.DriverName,
-                x.TareWeightQuintal, x.TareDateTime, Status = x.WeighmentStatus
+                x.TareWeightQuintal, x.TareDateTime, TareOperator = x.TareByUserName,
+                Status = x.WeighmentStatus
             }).ToListAsync();
         return Ok(rows);
     }
@@ -134,7 +135,7 @@ public class SalePurchaseWeighmentController : ControllerBase
             };
             _db.SalePurchases.Add(record);
             await _db.SaveChangesAsync();
-            await MarkPlatformClearRequiredAsync();
+            await MarkPlatformClearRequiredAsync(liveKg);
             await _db.SaveChangesAsync();
             });
         }
@@ -161,6 +162,25 @@ public class SalePurchaseWeighmentController : ControllerBase
         if (Duplicate(req.IdempotencyKey, out var duplicate)) return duplicate!;
         if (!_weighing.TryGetUsableWeight(out var liveKg, out var deviceError))
             return Conflict(new { message = deviceError });
+        // Validate the physical reading before entering the serializable write transaction.
+        // This gives the operator a usable message rather than a generic server error when
+        // Gross is attempted while the indicator is still at zero or below the saved tare.
+        var pendingTare = await _db.SalePurchases.AsNoTracking()
+            .Where(x => x.Id == req.SalePurchaseId && !x.IsDeleted)
+            .Select(x => new { x.WeighmentStatus, x.TareWeightQuintal })
+            .FirstOrDefaultAsync();
+        if (pendingTare == null)
+            return NotFound(new { message = $"SalePurchase ID {req.SalePurchaseId} does not exist." });
+        if (pendingTare.WeighmentStatus == "CANCELLED")
+            return Conflict(new { message = "Cancelled SalePurchase cannot be processed." });
+        if (pendingTare.WeighmentStatus != "TARE_PENDING_GROSS")
+            return Conflict(new { message = "Gross is already completed for this SalePurchase." });
+        var liveGross = WeightCalculator.KgToQuintal(liveKg);
+        if (liveGross < pendingTare.TareWeightQuintal)
+            return Conflict(new
+            {
+                message = $"Gross weight ({liveGross:F2} Qtl) cannot be less than the saved tare ({pendingTare.TareWeightQuintal:F2} Qtl). Put the loaded vehicle on the platform and wait for a stable gross reading."
+            });
         SalePurchase? record = null;
         decimal gross = 0;
         decimal finalWeight = 0;
@@ -197,7 +217,7 @@ public class SalePurchaseWeighmentController : ControllerBase
                 record.UpdatedAt = DateTime.UtcNow;
                 record.UpdatedBy = _current.UserId;
                 await _db.SaveChangesAsync();
-                await MarkPlatformClearRequiredAsync();
+                await MarkPlatformClearRequiredAsync(liveKg);
                 await _db.SaveChangesAsync();
             }, System.Data.IsolationLevel.Serializable);
         }
@@ -323,15 +343,18 @@ public class SalePurchaseWeighmentController : ControllerBase
         return null;
     }
 
-    private async Task MarkPlatformClearRequiredAsync()
+    private async Task MarkPlatformClearRequiredAsync(decimal savedWeightKg)
     {
+        // A saved zero is already an empty platform. Do not require another
+        // nonzero-to-zero transition before the next weighment.
+        var required = Math.Abs(savedWeightKg) > 0.01m ? "1" : "0";
         var setting = await _db.SystemSettings.FirstOrDefaultAsync(s => s.Key == "WeighbridgePlatformClearRequired");
         if (setting == null)
         {
-            setting = new CaneFactory.Domain.Entities.SystemSetting { Key = "WeighbridgePlatformClearRequired", Value = "1" };
+            setting = new CaneFactory.Domain.Entities.SystemSetting { Key = "WeighbridgePlatformClearRequired", Value = required };
             _db.SystemSettings.Add(setting);
         }
-        else setting.Value = "1";
+        else setting.Value = required;
     }
 
     private async Task<string?> MinimumWeightErrorAsync(decimal weightQuintal, bool applyGross)

@@ -55,6 +55,7 @@ builder.Services.AddScoped<ICurrentUser, CurrentUserService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<ISequenceGenerator, SequenceGenerator>();
 builder.Services.AddSingleton<ISecretProtector, SecretProtector>();
+builder.Services.AddSingleton<AndroidGatewayCredentialService>();
 builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddSingleton<ILiveWeightBroadcaster, SignalRWeightBroadcaster>();
 builder.Services.AddSingleton<WeighingService>();
@@ -138,6 +139,17 @@ builder.Services.AddRateLimiter(o =>
     o.AddPolicy("auth", ctx =>
         RateLimitPartition.GetFixedWindowLimiter(ctx.Connection.RemoteIpAddress?.ToString() ?? "anon",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1) }));
+    o.AddPolicy("android-gateway", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Request.Headers["X-Device-Id"].FirstOrDefault()
+                ?? ctx.Connection.RemoteIpAddress?.ToString()
+                ?? "android-gateway",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 120,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
 });
 
 // ---- CORS allowlist ----

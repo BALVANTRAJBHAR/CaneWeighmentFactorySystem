@@ -39,7 +39,8 @@ public class SmsLogController : ControllerBase
         var items = raw.Select(l => new
         {
             l.Id, l.EventCode, l.GrowerId, l.ReferenceId, l.MessageText, l.Status, l.AttemptCount,
-            l.SentAt, l.FailureReason, l.CreatedAt, l.NextAttemptAt,
+            l.ProviderType, l.DeviceId, l.SimSlot, l.PickedAt, l.SentAt, l.FailedAt,
+            l.ProviderMessageId, l.FailureReason, l.CreatedAt, l.NextAttemptAt,
             mobileMasked = SmsMask.Number(l.MobileNumber)
         });
         return Ok(new { items, totalCount = total, page, pageSize });

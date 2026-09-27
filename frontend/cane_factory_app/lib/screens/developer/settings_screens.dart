@@ -1109,13 +1109,20 @@ class _SmsTabState extends State<_SmsTab> {
       'recipientName',
       'recipientMobile',
       'testMobile',
-      'testMessage'
+      'testMessage',
+      'configurationName',
+      'androidDeviceId',
+      'androidDeviceApiKey',
+      'androidPollInterval'
     ])
       k: TextEditingController()
   };
   String method = 'POST';
   String requestContentType = 'application/json';
   String language = 'hi';
+  String providerType = 'HTTP';
+  String androidSimSlot = 'DEFAULT';
+  String androidConnectionStatus = 'NOT_PAIRED';
   bool enabled = false;
   bool canePurchaseSmsEnabled = true;
   bool canePaymentSmsEnabled = true;
@@ -1147,6 +1154,7 @@ class _SmsTabState extends State<_SmsTab> {
           : [];
       if (v != null) {
         c['providerName']!.text = v['providerName'] ?? '';
+        providerType = v['providerType'] ?? 'HTTP';
         c['apiBaseUrl']!.text = v['apiBaseUrl'] ?? '';
         c['authorizationHeader']!.text = v['authorizationHeader'] ?? '';
         c['senderId']!.text = v['senderId'] ?? '';
@@ -1161,6 +1169,12 @@ class _SmsTabState extends State<_SmsTab> {
         canePurchaseSmsEnabled = v['canePurchaseSmsEnabled'] != false;
         canePaymentSmsEnabled = v['canePaymentSmsEnabled'] != false;
         salePurchaseSmsEnabled = v['salePurchaseSmsEnabled'] != false;
+        c['configurationName']!.text = v['configurationName'] ?? '';
+        c['androidDeviceId']!.text = v['androidDeviceId'] ?? '';
+        c['androidPollInterval']!.text =
+            '${v['androidPollIntervalSeconds'] ?? 5}';
+        androidSimSlot = v['androidSimSlot'] ?? 'DEFAULT';
+        androidConnectionStatus = v['connectionStatus'] ?? 'NOT_PAIRED';
         info =
             'API Key: ${v['hasApiKey'] == true ? 'set (encrypted)' : 'not set'} • API Secret: ${v['hasApiSecret'] == true ? 'set (encrypted)' : 'not set'}';
       }
@@ -1169,6 +1183,7 @@ class _SmsTabState extends State<_SmsTab> {
 
   Future<void> _save() async {
     final res = await ApiClient.instance.dio.put('/api/config/sms', data: {
+      'providerType': providerType,
       'providerName': c['providerName']!.text,
       'apiBaseUrl': c['apiBaseUrl']!.text,
       'httpMethod': method,
@@ -1186,16 +1201,43 @@ class _SmsTabState extends State<_SmsTab> {
       'canePurchaseSmsEnabled': canePurchaseSmsEnabled,
       'canePaymentSmsEnabled': canePaymentSmsEnabled,
       'salePurchaseSmsEnabled': salePurchaseSmsEnabled,
+      'configurationName': c['configurationName']!.text.trim(),
+      'androidDeviceId': c['androidDeviceId']!.text.trim(),
+      'androidDeviceApiKey': c['androidDeviceApiKey']!.text.isEmpty
+          ? null
+          : c['androidDeviceApiKey']!.text,
+      'androidSimSlot': androidSimSlot,
+      'androidPollIntervalSeconds':
+          int.tryParse(c['androidPollInterval']!.text) ?? 5,
     });
     if (context.mounted) showResult(context, res);
+    if (res.statusCode == 200) {
+      c['androidDeviceApiKey']!.clear();
+    }
     _load();
+  }
+
+  Future<void> _registerAndroidDevice() async {
+    final res = await ApiClient.instance.dio
+        .post('/api/config/sms/android/register-device', data: {
+      'configurationName': c['configurationName']!.text.trim(),
+      'deviceId': c['androidDeviceId']!.text.trim(),
+      'apiKey': c['androidDeviceApiKey']!.text,
+    });
+    if (context.mounted) showResult(context, res);
   }
 
   Future<void> _testConnection() async {
     setState(() => testing = true);
     final res =
         await ApiClient.instance.dio.post('/api/config/sms/test-connection');
-    setState(() => testing = false);
+    setState(() {
+      testing = false;
+      if (res.statusCode == 200 && res.data is Map) {
+        androidConnectionStatus = res.data['status']?.toString() ??
+            androidConnectionStatus;
+      }
+    });
     if (context.mounted) showResult(context, res);
   }
 
@@ -1211,9 +1253,10 @@ class _SmsTabState extends State<_SmsTab> {
     });
     setState(() => testing = false);
     if (!context.mounted) return;
-    final ok = res.statusCode == 200 && res.data['success'] == true;
+    final ok = (res.statusCode == 200 || res.statusCode == 202) &&
+        res.data['success'] == true;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(res.statusCode == 200
+        content: Text((res.statusCode == 200 || res.statusCode == 202)
             ? res.data['message']
             : ApiClient.errorMessage(res)),
         backgroundColor: ok
@@ -1223,9 +1266,13 @@ class _SmsTabState extends State<_SmsTab> {
 
   Future<void> _saveRecipient({Map? existing}) async {
     final name = TextEditingController(
-        text: existing == null ? c['recipientName']!.text : existing['recipientName']?.toString() ?? '');
+        text: existing == null
+            ? c['recipientName']!.text
+            : existing['recipientName']?.toString() ?? '');
     final mobile = TextEditingController(
-        text: existing == null ? c['recipientMobile']!.text : existing['mobileNumber']?.toString() ?? '');
+        text: existing == null
+            ? c['recipientMobile']!.text
+            : existing['mobileNumber']?.toString() ?? '');
     var active = existing?['status'] != false;
     var cane = existing?['receiveCanePurchase'] != false;
     var payment = existing?['receivePayment'] != false;
@@ -1234,34 +1281,68 @@ class _SmsTabState extends State<_SmsTab> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setD) => AlertDialog(
-          title: Text(existing == null ? 'Add SMS Recipient' : 'Edit SMS Recipient'),
-          content: SizedBox(width: 440, child: SingleChildScrollView(child: Column(
-            mainAxisSize: MainAxisSize.min, children: [
-              TextField(controller: name, decoration: const InputDecoration(labelText: 'Name / Owner Name')),
-              const SizedBox(height: 10),
-              TextField(controller: mobile, keyboardType: TextInputType.phone,
-                  maxLength: 10, decoration: const InputDecoration(labelText: '10-digit Mobile Number')),
-              SwitchListTile(title: const Text('Active'), value: active, onChanged: (v) => setD(() => active = v)),
-              SwitchListTile(title: const Text('Cane Purchase final SMS'), value: cane, onChanged: (v) => setD(() => cane = v)),
-              SwitchListTile(title: const Text('Grower payment SMS'), value: payment, onChanged: (v) => setD(() => payment = v)),
-              SwitchListTile(title: const Text('SalePurchase final SMS'), value: sale, onChanged: (v) => setD(() => sale = v)),
-            ],
-          ))),
+          title: Text(
+              existing == null ? 'Add SMS Recipient' : 'Edit SMS Recipient'),
+          content: SizedBox(
+              width: 440,
+              child: SingleChildScrollView(
+                  child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                      controller: name,
+                      decoration: const InputDecoration(
+                          labelText: 'Name / Owner Name')),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: mobile,
+                      keyboardType: TextInputType.phone,
+                      maxLength: 10,
+                      decoration: const InputDecoration(
+                          labelText: '10-digit Mobile Number')),
+                  SwitchListTile(
+                      title: const Text('Active'),
+                      value: active,
+                      onChanged: (v) => setD(() => active = v)),
+                  SwitchListTile(
+                      title: const Text('Cane Purchase final SMS'),
+                      value: cane,
+                      onChanged: (v) => setD(() => cane = v)),
+                  SwitchListTile(
+                      title: const Text('Grower payment SMS'),
+                      value: payment,
+                      onChanged: (v) => setD(() => payment = v)),
+                  SwitchListTile(
+                      title: const Text('SalePurchase final SMS'),
+                      value: sale,
+                      onChanged: (v) => setD(() => sale = v)),
+                ],
+              ))),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Save')),
           ],
         ),
       ),
     );
     if (save != true) return;
     final data = {
-      'recipientName': name.text.trim(), 'mobileNumber': mobile.text.trim(), 'status': active,
-      'receiveCanePurchase': cane, 'receivePayment': payment, 'receiveSalePurchase': sale,
+      'recipientName': name.text.trim(),
+      'mobileNumber': mobile.text.trim(),
+      'status': active,
+      'receiveCanePurchase': cane,
+      'receivePayment': payment,
+      'receiveSalePurchase': sale,
     };
     final res = existing == null
-        ? await ApiClient.instance.dio.post('/api/config/sms/recipients', data: data)
-        : await ApiClient.instance.dio.put('/api/config/sms/recipients/${existing['id']}', data: data);
+        ? await ApiClient.instance.dio
+            .post('/api/config/sms/recipients', data: data)
+        : await ApiClient.instance.dio
+            .put('/api/config/sms/recipients/${existing['id']}', data: data);
     if (!mounted) return;
     showResult(context, res);
     if (res.statusCode == 200) {
@@ -1276,15 +1357,21 @@ class _SmsTabState extends State<_SmsTab> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Remove SMS Recipient?'),
-        content: Text('${recipient['recipientName']} will no longer receive automatic SMS alerts.'),
+        content: Text(
+            '${recipient['recipientName']} will no longer receive automatic SMS alerts.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton.tonal(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton.tonal(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Remove')),
         ],
       ),
     );
     if (confirmed != true) return;
-    final res = await ApiClient.instance.dio.delete('/api/config/sms/recipients/${recipient['id']}');
+    final res = await ApiClient.instance.dio
+        .delete('/api/config/sms/recipients/${recipient['id']}');
     if (mounted) showResult(context, res);
     if (res.statusCode == 200) _load();
   }
@@ -1353,137 +1440,230 @@ class _SmsTabState extends State<_SmsTab> {
   Widget build(BuildContext context) {
     return ListView(padding: const EdgeInsets.all(16), children: [
       const Text(
-          'Generic HTTP SMS provider - works with ANY vendor by configuring the request/response '
-          'templates below. No provider is hard-coded. Secrets are encrypted server-side and never sent to any client.',
+          'Choose a normal HTTP SMS provider or route the same central SMS queue through a paired Android phone SIM. Secrets are never returned after saving.',
           style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
       if (info != null)
         Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(info!, style: const TextStyle(fontSize: 12))),
       const SizedBox(height: 10),
-      LayoutBuilder(builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        return Wrap(spacing: 14, runSpacing: 14, children: [
-          SizedBox(
-              width: width < 240 ? width : 240,
-              child: TextField(
-                  controller: c['providerName'],
-                  decoration: const InputDecoration(
-                      labelText: 'Provider Name',
-                      hintText: 'Example: your local SMS panel name'))),
-          SizedBox(
-              width: width < 340 ? width : 340,
-              child: TextField(
-                  controller: c['apiBaseUrl'],
-                  decoration: const InputDecoration(
-                      labelText: 'API Base URL',
-                      hintText:
-                          'https://api.provider.com/send?key={ApiKey}&to={Mobile}&msg={Message}'))),
-          SizedBox(
-              width: width < 140 ? width : 140,
-              child: DropdownButtonFormField<String>(
-                  value: method,
-                  isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'HTTP Method'),
-                  items: const [
-                    DropdownMenuItem(
-                        value: 'POST',
-                        child: Text('POST', overflow: TextOverflow.ellipsis)),
-                    DropdownMenuItem(
-                        value: 'GET',
-                        child: Text('GET', overflow: TextOverflow.ellipsis))
-                  ],
-                  onChanged: (v) => setState(() => method = v!))),
-          SizedBox(
-              width: width < 140 ? width : 140,
-              child: DropdownButtonFormField<String>(
-                  value: language,
-                  isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Language'),
-                  items: const [
-                    DropdownMenuItem(
-                        value: 'hi',
-                        child: Text('Hindi (default)',
-                            overflow: TextOverflow.ellipsis)),
-                    DropdownMenuItem(
-                        value: 'en',
-                        child: Text('English', overflow: TextOverflow.ellipsis))
-                  ],
-                  onChanged: (v) => setState(() => language = v!))),
-          SizedBox(
-              width: width < 240 ? width : 240,
-              child: TextField(
-                  controller: c['apiKey'],
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                      labelText: 'API Key',
-                      hintText: 'Leave blank to keep existing'))),
-          SizedBox(
-              width: width < 240 ? width : 240,
-              child: TextField(
-                  controller: c['apiSecret'],
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                      labelText: 'API Secret',
-                      hintText: 'Leave blank to keep existing'))),
-          SizedBox(
-              width: width < 240 ? width : 240,
-              child: TextField(
-                  controller: c['authorizationHeader'],
-                  decoration: const InputDecoration(
-                      labelText: 'Authorization Header',
-                      hintText: 'Example: Bearer {ApiKey}'))),
-          SizedBox(
-              width: width < 180 ? width : 180,
-              child: TextField(
-                  controller: c['senderId'],
-                  decoration: const InputDecoration(
-                      labelText: 'Sender ID', hintText: 'Example: FCTORY'))),
-          SizedBox(
-              width: width < 240 ? width : 240,
-              child: TextField(
-                  controller: c['entityId'],
-                  decoration: const InputDecoration(
-                      labelText: 'DLT Entity ID', hintText: 'Where required'))),
-          SizedBox(
-              width: width < 200 ? width : 200,
-              child: TextField(
-                  controller: TextEditingController(text: requestContentType),
-                  decoration:
-                      const InputDecoration(labelText: 'Request Content-Type'),
-                  onChanged: (v) => requestContentType = v)),
-        ]);
-      }),
-      const SizedBox(height: 10),
-      TextField(
-          controller: c['requestBodyTemplate'],
-          maxLines: 3,
-          decoration: const InputDecoration(
-              labelText: 'Request Body Template (POST only)',
-              hintText:
-                  '{"to":"{Mobile}","text":"{Message}","sender":"{SenderId}","key":"{ApiKey}"}')),
-      const SizedBox(height: 10),
-      LayoutBuilder(builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        return Wrap(spacing: 14, runSpacing: 14, children: [
-          SizedBox(
-              width: width < 240 ? width : 240,
-              child: TextField(
-                  controller: c['responseSuccessPath'],
-                  decoration: const InputDecoration(
-                      labelText: 'Response Success JSON Field',
-                      hintText: 'Example: status'))),
-          SizedBox(
-              width: width < 240 ? width : 240,
-              child: TextField(
-                  controller: c['responseSuccessValue'],
-                  decoration: const InputDecoration(
-                      labelText: 'Expected Success Value',
-                      hintText: 'Example: success'))),
-        ]);
-      }),
+      SizedBox(
+        width: 280,
+        child: DropdownButtonFormField<String>(
+          value: providerType,
+          decoration: const InputDecoration(labelText: 'Provider Type'),
+          items: const [
+            DropdownMenuItem(value: 'HTTP', child: Text('HTTP Provider')),
+            DropdownMenuItem(value: 'ANDROID_SIM', child: Text('Android SIM')),
+          ],
+          onChanged: (v) => setState(() => providerType = v ?? 'HTTP'),
+        ),
+      ),
+      const SizedBox(height: 14),
+      if (providerType == 'ANDROID_SIM')
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Gateway status: $androidConnectionStatus',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: androidConnectionStatus == 'CONNECTED'
+                          ? Colors.green
+                          : Colors.orange)),
+              const SizedBox(height: 12),
+              LayoutBuilder(builder: (context, constraints) {
+                final width = constraints.maxWidth;
+                return Wrap(spacing: 14, runSpacing: 14, children: [
+                  SizedBox(
+                      width: width < 240 ? width : 240,
+                      child: TextField(
+                          controller: c['configurationName'],
+                          decoration: const InputDecoration(
+                              labelText: 'Configuration Name'))),
+                  SizedBox(
+                      width: width < 240 ? width : 240,
+                      child: TextField(
+                          controller: c['androidDeviceId'],
+                          decoration:
+                              const InputDecoration(labelText: 'Device ID'))),
+                  SizedBox(
+                      width: width < 260 ? width : 260,
+                      child: TextField(
+                          controller: c['androidDeviceApiKey'],
+                          obscureText: true,
+                          decoration: const InputDecoration(
+                              labelText: 'Device API Key / Secret',
+                              hintText: 'Leave blank to keep verified key'))),
+                  SizedBox(
+                      width: width < 180 ? width : 180,
+                      child: DropdownButtonFormField<String>(
+                          value: androidSimSlot,
+                          decoration:
+                              const InputDecoration(labelText: 'SIM Slot'),
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'DEFAULT', child: Text('Default SIM')),
+                            DropdownMenuItem(
+                                value: 'SIM1', child: Text('SIM 1')),
+                            DropdownMenuItem(
+                                value: 'SIM2', child: Text('SIM 2')),
+                          ],
+                          onChanged: (v) =>
+                              setState(() => androidSimSlot = v!))),
+                  SizedBox(
+                      width: width < 220 ? width : 220,
+                      child: TextField(
+                          controller: c['androidPollInterval'],
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                              labelText: 'Poll Interval Seconds'))),
+                ]);
+              }),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                  onPressed: _registerAndroidDevice,
+                  icon: const Icon(Icons.phonelink_setup),
+                  label: const Text('Register / Rotate Device Key')),
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                    'Register once with the key, then save. The server stores only a salted hash; the phone stores the key in Android Keystore.',
+                    style: TextStyle(fontSize: 11)),
+              ),
+            ]),
+          ),
+        ),
+      if (providerType == 'HTTP')
+        LayoutBuilder(builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          return Wrap(spacing: 14, runSpacing: 14, children: [
+            SizedBox(
+                width: width < 240 ? width : 240,
+                child: TextField(
+                    controller: c['providerName'],
+                    decoration: const InputDecoration(
+                        labelText: 'Provider Name',
+                        hintText: 'Example: your local SMS panel name'))),
+            SizedBox(
+                width: width < 340 ? width : 340,
+                child: TextField(
+                    controller: c['apiBaseUrl'],
+                    decoration: const InputDecoration(
+                        labelText: 'API Base URL',
+                        hintText:
+                            'https://api.provider.com/send?key={ApiKey}&to={Mobile}&msg={Message}'))),
+            SizedBox(
+                width: width < 140 ? width : 140,
+                child: DropdownButtonFormField<String>(
+                    value: method,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'HTTP Method'),
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'POST',
+                          child: Text('POST', overflow: TextOverflow.ellipsis)),
+                      DropdownMenuItem(
+                          value: 'GET',
+                          child: Text('GET', overflow: TextOverflow.ellipsis))
+                    ],
+                    onChanged: (v) => setState(() => method = v!))),
+            SizedBox(
+                width: width < 140 ? width : 140,
+                child: DropdownButtonFormField<String>(
+                    value: language,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Language'),
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'hi',
+                          child: Text('Hindi (default)',
+                              overflow: TextOverflow.ellipsis)),
+                      DropdownMenuItem(
+                          value: 'en',
+                          child:
+                              Text('English', overflow: TextOverflow.ellipsis))
+                    ],
+                    onChanged: (v) => setState(() => language = v!))),
+            SizedBox(
+                width: width < 240 ? width : 240,
+                child: TextField(
+                    controller: c['apiKey'],
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                        labelText: 'API Key',
+                        hintText: 'Leave blank to keep existing'))),
+            SizedBox(
+                width: width < 240 ? width : 240,
+                child: TextField(
+                    controller: c['apiSecret'],
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                        labelText: 'API Secret',
+                        hintText: 'Leave blank to keep existing'))),
+            SizedBox(
+                width: width < 240 ? width : 240,
+                child: TextField(
+                    controller: c['authorizationHeader'],
+                    decoration: const InputDecoration(
+                        labelText: 'Authorization Header',
+                        hintText: 'Example: Bearer {ApiKey}'))),
+            SizedBox(
+                width: width < 180 ? width : 180,
+                child: TextField(
+                    controller: c['senderId'],
+                    decoration: const InputDecoration(
+                        labelText: 'Sender ID', hintText: 'Example: FCTORY'))),
+            SizedBox(
+                width: width < 240 ? width : 240,
+                child: TextField(
+                    controller: c['entityId'],
+                    decoration: const InputDecoration(
+                        labelText: 'DLT Entity ID',
+                        hintText: 'Where required'))),
+            SizedBox(
+                width: width < 200 ? width : 200,
+                child: TextField(
+                    controller: TextEditingController(text: requestContentType),
+                    decoration: const InputDecoration(
+                        labelText: 'Request Content-Type'),
+                    onChanged: (v) => requestContentType = v)),
+          ]);
+        }),
+      if (providerType == 'HTTP') const SizedBox(height: 10),
+      if (providerType == 'HTTP')
+        TextField(
+            controller: c['requestBodyTemplate'],
+            maxLines: 3,
+            decoration: const InputDecoration(
+                labelText: 'Request Body Template (POST only)',
+                hintText:
+                    '{"to":"{Mobile}","text":"{Message}","sender":"{SenderId}","key":"{ApiKey}"}')),
+      if (providerType == 'HTTP') const SizedBox(height: 10),
+      if (providerType == 'HTTP')
+        LayoutBuilder(builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          return Wrap(spacing: 14, runSpacing: 14, children: [
+            SizedBox(
+                width: width < 240 ? width : 240,
+                child: TextField(
+                    controller: c['responseSuccessPath'],
+                    decoration: const InputDecoration(
+                        labelText: 'Response Success JSON Field',
+                        hintText: 'Example: status'))),
+            SizedBox(
+                width: width < 240 ? width : 240,
+                child: TextField(
+                    controller: c['responseSuccessValue'],
+                    decoration: const InputDecoration(
+                        labelText: 'Expected Success Value',
+                        hintText: 'Example: success'))),
+          ]);
+        }),
       const SizedBox(height: 6),
-      const Text('SMS Event Controls', style: TextStyle(fontWeight: FontWeight.w700)),
+      const Text('SMS Event Controls',
+          style: TextStyle(fontWeight: FontWeight.w700)),
       SwitchListTile(
           title: const Text('SMS Master Enabled'),
           subtitle: const Text('When OFF, no queued or new SMS is sent.'),
@@ -1491,19 +1671,28 @@ class _SmsTabState extends State<_SmsTab> {
           onChanged: (v) => setState(() => enabled = v)),
       SwitchListTile(
           title: const Text('Cane Purchase final SMS'),
-          subtitle: const Text('Grower + active owner recipients selected for cane purchase.'),
+          subtitle: const Text(
+              'Grower + active owner recipients selected for cane purchase.'),
           value: canePurchaseSmsEnabled,
-          onChanged: enabled ? (v) => setState(() => canePurchaseSmsEnabled = v) : null),
+          onChanged: enabled
+              ? (v) => setState(() => canePurchaseSmsEnabled = v)
+              : null),
       SwitchListTile(
           title: const Text('Grower payment SMS'),
-          subtitle: const Text('Grower + active owner recipients selected for payment.'),
+          subtitle: const Text(
+              'Grower + active owner recipients selected for payment.'),
           value: canePaymentSmsEnabled,
-          onChanged: enabled ? (v) => setState(() => canePaymentSmsEnabled = v) : null),
+          onChanged: enabled
+              ? (v) => setState(() => canePaymentSmsEnabled = v)
+              : null),
       SwitchListTile(
           title: const Text('SalePurchase final SMS'),
-          subtitle: const Text('Selected party + active owner recipients selected for SalePurchase.'),
+          subtitle: const Text(
+              'Selected party + active owner recipients selected for SalePurchase.'),
           value: salePurchaseSmsEnabled,
-          onChanged: enabled ? (v) => setState(() => salePurchaseSmsEnabled = v) : null),
+          onChanged: enabled
+              ? (v) => setState(() => salePurchaseSmsEnabled = v)
+              : null),
       Wrap(spacing: 10, children: [
         FilledButton(
             onPressed: _save, child: const Text('Save SMS Configuration')),
@@ -1540,22 +1729,43 @@ class _SmsTabState extends State<_SmsTab> {
       }),
       const Divider(height: 32),
       Text('Owner / Operational SMS Recipients',
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+          style: Theme.of(context)
+              .textTheme
+              .titleSmall
+              ?.copyWith(fontWeight: FontWeight.w700)),
       const Padding(
         padding: EdgeInsets.only(top: 4, bottom: 8),
-        child: Text('Add multiple numbers and choose exactly which alerts each active recipient receives.',
+        child: Text(
+            'Add multiple numbers and choose exactly which alerts each active recipient receives.',
             style: TextStyle(fontSize: 12)),
       ),
-      Wrap(spacing: 12, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
-        SizedBox(width: 220, child: TextField(controller: c['recipientName'],
-            decoration: const InputDecoration(labelText: 'Name / Owner Name'))),
-        SizedBox(width: 180, child: TextField(controller: c['recipientMobile'], keyboardType: TextInputType.phone,
-            maxLength: 10, decoration: const InputDecoration(labelText: 'Mobile Number'))),
-        FilledButton.tonal(onPressed: () => _saveRecipient(), child: const Text('Add Recipient')),
-      ]),
+      Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            SizedBox(
+                width: 220,
+                child: TextField(
+                    controller: c['recipientName'],
+                    decoration:
+                        const InputDecoration(labelText: 'Name / Owner Name'))),
+            SizedBox(
+                width: 180,
+                child: TextField(
+                    controller: c['recipientMobile'],
+                    keyboardType: TextInputType.phone,
+                    maxLength: 10,
+                    decoration:
+                        const InputDecoration(labelText: 'Mobile Number'))),
+            FilledButton.tonal(
+                onPressed: () => _saveRecipient(),
+                child: const Text('Add Recipient')),
+          ]),
       const SizedBox(height: 8),
       if (recipients.isEmpty)
-        const Text('No owner/operational recipient configured yet.', style: TextStyle(fontSize: 12))
+        const Text('No owner/operational recipient configured yet.',
+            style: TextStyle(fontSize: 12))
       else
         for (final raw in recipients)
           Builder(builder: (_) {
@@ -1565,12 +1775,21 @@ class _SmsTabState extends State<_SmsTab> {
               if (recipient['receivePayment'] == true) 'Payment',
               if (recipient['receiveSalePurchase'] == true) 'SalePurchase',
             ].join(' • ');
-            return Card(child: ListTile(
-              title: Text('${recipient['recipientName']}  •  ${recipient['mobileNumber']}'),
-              subtitle: Text('${recipient['status'] == true ? 'Active' : 'Inactive'}${events.isEmpty ? '' : '  |  $events'}'),
+            return Card(
+                child: ListTile(
+              title: Text(
+                  '${recipient['recipientName']}  •  ${recipient['mobileNumber']}'),
+              subtitle: Text(
+                  '${recipient['status'] == true ? 'Active' : 'Inactive'}${events.isEmpty ? '' : '  |  $events'}'),
               trailing: Wrap(spacing: 2, children: [
-                IconButton(icon: const Icon(Icons.edit_outlined), tooltip: 'Edit', onPressed: () => _saveRecipient(existing: recipient)),
-                IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Remove', onPressed: () => _deleteRecipient(recipient)),
+                IconButton(
+                    icon: const Icon(Icons.edit_outlined),
+                    tooltip: 'Edit',
+                    onPressed: () => _saveRecipient(existing: recipient)),
+                IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: 'Remove',
+                    onPressed: () => _deleteRecipient(recipient)),
               ]),
             ));
           }),

@@ -58,6 +58,7 @@ public class AppDbContext : DbContext
     public DbSet<SmsTemplate> SmsTemplates => Set<SmsTemplate>();
     public DbSet<SmsRecipient> SmsRecipients => Set<SmsRecipient>();
     public DbSet<SmsLog> SmsLogs => Set<SmsLog>();
+    public DbSet<AndroidSmsGatewayDevice> AndroidSmsGatewayDevices => Set<AndroidSmsGatewayDevice>();
     public DbSet<BackupConfig> BackupConfigs => Set<BackupConfig>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<NumberSequence> NumberSequences => Set<NumberSequence>();
@@ -300,6 +301,27 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.Status);
             e.HasIndex(x => x.GrowerId);
             e.HasIndex(x => x.PartyId);
+            e.HasIndex(x => new { x.ProviderType, x.DeviceId, x.Status });
+            e.Property(x => x.ProviderType).HasMaxLength(24).HasDefaultValue("HTTP");
+            e.Property(x => x.DeviceId).HasMaxLength(100);
+            e.Property(x => x.SimSlot).HasMaxLength(16);
+        });
+        b.Entity<SmsConfig>(e =>
+        {
+            e.Property(x => x.ProviderType).HasMaxLength(24).HasDefaultValue("HTTP");
+            e.Property(x => x.AndroidDeviceId).HasMaxLength(100);
+            e.Property(x => x.AndroidSimSlot).HasMaxLength(16).HasDefaultValue("DEFAULT");
+            e.Property(x => x.AndroidPollIntervalSeconds).HasDefaultValue(5);
+            e.Property(x => x.AndroidConnectionStatus).HasMaxLength(32).HasDefaultValue("NOT_PAIRED");
+        });
+        b.Entity<AndroidSmsGatewayDevice>(e =>
+        {
+            e.HasIndex(x => x.DeviceId).IsUnique().HasFilter("[IsDeleted] = 0");
+            e.Property(x => x.DeviceId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ConfigurationName).HasMaxLength(150).IsRequired();
+            e.Property(x => x.ApiKeyHash).HasMaxLength(256).IsRequired();
+            e.Property(x => x.ApiKeySalt).HasMaxLength(128).IsRequired();
+            e.Property(x => x.SimSlot).HasMaxLength(16).HasDefaultValue("DEFAULT");
         });
 
         b.Entity<WeightRuleConfig>(e =>

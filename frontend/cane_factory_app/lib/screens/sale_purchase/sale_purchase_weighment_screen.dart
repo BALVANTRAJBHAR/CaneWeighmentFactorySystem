@@ -348,11 +348,13 @@ class _SalePurchaseWeighmentScreenState
                     if (_cameras.isNotEmpty) ...[
                       const SizedBox(width: 8),
                       Expanded(
-                          flex: 1,
+                          flex: 2,
                           child: SizedBox(
-                              height: 235,
-                              child:
-                                  CameraLivePreviewPanel(cameras: _cameras))),
+                              height: 520,
+                              child: CameraLivePreviewPanel(
+                                  cameras: _cameras,
+                                  compact: true,
+                                  squareCards: true))),
                     ],
                   ]))),
               const SizedBox(height: 8),
@@ -492,8 +494,6 @@ class _SalePurchaseWeighmentScreenState
                         const InputDecoration(labelText: 'Remark (optional)'))),
             if (_itemId != null) ...[
               _calculationBox('Item Rate (automatic)', _rateText),
-              _calculationBox(
-                  'Amount (after Final Gross)', 'Calculated automatically'),
             ],
             FilledButton.icon(
                 onPressed: _saving ? null : _saveTare,
@@ -529,7 +529,6 @@ class _SalePurchaseWeighmentScreenState
                   label: const Text('Lookup')),
               if (_selected != null) ...[
                 _calculationBox('Item Rate (automatic)', _rateText),
-                _calculationBox('Amount (automatic)', _amountText(finalWeight)),
               ],
               FilledButton.icon(
                   onPressed: _saving ? null : _saveGross,
@@ -555,20 +554,12 @@ class _SalePurchaseWeighmentScreenState
                 style: const TextStyle(fontWeight: FontWeight.bold)),
             Text('Rate: $_rateText / Qtl',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
-            Text('Amount: ${_amountText(finalWeight)}',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
           ])
       ]);
 
   String get _rateText {
     final rate = (_itemRate?['rate'] as num?)?.toDouble();
     return rate == null ? 'Configure Sale Rate Master' : rate.toStringAsFixed(2);
-  }
-
-  String _amountText(double? finalWeight) {
-    final rate = (_itemRate?['rate'] as num?)?.toDouble();
-    if (rate == null || finalWeight == null) return '—';
-    return (finalWeight * rate).toStringAsFixed(2);
   }
 
   Widget _calculationBox(String label, String value) => SizedBox(
@@ -578,23 +569,81 @@ class _SalePurchaseWeighmentScreenState
           child: Text(value,
               style: const TextStyle(fontWeight: FontWeight.w700))));
 
-  Widget _pendingGrid() => _pending.isEmpty
-      ? const Center(
-          child: Text('No SalePurchase tare transactions pending gross.'))
-      : ListView.builder(
-          itemCount: _pending.length,
-          itemBuilder: (_, i) {
-            final row = _pending[i];
-            return GestureDetector(
-                onDoubleTap: () => _select(row['salePurchaseId'] as int),
-                child: ListTile(
-                    dense: true,
-                    leading: Text('${row['salePurchaseId']}',
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    title: Text(
-                        '${row['item']} • ${row['party']} • ${row['vehicleNumber']}'),
-                    subtitle: Text(
-                        'Tare ${row['tareWeightQuintal']} Qtl • ${row['tareOperator']}'),
-                    trailing: Chip(label: Text(row['status'] ?? ''))));
-          });
+  Widget _pendingGrid() {
+    final heading = _gross
+        ? 'Pending Tare — click a row to select for Gross'
+        : 'Pending Tare (Gross pending)';
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+        child: Row(children: [
+          Text(heading,
+              style:
+                  const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+          const Spacer(),
+          Text('${_pending.length} pending',
+              style: const TextStyle(fontSize: 12)),
+          IconButton(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh, size: 18),
+              tooltip: 'Refresh pending tare list'),
+        ]),
+      ),
+      Expanded(
+        child: _pending.isEmpty
+            ? const Center(
+                child: Text('No SalePurchase tare transactions pending gross.',
+                    style: TextStyle(fontSize: 12)))
+            : SingleChildScrollView(
+                scrollDirection: Axis.vertical,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    showCheckboxColumn: false,
+                    headingRowHeight: 34,
+                    dataRowMinHeight: 30,
+                    dataRowMaxHeight: 36,
+                    columns: const [
+                      DataColumn(label: Text('Sale ID')),
+                      DataColumn(label: Text('Item')),
+                      DataColumn(label: Text('Party')),
+                      DataColumn(label: Text('Vehicle Type')),
+                      DataColumn(label: Text('Vehicle No')),
+                      DataColumn(label: Text('Driver')),
+                      DataColumn(label: Text('Tare Qtl')),
+                      DataColumn(label: Text('Tare Time')),
+                      DataColumn(label: Text('By')),
+                    ],
+                    rows: [
+                      for (final row in _pending)
+                        DataRow(
+                          onSelectChanged: _gross
+                              ? (_) => _select(row['salePurchaseId'] as int)
+                              : null,
+                          cells: [
+                            DataCell(Text('${row['salePurchaseId']}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700))),
+                            DataCell(Text('${row['item']}')),
+                            DataCell(Text('${row['party']}')),
+                            DataCell(Text('${row['vehicleType']}')),
+                            DataCell(Text('${row['vehicleNumber']}')),
+                            DataCell(Text('${row['driverName']}')),
+                            DataCell(Text(
+                                ((row['tareWeightQuintal'] as num?) ?? 0)
+                                    .toStringAsFixed(2))),
+                            DataCell(Text('${row['tareDateTime'] ?? ''}'
+                                .replaceFirst('T', ' ')
+                                .split('.')
+                                .first)),
+                            DataCell(Text('${row['tareOperator'] ?? ''}')),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+      ),
+    ]);
+  }
 }

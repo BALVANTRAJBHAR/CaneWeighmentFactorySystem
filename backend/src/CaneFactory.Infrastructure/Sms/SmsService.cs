@@ -43,6 +43,9 @@ public class SmsService : ISmsService
                 MobileNumber = mobileNumber.Trim(),
                 ReferenceId = referenceId,
                 MessageText = message.Trim(),
+                ProviderType = cfg.ProviderType,
+                DeviceId = cfg.ProviderType == "ANDROID_SIM" ? cfg.AndroidDeviceId : null,
+                SimSlot = cfg.ProviderType == "ANDROID_SIM" ? cfg.AndroidSimSlot : null,
                 Status = "QUEUED",
                 AttemptCount = 0,
                 CreatedAt = DateTime.UtcNow
@@ -84,6 +87,9 @@ public class SmsService : ISmsService
                 ReferenceId = referenceId,
                 TemplateId = template.Id,
                 MessageText = message,
+                ProviderType = cfg.ProviderType,
+                DeviceId = cfg.ProviderType == "ANDROID_SIM" ? cfg.AndroidDeviceId : null,
+                SimSlot = cfg.ProviderType == "ANDROID_SIM" ? cfg.AndroidSimSlot : null,
                 Status = "QUEUED",
                 AttemptCount = 0,
                 CreatedAt = DateTime.UtcNow
