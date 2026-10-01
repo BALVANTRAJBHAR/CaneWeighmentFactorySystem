@@ -12,7 +12,7 @@ class ApiClient {
   // Dart defines work on Windows, Android, iOS and Web. The local fallback is deliberately
   // generic for same-PC development only; production/LAN builds must pass API_BASE_URL.
   static const String baseUrl = String.fromEnvironment('API_BASE_URL',
-      defaultValue: 'http://localhost:5000');
+      defaultValue: 'http://169.254.48.150:5000');
   static Uri? get baseUri => Uri.tryParse(baseUrl);
   static String? get configurationError {
     final uri = baseUri;

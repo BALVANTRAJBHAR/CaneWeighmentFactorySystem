@@ -13,6 +13,7 @@ using CaneFactory.Infrastructure.Printing;
 using CaneFactory.Infrastructure.Sms;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -129,6 +130,19 @@ builder.Services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProv
 builder.Services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 builder.Services.AddAuthorization();
 
+// Tailscale Serve/Funnel terminates TLS on this machine, then proxies to the
+// API over loopback HTTP. Trust forwarded scheme/IP headers only from that
+// local proxy so Request.IsHttps remains reliable for the Android SMS gateway.
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.ForwardLimit = 1;
+    o.KnownNetworks.Clear();
+    o.KnownProxies.Clear();
+    o.KnownProxies.Add(System.Net.IPAddress.Loopback);
+    o.KnownProxies.Add(System.Net.IPAddress.IPv6Loopback);
+});
+
 // ---- Rate limiting & brute-force protection ----
 builder.Services.AddRateLimiter(o =>
 {
@@ -189,6 +203,9 @@ builder.Services.AddSwaggerGen(o =>
 });
 
 var app = builder.Build();
+
+// Must run before HTTPS checks, rate limiting, authentication and logging.
+app.UseForwardedHeaders();
 
 // ---- Security headers ----
 app.Use(async (ctx, next) =>
