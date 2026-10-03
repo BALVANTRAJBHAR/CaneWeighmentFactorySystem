@@ -72,17 +72,20 @@ public class GrowersController : ControllerBase
         if (!string.IsNullOrWhiteSpace(search))
         {
             var s = search.Trim();
+            var isGrowerId = int.TryParse(s, out var parsedGrowerId);
             q = searchBy switch
             {
                 "father" => q.Where(g => g.FatherName.Contains(s)),
                 "village" => q.Where(g => g.Village.VillageName.Contains(s)),
+                "id" => int.TryParse(s, out var growerId) ? q.Where(g => g.Id == growerId) : q.Where(g => false),
                 "code" => q.Where(g => g.GrowerCode.Contains(s)),
                 "mobile" => q.Where(g => g.Mobile.Contains(s)),
-                _ => q.Where(g => g.GrowerName.Contains(s) || g.FatherName.Contains(s) || g.Village.VillageName.Contains(s))
+                _ => q.Where(g => (isGrowerId && g.Id == parsedGrowerId) || g.GrowerName.Contains(s) ||
+                    g.FatherName.Contains(s) || g.Village.VillageName.Contains(s))
             };
         }
         var total = await q.CountAsync();
-        var items = (await q.OrderBy(g => g.GrowerCode).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync())
+        var items = (await q.OrderBy(g => g.Id).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync())
             .Select(g => ToDto(g, g.Village.VillageName, g.Bank?.BankName));
         return Ok(new { items, totalCount = total, page, pageSize });
     }
@@ -95,6 +98,24 @@ public class GrowersController : ControllerBase
             .FirstOrDefaultAsync(x => x.GrowerCode == code.Trim() && !x.IsDeleted);
         if (g == null) return NotFound(new { message = $"No grower found with code '{code}'. Example: 101/1" });
         if (!g.Status) return Conflict(new { message = $"Grower '{g.GrowerName}' ({g.GrowerCode}) is INACTIVE." });
+        return Ok(new GrowerLookupDto
+        {
+            GrowerId = g.Id, GrowerCode = g.GrowerCode, GrowerName = g.GrowerName, FatherName = g.FatherName,
+            VillageId = g.VillageId, VillageName = g.Village.VillageName,
+            BankName = g.Bank?.BankName, AccountMasked = Mask(g.BankAccountNumber), Mobile = g.Mobile
+        });
+    }
+
+    [HttpGet("by-id")]
+    public async Task<IActionResult> ById([FromQuery] int id)
+    {
+        if (Deny("View") is { } d) return d;
+        if (id is < 100001 or > 999999)
+            return BadRequest(new { message = "Grower ID must be a six-digit number. Example: 100001" });
+        var g = await _db.Growers.Include(x => x.Village).Include(x => x.Bank)
+            .FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
+        if (g == null) return NotFound(new { message = $"No grower found with ID '{id}'." });
+        if (!g.Status) return Conflict(new { message = $"Grower '{g.GrowerName}' (ID {g.Id}) is INACTIVE." });
         return Ok(new GrowerLookupDto
         {
             GrowerId = g.Id, GrowerCode = g.GrowerCode, GrowerName = g.GrowerName, FatherName = g.FatherName,
@@ -129,7 +150,9 @@ public class GrowersController : ControllerBase
         {
             await _db.ExecuteInTransactionAsync(async () =>
             {
-                var growerId = (int)await _seq.NextAsync("GrowerId", 1);
+                var growerId = (int)await _seq.NextAsync("GrowerId", 100001);
+                if (growerId > 999999)
+                    throw new InvalidOperationException("The six-digit Grower ID range is exhausted.");
                 var sequence = (int)await _seq.NextAsync($"GrowerSeq:{req.VillageId}", 1);
                 g = new Grower
                 {
@@ -165,10 +188,15 @@ public class GrowersController : ControllerBase
                 reference = HttpContext.TraceIdentifier
             });
         }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Grower ID range", StringComparison.Ordinal))
+        {
+            _log.LogCritical(ex, "No six-digit Grower IDs remain available.");
+            return Conflict(new { message = "No six-digit Grower IDs remain. Contact the system developer." });
+        }
         var createdGrower = g!;
         await _audit.LogAsync("Create", "Grower", "Grower", createdGrower.Id.ToString(),
             newValue: new { createdGrower.GrowerCode, createdGrower.GrowerName, createdGrower.VillageId });
-        return Ok(new { message = $"Grower '{createdGrower.GrowerName}' account created successfully. Grower Code: {createdGrower.GrowerCode}", id = createdGrower.Id, growerCode = createdGrower.GrowerCode });
+        return Ok(new { message = $"Grower '{createdGrower.GrowerName}' created successfully. Grower ID: {createdGrower.Id}", id = createdGrower.Id, growerId = createdGrower.Id, growerCode = createdGrower.GrowerCode });
     }
 
     [HttpPut("{id:int}")]
@@ -198,7 +226,7 @@ public class GrowersController : ControllerBase
         await _db.SaveChangesAsync();
         await _audit.LogAsync("Edit", "Grower", "Grower", id.ToString(), oldValue: old,
             newValue: new { g.GrowerName, g.FatherName, g.Mobile, g.BankId, g.Status });
-        return Ok(new { message = $"Grower '{g.GrowerName}' ({g.GrowerCode}) updated successfully." });
+        return Ok(new { message = $"Grower '{g.GrowerName}' (ID {g.Id}) updated successfully." });
     }
 
     [HttpDelete("{id:int}")]
@@ -212,7 +240,7 @@ public class GrowersController : ControllerBase
         g.IsDeleted = true; g.DeletedAt = DateTime.UtcNow; g.DeletedBy = _current.UserId; g.Status = false;
         await _db.SaveChangesAsync();
         await _audit.LogAsync("Delete", "Grower", "Grower", id.ToString(), oldValue: new { g.GrowerCode, g.GrowerName });
-        return Ok(new { message = $"Grower '{g.GrowerName}' ({g.GrowerCode}) deleted (soft delete)." });
+        return Ok(new { message = $"Grower '{g.GrowerName}' (ID {g.Id}) deleted (soft delete)." });
     }
 
     private void ApplyAadhaar(Grower g, string? aadhaar)

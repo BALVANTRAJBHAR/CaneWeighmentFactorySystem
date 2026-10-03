@@ -40,17 +40,20 @@ public class PurchasesController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] string? growerCode, [FromQuery] string? search, [FromQuery] string? status,
+    public async Task<IActionResult> List([FromQuery] int? growerId, [FromQuery] string? growerCode, [FromQuery] string? search, [FromQuery] string? status,
         [FromQuery] DateTime? from, [FromQuery] DateTime? to,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         if (Deny("View") is { } d) return d;
         var q = await ScopedQueryAsync();
-        if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(p => p.GrowerCode == growerCode.Trim());
+        if (growerId.HasValue) q = q.Where(p => p.GrowerId == growerId.Value);
+        else if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(p => p.GrowerCode == growerCode.Trim());
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = search.Trim();
-            q = q.Where(p => p.GrowerCode.Contains(term)
+            var isGrowerId = int.TryParse(term, out var parsedGrowerId);
+            q = q.Where(p => (isGrowerId && p.GrowerId == parsedGrowerId)
+                || p.GrowerCode.Contains(term)
                 || p.Grower.GrowerName.Contains(term)
                 || p.Grower.FatherName.Contains(term)
                 || p.Grower.Village.VillageName.Contains(term)
@@ -63,7 +66,7 @@ public class PurchasesController : ControllerBase
         var items = await q.OrderByDescending(p => p.Id).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(p => new
             {
-                purchaseId = p.Id, p.GrowerCode, GrowerName = p.Grower.GrowerName,
+                purchaseId = p.Id, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName,
                 FatherName = p.Grower.FatherName, p.Grower.Mobile, VillageName = p.Grower.Village.VillageName,
                 p.VehicleNumber, VehicleTypeName = p.VehicleType.VehicleTypeName,
                 VarietyName = p.Variety.VarietyName,
@@ -85,7 +88,7 @@ public class PurchasesController : ControllerBase
         var q = await ScopedQueryAsync();
         var p = await q.Where(x => x.Id == id).Select(p => new
         {
-            purchaseId = p.Id, p.GrowerCode, GrowerName = p.Grower.GrowerName,
+            purchaseId = p.Id, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName,
             FatherName = p.Grower.FatherName, VillageName = p.Grower.Village.VillageName,
             p.VehicleNumber, VarietyName = p.Variety.VarietyName,
             p.ScaleReadingGrossKg, p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName,

@@ -267,6 +267,41 @@ public class ItemsController : MasterControllerBase<Item>
     protected override void ApplyUpdate(Item t, Item s) { t.ItemName = s.ItemName; t.ItemNameHi = s.ItemNameHi; }
 }
 
+[Route("api/rate-reasons")]
+public class RateReasonsController : MasterControllerBase<RateReasonMaster>
+{
+    public RateReasonsController(AppDbContext db, IAuditService audit, ICurrentUser current, ISequenceGenerator seq)
+        : base(db, audit, current, seq) { }
+
+    protected override string Module => "RateReason";
+    protected override string DisplayName(RateReasonMaster e) => e.ReasonName;
+    protected override System.Linq.Expressions.Expression<Func<RateReasonMaster, object>> DisplayNameExpr() => e => e.ReasonName;
+    protected override IQueryable<RateReasonMaster> ApplySearch(IQueryable<RateReasonMaster> q, string s) =>
+        q.Where(x => x.ReasonName.Contains(s) || (x.Description != null && x.Description.Contains(s)));
+
+    protected override async Task<string?> ValidateAsync(RateReasonMaster e, int? id)
+    {
+        e.ReasonName = Validators.Norm(e.ReasonName);
+        e.Description = string.IsNullOrWhiteSpace(e.Description) ? null : Validators.Norm(e.Description);
+        if (e.ReasonName.Length is < 3 or > 150) return "Rate Reason must be 3-150 characters.";
+        if (e.Description?.Length > 500) return "Description cannot exceed 500 characters.";
+        if (await Db.RateReasons.AnyAsync(x => !x.IsDeleted && x.Id != id && x.ReasonName.ToLower() == e.ReasonName.ToLower()))
+            return $"Rate Reason '{e.ReasonName}' already exists.";
+        return null;
+    }
+
+    protected override void ApplyUpdate(RateReasonMaster target, RateReasonMaster source)
+    {
+        target.ReasonName = source.ReasonName;
+        target.Description = source.Description;
+    }
+
+    protected override async Task<string?> InUseReasonAsync(int id) =>
+        await Db.WeighmentRateOverrides.AnyAsync(x => x.RateReasonId == id)
+            ? "This Rate Reason is used in an audited rate override and cannot be deleted. Make it inactive instead."
+            : null;
+}
+
 [Route("api/parties")]
 public class PartiesController : MasterControllerBase<Party>
 {

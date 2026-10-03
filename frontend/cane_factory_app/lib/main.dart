@@ -1,13 +1,12 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:ui';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:printing_ffi/printing_ffi.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/api_client.dart';
 import 'core/app_theme.dart';
+import 'core/native_print_adapter.dart';
 import 'providers/auth_provider.dart';
 import 'providers/live_weight_provider.dart';
 import 'providers/theme_provider.dart';
@@ -28,13 +27,10 @@ void main() {
       debugPrint('Unhandled application error: $error\n$stackTrace');
       return true;
     };
-    // Phase 7: printing_ffi is the only PDFium-based plugin in this app - must init once on Windows.
-    if (Platform.isWindows) {
-      try {
-        PrintingFfi.instance.initPdfium();
-      } catch (error, stackTrace) {
-        debugPrint('PDFium initialization failed: $error\n$stackTrace');
-      }
+    try {
+      initializeNativePrinting();
+    } catch (error, stackTrace) {
+      debugPrint('PDFium initialization failed: $error\n$stackTrace');
     }
     runApp(MultiProvider(
       providers: [

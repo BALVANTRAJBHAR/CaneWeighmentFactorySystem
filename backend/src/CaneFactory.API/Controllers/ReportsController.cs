@@ -86,7 +86,9 @@ public class ReportsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = search.Trim();
+            var isGrowerId = int.TryParse(term, out var parsedGrowerId);
             q = q.Where(x => (x.SourceName != null && x.SourceName.Contains(term)) ||
+                (isGrowerId && x.GrowerId == parsedGrowerId) ||
                 (x.GrowerCode != null && x.GrowerCode.Contains(term)) ||
                 (x.GrowerName != null && x.GrowerName.Contains(term)) ||
                 (x.ReferenceNumber != null && x.ReferenceNumber.Contains(term)));
@@ -127,7 +129,7 @@ public class ReportsController : ControllerBase
             {
                 x.EntryDate.ToString("dd-MM-yyyy"), CashEntryLabel(x),
                 x.SourceType, x.SourceName ?? "-",
-                string.IsNullOrWhiteSpace(x.GrowerCode) ? "-" : $"{x.GrowerCode} {x.GrowerName}",
+                x.GrowerId.HasValue ? $"{x.GrowerId} {x.GrowerName}" : "-",
                 x.PaymentId?.ToString() ?? "-", inAmount == 0 ? "-" : inAmount.ToString("F2"),
                 outAmount == 0 ? "-" : outAmount.ToString("F2"), balance.ToString("F2"), x.ReferenceNumber ?? "-"
             });
@@ -223,7 +225,7 @@ public class ReportsController : ControllerBase
     [HttpGet("purchases")]
     public async Task<IActionResult> Purchases(
         [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate, [FromQuery] int? villageId,
-        [FromQuery] string? growerCode, [FromQuery] int? varietyTypeId, [FromQuery] int? varietyId,
+        [FromQuery] int? growerId, [FromQuery] string? growerCode, [FromQuery] int? varietyTypeId, [FromQuery] int? varietyId,
         [FromQuery] int? vehicleTypeId, [FromQuery] decimal? rateMin, [FromQuery] decimal? rateMax,
         [FromQuery] string? paymentStatus, [FromQuery] string? lockStatus, [FromQuery] string? grossTareStatus,
         [FromQuery] string sortBy = "grossDateTime", [FromQuery] bool desc = true,
@@ -239,6 +241,7 @@ public class ReportsController : ControllerBase
             var user = await _db.Users.AsNoTracking().FirstAsync(u => u.Id == _current.UserId);
             q = q.Where(p => p.Grower.Mobile == user.Mobile);
         }
+        else if (growerId.HasValue) q = q.Where(p => p.GrowerId == growerId.Value);
         else if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(p => p.GrowerCode == growerCode.Trim());
         if (villageId.HasValue) q = q.Where(p => p.VillageId == villageId);
         if (fromDate.HasValue) q = q.Where(p => p.TareDateTime >= fromDate);
@@ -268,7 +271,7 @@ public class ReportsController : ControllerBase
 
         var projected = q.Select(p => new PurchaseReportRow
         {
-            PurchaseId = p.Id, GrowerCode = p.GrowerCode, GrowerName = p.Grower.GrowerName,
+            PurchaseId = p.Id, GrowerId = p.GrowerId, GrowerCode = p.GrowerCode, GrowerName = p.Grower.GrowerName,
             VillageName = p.Grower.Village.VillageName, VehicleNumber = p.VehicleNumber, VarietyName = p.Variety.VarietyName,
             GrossWeightQuintal = p.GrossWeightQuintal, GrossDateTime = p.GrossDateTime,
             PurchaseDate = p.TareDateTime,
@@ -292,10 +295,10 @@ public class ReportsController : ControllerBase
         }
 
         var rows = await projected.Take(5000).ToListAsync();
-        var headers = new List<string> { "Purchase ID", "Grower Code", "Grower Name", "Village", "Vehicle No", "Variety",
+        var headers = new List<string> { "Purchase ID", "Grower ID", "Grower Name", "Village", "Vehicle No", "Variety",
             "Gross (Qtl)", "Tare (Qtl)", "Cutting Weight (Qtl)", "Net (Qtl)", "Final (Qtl)", "Rate", "Amount (Rs)", "Purchase Date (Tare)", "Weighment Status" };
         var tableRows = rows.Select(r => new List<string> {
-            r.PurchaseId.ToString(), r.GrowerCode, r.GrowerName, r.VillageName, r.VehicleNumber, r.VarietyName,
+            r.PurchaseId.ToString(), r.GrowerId.ToString(), r.GrowerName, r.VillageName, r.VehicleNumber, r.VarietyName,
             r.GrossWeightQuintal.ToString("F2"), r.TareWeightQuintal?.ToString("F2") ?? "-",
             r.CuttingWeightQuintal?.ToString("F2") ?? "-", r.NetWeightQuintal?.ToString("F2") ?? "-",
             r.FinalWeightQuintal?.ToString("F2") ?? "-", r.Rate.ToString("F2"), r.PurchaseAmount?.ToString("F2") ?? "-",
@@ -310,7 +313,7 @@ public class ReportsController : ControllerBase
     [HttpGet("payments")]
     public async Task<IActionResult> Payments(
         [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate, [FromQuery] int? villageId,
-        [FromQuery] string? growerCode, [FromQuery] int? paymentModeId, [FromQuery] string? status,
+        [FromQuery] int? growerId, [FromQuery] string? growerCode, [FromQuery] int? paymentModeId, [FromQuery] string? status,
         [FromQuery] string format = "json", [FromQuery] int page = 1, [FromQuery] int pageSize = 100)
     {
         if (Deny(ActionFor(format)) is { } d) return d;
@@ -323,6 +326,7 @@ public class ReportsController : ControllerBase
             var user = await _db.Users.AsNoTracking().FirstAsync(u => u.Id == _current.UserId);
             q = q.Where(p => p.Grower.Mobile == user.Mobile);
         }
+        else if (growerId.HasValue) q = q.Where(p => p.GrowerId == growerId.Value);
         else if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(p => p.GrowerCode == growerCode.Trim());
         if (villageId.HasValue) q = q.Where(p => p.VillageId == villageId);
         if (fromDate.HasValue) q = q.Where(p => p.PaymentDate >= fromDate);
@@ -346,7 +350,7 @@ public class ReportsController : ControllerBase
 
         var projected = q.Select(p => new PaymentReportRow
         {
-            PaymentId = p.Id, AdviceNumber = p.AdviceNumber, GrowerCode = p.GrowerCode, GrowerName = p.Grower.GrowerName,
+            PaymentId = p.Id, AdviceNumber = p.AdviceNumber, GrowerId = p.GrowerId, GrowerCode = p.GrowerCode, GrowerName = p.Grower.GrowerName,
             VillageName = p.Grower.Village.VillageName, TotalPurchaseAmount = p.TotalPurchaseAmount,
             LoanDeductedAmount = p.LoanDeductedAmount, NetPayableAmount = p.NetPayableAmount,
             PaymentModeName = p.PaymentMode.ModeName,
@@ -367,10 +371,10 @@ public class ReportsController : ControllerBase
         }
 
         var rows = await projected.Take(5000).ToListAsync();
-        var headers = new List<string> { "Payment ID", "Advice No", "Grower Code", "Grower Name", "Village",
+        var headers = new List<string> { "Payment ID", "Advice No", "Grower ID", "Grower Name", "Village",
             "Total Purchase (Rs)", "Loan Deducted (Rs)", "Net Payable (Rs)", "Payment Mode", "Bank Details", "Payment Date", "Paid By", "Status" };
         var tableRows = rows.Select(r => new List<string> {
-            r.PaymentId.ToString(), r.AdviceNumber.ToString(), r.GrowerCode, r.GrowerName, r.VillageName,
+            r.PaymentId.ToString(), r.AdviceNumber.ToString(), r.GrowerId.ToString(), r.GrowerName, r.VillageName,
             r.TotalPurchaseAmount.ToString("F2"), r.LoanDeductedAmount.ToString("F2"), r.NetPayableAmount.ToString("F2"),
             r.PaymentModeName,
             r.IsBankPayment
@@ -387,7 +391,7 @@ public class ReportsController : ControllerBase
     [HttpGet("loans")]
     public async Task<IActionResult> Loans(
         [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate, [FromQuery] int? villageId,
-        [FromQuery] string? growerCode, [FromQuery] int? loanTypeId, [FromQuery] string? status,
+        [FromQuery] int? growerId, [FromQuery] string? growerCode, [FromQuery] int? loanTypeId, [FromQuery] string? status,
         [FromQuery] string format = "json", [FromQuery] int page = 1, [FromQuery] int pageSize = 100)
     {
         if (Deny(ActionFor(format)) is { } d) return d;
@@ -400,6 +404,7 @@ public class ReportsController : ControllerBase
             var user = await _db.Users.AsNoTracking().FirstAsync(u => u.Id == _current.UserId);
             q = q.Where(l => l.Grower.Mobile == user.Mobile);
         }
+        else if (growerId.HasValue) q = q.Where(l => l.GrowerId == growerId.Value);
         else if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(l => l.GrowerCode == growerCode.Trim());
         if (villageId.HasValue) q = q.Where(l => l.VillageId == villageId);
         if (fromDate.HasValue) q = q.Where(l => l.IssueDate >= fromDate);
@@ -423,7 +428,7 @@ public class ReportsController : ControllerBase
 
         var projected = q.Select(l => new LoanReportRow
         {
-            LoanId = l.Id, GrowerCode = l.GrowerCode, GrowerName = l.Grower.GrowerName, VillageName = l.Grower.Village.VillageName,
+            LoanId = l.Id, GrowerId = l.GrowerId, GrowerCode = l.GrowerCode, GrowerName = l.Grower.GrowerName, VillageName = l.Grower.Village.VillageName,
             LoanTypeName = l.LoanType.LoanTypeName, LoanAmount = l.LoanAmount, RecoveredAmount = l.RecoveredAmount,
             OutstandingAmount = l.OutstandingAmount, IssueDate = l.IssueDate, IssuedByUserName = l.IssuedByUserName, LoanStatus = l.LoanStatus
         });
@@ -435,10 +440,10 @@ public class ReportsController : ControllerBase
         }
 
         var rows = await projected.Take(5000).ToListAsync();
-        var headers = new List<string> { "Loan ID", "Grower Code", "Grower Name", "Village", "Loan Type",
+        var headers = new List<string> { "Loan ID", "Grower ID", "Grower Name", "Village", "Loan Type",
             "Loan Amount (Rs)", "Recovered (Rs)", "Outstanding (Rs)", "Issue Date", "Issued By", "Status" };
         var tableRows = rows.Select(r => new List<string> {
-            r.LoanId.ToString(), r.GrowerCode, r.GrowerName, r.VillageName, r.LoanTypeName,
+            r.LoanId.ToString(), r.GrowerId.ToString(), r.GrowerName, r.VillageName, r.LoanTypeName,
             r.LoanAmount.ToString("F2"), r.RecoveredAmount.ToString("F2"), r.OutstandingAmount.ToString("F2"),
             r.IssueDate.ToString("dd-MM-yyyy"), r.IssuedByUserName, r.LoanStatus
         }).ToList();

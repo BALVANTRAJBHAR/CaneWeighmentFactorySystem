@@ -266,8 +266,8 @@ class _WeighmentCorrectionsScreenState
             },
             defaultVerticalAlignment: TableCellVerticalAlignment.middle,
             children: [
-              _detailRow('Purchase ID', '${record['id']}', 'Grower Code / Item',
-                  '${record['growerCode'] ?? record['itemName'] ?? '-'}'),
+              _detailRow('Purchase ID', '${record['id']}', 'Grower ID / Item',
+                  '${record['growerId'] ?? record['itemName'] ?? '-'}'),
               _detailRow('Name / Party', '${record['name'] ?? '-'}', 'Status',
                   '${record['status'] ?? '-'}'),
               _detailRow(

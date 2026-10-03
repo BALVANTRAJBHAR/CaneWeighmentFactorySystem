@@ -6,7 +6,7 @@ import '../../core/api_client.dart';
 import '../../core/hindi_transliteration.dart';
 import '../../providers/auth_provider.dart';
 
-/// Grower Master: per-village auto grower code (101/1), Aadhaar (masked, encrypted server-side),
+/// Grower Master: six-digit Grower ID, Aadhaar (masked, encrypted server-side),
 /// bank linkage and duplicate warnings with explicit confirmation.
 class GrowerScreen extends StatefulWidget {
   const GrowerScreen({super.key});
@@ -71,7 +71,7 @@ class _GrowerScreenState extends State<GrowerScreen> {
             width: 300,
             child: TextField(
               decoration: const InputDecoration(
-                  hintText: 'Search by name / father name / village...',
+                  hintText: 'Search by ID / name / father / village...',
                   prefixIcon: Icon(Icons.search, size: 18)),
               onChanged: (v) {
                 _search = v;
@@ -111,7 +111,7 @@ class _GrowerScreenState extends State<GrowerScreen> {
                           child: ConstrainedBox(
                             constraints: const BoxConstraints(minWidth: 1900),
                             child: DataTable(columns: const [
-                              DataColumn(label: Text('Code')),
+                              DataColumn(label: Text('Grower ID')),
                               DataColumn(label: Text('Name')),
                               DataColumn(label: Text('Father Name')),
                               DataColumn(label: Text('Village')),
@@ -125,7 +125,7 @@ class _GrowerScreenState extends State<GrowerScreen> {
                             ], rows: [
                               for (final g in _items)
                                 DataRow(cells: [
-                                  DataCell(Text('${g['growerCode']}',
+                                  DataCell(Text('${g['id']}',
                                       style: const TextStyle(
                                           fontWeight: FontWeight.w700))),
                                   DataCell(Text('${g['growerName']}',
@@ -295,7 +295,7 @@ class _GrowerFormState extends State<_GrowerForm> {
     return AlertDialog(
       title: Text(widget.existing == null
           ? 'New Grower'
-          : 'Edit Grower ${widget.existing!['growerCode']}'),
+          : 'Edit Grower ID ${widget.existing!['id']}'),
       content: SizedBox(
         width: 480,
         child: Form(

@@ -109,7 +109,7 @@ public class PrintEngineService : IPrintEngineService
             {
                 pp.PaymentId,
                 pp.Payment.AdviceNumber,
-                pp.Payment.GrowerCode,
+                pp.Payment.GrowerId,
                 GrowerName = pp.Payment.Grower.GrowerName,
                 pp.PurchaseId,
                 pp.Purchase.FinalWeightQuintal,
@@ -117,7 +117,7 @@ public class PrintEngineService : IPrintEngineService
                 pp.PurchaseAmountAtPayment
             }).ToListAsync();
         var purchaseLines = sourceLines.Select(line => new PaymentBatchPurchasePrintLine(
-            line.PaymentId, line.AdviceNumber, line.GrowerCode, line.GrowerName, line.PurchaseId,
+            line.PaymentId, line.AdviceNumber, line.GrowerId, line.GrowerName, line.PurchaseId,
             line.FinalWeightQuintal, line.Rate, line.PurchaseAmountAtPayment)).ToList();
 
         var doc = await BaseDocAsync(payments[0].Season?.SeasonName, generatedByUserName);
@@ -309,7 +309,7 @@ public class PrintEngineService : IPrintEngineService
     private static List<PrintRow> GrossRows(Purchase p, string language) => new()
     {
         new("क्रय क्रमांक", "Purchase ID", p.Id.ToString()),
-        new("किसान कोड", "Grower Code", p.GrowerCode),
+        new("किसान आईडी", "Grower ID", p.GrowerId.ToString()),
         new("किसान का नाम", "Grower Name", Text(p.Grower.GrowerName, p.Grower.GrowerNameHi, language)),
         new("पिता का नाम", "Father's Name", Text(p.Grower.FatherName, p.Grower.FatherNameHi, language)),
         new("गाँव", "Village", Text(p.Grower.Village.VillageName, p.Grower.Village.VillageNameHi, language)),
@@ -339,7 +339,7 @@ public class PrintEngineService : IPrintEngineService
     private static List<PrintRow> LoanRows(Loan l, string language) => new()
     {
         new("ऋण क्रमांक", "Loan ID", l.Id.ToString()),
-        new("किसान कोड", "Grower Code", l.GrowerCode),
+        new("किसान आईडी", "Grower ID", l.GrowerId.ToString()),
         new("किसान का नाम", "Grower Name", Text(l.Grower.GrowerName, l.Grower.GrowerNameHi, language)),
         new("पिता का नाम", "Father's Name", Text(l.Grower.FatherName, l.Grower.FatherNameHi, language)),
         new("गाँव", "Village", Text(l.Grower.Village.VillageName, l.Grower.Village.VillageNameHi, language)),
@@ -355,7 +355,7 @@ public class PrintEngineService : IPrintEngineService
     {
         new("वसूली क्रमांक", "Recovery ID", r.Id.ToString()),
         new("ऋण क्रमांक", "Loan ID", r.LoanId.ToString()),
-        new("किसान कोड", "Grower Code", r.GrowerCode),
+        new("किसान आईडी", "Grower ID", r.GrowerId.ToString()),
         new("किसान का नाम", "Grower Name", Text(r.Loan.Grower.GrowerName, r.Loan.Grower.GrowerNameHi, language)),
         new("वसूली राशि (₹)", "Recovery Amount (Rs)", r.RecoveryAmount.ToString("F2")),
         new("वसूली तिथि", "Recovery Date", r.RecoveryDate.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
@@ -364,7 +364,7 @@ public class PrintEngineService : IPrintEngineService
     };
 
     private sealed record PaymentPurchasePrintLine(int PurchaseId, decimal? FinalWeightQuintal, decimal Rate, decimal FinalAmount);
-    private sealed record PaymentBatchPurchasePrintLine(int PaymentId, int AdviceNumber, string GrowerCode,
+    private sealed record PaymentBatchPurchasePrintLine(int PaymentId, int AdviceNumber, int GrowerId,
         string GrowerName, int PurchaseId, decimal? FinalWeightQuintal, decimal Rate, decimal FinalAmount);
 
     private static List<PrintRow> PaymentRows(Payment p, List<PaymentPurchasePrintLine> purchases, string language)
@@ -373,7 +373,7 @@ public class PrintEngineService : IPrintEngineService
         {
             new("भुगतान क्रमांक", "Payment ID", p.Id.ToString()),
             new("अग्रिम क्रमांक", "Advice Number", p.AdviceNumber.ToString()),
-            new("किसान कोड", "Grower Code", p.GrowerCode),
+            new("किसान आईडी", "Grower ID", p.GrowerId.ToString()),
             new("किसान का नाम", "Grower Name", Text(p.Grower?.GrowerName, p.Grower?.GrowerNameHi, language)),
             new("पिता का नाम", "Father's Name", Text(p.Grower?.FatherName, p.Grower?.FatherNameHi, language)),
             new("गाँव", "Village", Text(p.Grower?.Village?.VillageName, p.Grower?.Village?.VillageNameHi, language))
@@ -425,6 +425,7 @@ public class PrintEngineService : IPrintEngineService
         Columns = new()
         {
             new("अग्रिम क्रमांक", "Advice No"),
+            new("किसान आईडी", "Grower ID"),
             new("किसान", "Grower"),
             new("खाताधारक", "Account Holder"),
             new("बैंक", "Bank"),
@@ -436,6 +437,7 @@ public class PrintEngineService : IPrintEngineService
         Rows = payments.Select(payment => new List<string>
         {
             payment.AdviceNumber.ToString(),
+            payment.GrowerId.ToString(),
             payment.Grower.GrowerName,
             IsBankPayment(payment) ? SnapshotOrCurrent(payment.AccountHolderNameAtPayment, payment.Grower.AccountHolderName) : "-",
             IsBankPayment(payment) ? SnapshotOrCurrent(payment.BankNameAtPayment, payment.Grower.Bank?.BankName) : "-",
@@ -453,6 +455,7 @@ public class PrintEngineService : IPrintEngineService
         Columns = new()
         {
             new("अग्रिम क्रमांक", "Advice No"),
+            new("किसान आईडी", "Grower ID"),
             new("किसान", "Grower"),
             new("क्रय क्रमांक", "Purchase ID"),
             new("अंतिम वजन (क्विंटल)", "Final Weight (Qtl)"),
@@ -462,6 +465,7 @@ public class PrintEngineService : IPrintEngineService
         Rows = purchases.Select(purchase => new List<string>
         {
             purchase.AdviceNumber.ToString(),
+            purchase.GrowerId.ToString(),
             purchase.GrowerName,
             purchase.PurchaseId.ToString(),
             purchase.FinalWeightQuintal?.ToString("F2") ?? "-",

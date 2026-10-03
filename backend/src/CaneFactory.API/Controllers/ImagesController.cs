@@ -30,7 +30,7 @@ public class ImagesController : ControllerBase
         if (source is not ("purchase" or "sale-purchase" or "payment"))
             return BadRequest(new { message = "Image type must be purchase, sale-purchase, or payment." });
         if (string.IsNullOrWhiteSpace(term))
-            return BadRequest(new { message = "Enter a Purchase ID, Payment ID, Advice Number, Grower Code/Name, Sale ID, or Party Name." });
+            return BadRequest(new { message = "Enter a Purchase ID, Payment ID, Advice Number, Grower ID/Name, Sale ID, or Party Name." });
 
         return source switch
         {
@@ -78,7 +78,7 @@ public class ImagesController : ControllerBase
             select new { image, purchase, grower };
 
         if (int.TryParse(term, out var purchaseId) && purchaseId > 0)
-            query = query.Where(x => x.image.PurchaseId == purchaseId);
+            query = query.Where(x => x.image.PurchaseId == purchaseId || x.purchase.GrowerId == purchaseId);
         else
             query = query.Where(x => x.purchase.GrowerCode.Contains(term)
                 || x.grower.GrowerCode.Contains(term)
@@ -96,6 +96,7 @@ public class ImagesController : ControllerBase
                 x.image.CaptureStage,
                 x.image.CapturedAt,
                 purchaseId = x.image.PurchaseId,
+                growerId = x.purchase.GrowerId,
                 growerCode = x.purchase.GrowerCode,
                 growerName = x.grower.GrowerName,
                 fatherName = x.grower.FatherName,
@@ -157,7 +158,8 @@ public class ImagesController : ControllerBase
             select new { image, payment, grower, mode };
 
         if (int.TryParse(term, out var numericTerm) && numericTerm > 0)
-            query = query.Where(x => x.image.PaymentId == numericTerm || x.payment.AdviceNumber == numericTerm);
+            query = query.Where(x => x.image.PaymentId == numericTerm || x.payment.AdviceNumber == numericTerm ||
+                x.payment.GrowerId == numericTerm);
         else
             query = query.Where(x => x.payment.GrowerCode.Contains(term)
                 || x.grower.GrowerCode.Contains(term)
@@ -176,6 +178,7 @@ public class ImagesController : ControllerBase
                 paymentId = x.image.PaymentId,
                 purchaseId = x.image.PurchaseId,
                 adviceNumber = x.payment.AdviceNumber,
+                growerId = x.payment.GrowerId,
                 growerCode = x.payment.GrowerCode,
                 growerName = x.grower.GrowerName,
                 fatherName = x.grower.FatherName,

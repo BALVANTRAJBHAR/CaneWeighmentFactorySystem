@@ -1,9 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
-import 'package:printing_ffi/printing_ffi.dart';
 import 'api_client.dart';
+import 'native_print_adapter.dart';
 
 class PrintOutcome {
   final bool success;
@@ -16,17 +15,11 @@ class PrintOutcome {
 /// raw ESC/P bytes + rawDataToPrinter(). Never throws - always returns a PrintOutcome so callers can
 /// show a clear retry error instead of crashing when the backend or the printer is unreachable.
 class PrintService {
-  static List<Printer> installedPrinters() {
-    if (!Platform.isWindows) return const [];
-    return PrintingFfi.instance
-        .listPrinters()
-        .where((p) => p.isAvailable)
-        .toList();
-  }
+  static List<String> installedPrinterNames() => installedNativePrinterNames();
 
   static String? validateInstalledPrinter(String name) {
-    final installed = installedPrinters();
-    if (!installed.any((p) => p.name == name)) {
+    final installed = installedPrinterNames();
+    if (!installed.contains(name)) {
       return 'Configured printer "$name" is not installed or unavailable on this Windows PC.';
     }
     return null;
@@ -42,7 +35,7 @@ class PrintService {
       return PrintOutcome(false,
           'No printer configured. Set Printer Name in Developer Dashboard \u2192 Print.');
     }
-    if (!Platform.isWindows) {
+    if (!nativePrintingSupported) {
       return PrintOutcome(false,
           'Local factory printing is only supported on the Windows client.');
     }
@@ -60,7 +53,8 @@ class PrintService {
         try {
           final decoded =
               jsonDecode(utf8.decode(List<int>.from(res.data as List))) as Map;
-          if (decoded['message'] != null) message = decoded['message'].toString();
+          if (decoded['message'] != null)
+            message = decoded['message'].toString();
         } catch (_) {}
         return PrintOutcome(false, message);
       }
@@ -72,34 +66,24 @@ class PrintService {
 
     final safeCopies = copies < 1 ? 1 : (copies > 5 ? 5 : copies);
     try {
-      final ffi = PrintingFfi.instance;
+      final data = Uint8List.fromList(bytes);
       if (printerType == 'A4') {
-        final tempFile =
-            File('${Directory.systemTemp.path}${Platform.pathSeparator}'
-                'cane_print_${DateTime.now().millisecondsSinceEpoch}.pdf');
-        await tempFile.writeAsBytes(bytes);
-        bool ok;
-        try {
-          ok = await ffi.printPdf(printerName, tempFile.path,
-              copies: safeCopies);
-        } finally {
-          try {
-            await tempFile.delete();
-          } catch (_) {}
-        }
+        final ok = await printNativePdf(
+          printerName,
+          data,
+          copies: safeCopies,
+        );
         return ok
             ? PrintOutcome(true, 'Sent to printer "$printerName".')
             : PrintOutcome(false,
                 'Printer "$printerName" did not accept the job. Check it is online.');
       }
 
-      var ok = true;
-      final data = Uint8List.fromList(bytes);
-      for (var i = 0; i < safeCopies; i++) {
-        final jobOk = await ffi.rawDataToPrinter(printerName, data,
-            docName: 'CaneFactorySlip');
-        ok = ok && jobOk;
-      }
+      final ok = await printNativeRaw(
+        printerName,
+        data,
+        copies: safeCopies,
+      );
       return ok
           ? PrintOutcome(true, 'Sent to printer "$printerName".')
           : PrintOutcome(false,
@@ -109,4 +93,3 @@ class PrintService {
     }
   }
 }
-

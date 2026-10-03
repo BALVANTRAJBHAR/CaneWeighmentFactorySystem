@@ -1,6 +1,7 @@
 using CaneFactory.Application.Common;
 using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Interfaces;
+using CaneFactory.API.Services;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
 using CaneFactory.Infrastructure.Weighing;
@@ -30,13 +31,14 @@ public class WeighmentController : ControllerBase
     private readonly ISmsService _sms;
     private readonly WeighingService _weighing;
     private readonly ILogger<WeighmentController> _log;
+    private readonly RateOverrideService _rateOverrides;
 
     public WeighmentController(AppDbContext db, IAuditService audit, ICurrentUser current,
         ISequenceGenerator seq, IMemoryCache cache, ICameraCaptureService capture, ISmsService sms,
-        WeighingService weighing, ILogger<WeighmentController> log)
+        WeighingService weighing, ILogger<WeighmentController> log, RateOverrideService rateOverrides)
     {
         _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache; _capture = capture;
-        _sms = sms; _weighing = weighing; _log = log;
+        _sms = sms; _weighing = weighing; _log = log; _rateOverrides = rateOverrides;
     }
 
     private IActionResult? Deny(string action) =>
@@ -71,7 +73,7 @@ public class WeighmentController : ControllerBase
             .OrderBy(p => p.GrossDateTime)
             .Select(p => new
             {
-                purchaseId = p.Id, p.GrowerCode, GrowerName = p.Grower.GrowerName,
+                purchaseId = p.Id, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName,
                 FatherName = p.Grower.FatherName, VillageName = p.Grower.Village.VillageName,
                 p.VehicleNumber, p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName
             }).ToListAsync();
@@ -92,7 +94,7 @@ public class WeighmentController : ControllerBase
         if (p.LockStatus == "LOCKED") return Conflict(new { message = $"Purchase {purchaseId} is LOCKED." });
         return Ok(new
         {
-            purchaseId = p.Id, p.GrowerCode, GrowerName = p.Grower.GrowerName, FatherName = p.Grower.FatherName,
+            purchaseId = p.Id, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName, FatherName = p.Grower.FatherName,
             VillageName = p.Grower.Village.VillageName, p.VehicleNumber, VehicleTypeName = p.VehicleType.VehicleTypeName,
             VarietyName = p.Variety.VarietyName, p.Rate, p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName,
             p.CuttingPercent, p.TaxPercent
@@ -106,9 +108,10 @@ public class WeighmentController : ControllerBase
         if (Deny("Create") is { } d) return d;
         if (IsDuplicateRequest(req.IdempotencyKey, out var dup)) return dup!;
 
-        var grower = await _db.Growers.Include(g => g.Village)
-            .FirstOrDefaultAsync(g => g.GrowerCode == req.GrowerCode.Trim() && !g.IsDeleted);
-        if (grower == null) return NotFound(new { message = $"No grower found with code '{req.GrowerCode}'. Example: 101/1" });
+        var grower = req.GrowerId > 0
+            ? await _db.Growers.Include(g => g.Village).FirstOrDefaultAsync(g => g.Id == req.GrowerId && !g.IsDeleted)
+            : await _db.Growers.Include(g => g.Village).FirstOrDefaultAsync(g => g.GrowerCode == req.GrowerCode.Trim() && !g.IsDeleted);
+        if (grower == null) return NotFound(new { message = $"No grower found with ID '{req.GrowerId}'. Example: 100001" });
         if (!grower.Status) return Conflict(new { message = $"Grower '{grower.GrowerName}' is INACTIVE and cannot be used." });
         if (!await _db.VehicleTypes.AnyAsync(v => v.Id == req.VehicleTypeId && !v.IsDeleted && v.Status))
             return BadRequest(new { message = "Selected Vehicle Type does not exist or is inactive." });
@@ -218,8 +221,21 @@ public class WeighmentController : ControllerBase
         if (tareQuintal >= p.GrossWeightQuintal)
             return Conflict(new { message = $"Tare weight ({tareQuintal:F2} Qtl) must be LESS than Gross weight ({p.GrossWeightQuintal:F2} Qtl)." });
 
+        var masterRate = p.Rate;
+        decimal effectiveRate;
+        try
+        {
+            effectiveRate = await _rateOverrides.ValidateAndStageAsync("CANE", p.Id, masterRate, req.Rate,
+                req.ApprovedByUserId, req.RateReasonId, req.RateOverrideRemark, req.RateEvidenceToken,
+                _current.UserId!.Value, HttpContext.RequestAborted);
+        }
+        catch (RateOverrideValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+
         var (net, cutting, tax, final, amount) = WeightCalculator.Calculate(
-            p.GrossWeightQuintal, tareQuintal, p.CuttingPercent, p.TaxPercent, p.Rate);
+            p.GrossWeightQuintal, tareQuintal, p.CuttingPercent, p.TaxPercent, effectiveRate);
 
         p.ScaleReadingTareKg = WeightCalculator.R2(liveKg);
         p.TareWeightQuintal = tareQuintal;
@@ -230,6 +246,7 @@ public class WeighmentController : ControllerBase
         p.CuttingWeightQuintal = cutting;
         p.TaxWeightQuintal = tax;
         p.FinalWeightQuintal = final;
+        p.Rate = effectiveRate;
         p.PurchaseAmount = amount;
         p.GrossTareStatus = "TARE_DONE";
         p.PaymentStatus = "PENDING";
@@ -241,7 +258,8 @@ public class WeighmentController : ControllerBase
         await _db.SaveChangesAsync();
 
         await _audit.LogAsync("TareWeighment", "Weighment", "Purchase", p.Id.ToString(),
-            newValue: new { p.TareWeightQuintal, p.NetWeightQuintal, p.FinalWeightQuintal, p.PurchaseAmount });
+            newValue: new { p.TareWeightQuintal, p.NetWeightQuintal, p.FinalWeightQuintal, p.Rate, p.PurchaseAmount,
+                MasterRate = masterRate, RateOverridden = effectiveRate != Math.Round(masterRate, 2) });
         var captureResults = await CaptureEvidenceAsync(p.Id, "TARE");
 
         var smsQueued = false;
@@ -250,7 +268,8 @@ public class WeighmentController : ControllerBase
             var placeholders = new Dictionary<string, string>
             {
                 ["GrowerName"] = p.Grower.GrowerName,
-                ["GrowerCode"] = p.GrowerCode,
+                ["GrowerCode"] = p.GrowerId.ToString(),
+                ["GrowerId"] = p.GrowerId.ToString(),
                 ["VehicleNumber"] = p.VehicleNumber,
                 ["FinalWeight"] = final.ToString("F2"),
                 ["PurchaseAmount"] = amount.ToString("F2")

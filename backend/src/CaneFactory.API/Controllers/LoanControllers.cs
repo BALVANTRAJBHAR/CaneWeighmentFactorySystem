@@ -80,18 +80,19 @@ public class LoanController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] string? growerCode, [FromQuery] string? status,
+    public async Task<IActionResult> List([FromQuery] int? growerId, [FromQuery] string? growerCode, [FromQuery] string? status,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         if (Deny("View") is { } d) return d;
         var q = await ScopedQueryAsync();
-        if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(l => l.GrowerCode == growerCode.Trim());
+        if (growerId.HasValue) q = q.Where(l => l.GrowerId == growerId.Value);
+        else if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(l => l.GrowerCode == growerCode.Trim());
         if (!string.IsNullOrWhiteSpace(status)) q = q.Where(l => l.LoanStatus == status);
         var total = await q.CountAsync();
         var items = await q.OrderByDescending(l => l.Id).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(l => new
             {
-                loanId = l.Id, l.GrowerCode, GrowerName = l.Grower.GrowerName, VillageName = l.Grower.Village.VillageName,
+                loanId = l.Id, l.GrowerId, l.GrowerCode, GrowerName = l.Grower.GrowerName, VillageName = l.Grower.Village.VillageName,
                 LoanTypeName = l.LoanType.LoanTypeName, l.LoanAmount, l.RecoveredAmount, l.OutstandingAmount,
                 l.IssueDate, l.IssuedByUserName, l.LoanStatus, l.PrintCount
             }).ToListAsync();
@@ -105,7 +106,7 @@ public class LoanController : ControllerBase
         var q = await ScopedQueryAsync();
         var l = await q.Where(x => x.Id == id).Select(l => new
         {
-            loanId = l.Id, l.GrowerCode, GrowerName = l.Grower.GrowerName, FatherName = l.Grower.FatherName,
+            loanId = l.Id, l.GrowerId, l.GrowerCode, GrowerName = l.Grower.GrowerName, FatherName = l.Grower.FatherName,
             VillageName = l.Grower.Village.VillageName, LoanTypeName = l.LoanType.LoanTypeName,
             l.LoanAmount, l.RecoveredAmount, l.OutstandingAmount, l.IssueDate, l.IssuedByUserName,
             l.LoanStatus, l.Remarks, l.PrintCount
@@ -114,19 +115,17 @@ public class LoanController : ControllerBase
         return l == null ? NotFound(new { message = "Loan not found." }) : Ok(l);
     }
 
-    /// <summary>Outstanding loan summary for a Grower - groundwork for Phase 9 Payment auto-deduction.
-    /// growerCode is a query parameter (not a path segment) because codes like "101/1" contain '/'
-    /// which ASP.NET Core routing never decodes from a path segment.</summary>
+    /// <summary>Outstanding loan summary for a six-digit Grower ID.</summary>
     [HttpGet("outstanding")]
-    public async Task<IActionResult> Outstanding([FromQuery] string growerCode)
+    public async Task<IActionResult> Outstanding([FromQuery] int growerId)
     {
         if (Deny("View") is { } d) return d;
-        if (string.IsNullOrWhiteSpace(growerCode)) return BadRequest(new { message = "growerCode is required. Example: 101/1" });
-        var loans = await _db.Loans.Where(l => l.GrowerCode == growerCode.Trim() && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
+        if (growerId < 100001) return BadRequest(new { message = "growerId is required. Example: 100001" });
+        var loans = await _db.Loans.Where(l => l.GrowerId == growerId && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
             .OrderBy(l => l.IssueDate)
             .Select(l => new { loanId = l.Id, LoanTypeName = l.LoanType.LoanTypeName, l.LoanAmount, l.RecoveredAmount, l.OutstandingAmount, l.IssueDate })
             .ToListAsync();
-        return Ok(new { growerCode = growerCode.Trim(), totalOutstanding = loans.Sum(l => l.OutstandingAmount), loans });
+        return Ok(new { growerId, totalOutstanding = loans.Sum(l => l.OutstandingAmount), loans });
     }
 
     [HttpPost]
@@ -135,9 +134,10 @@ public class LoanController : ControllerBase
         if (Deny("Create") is { } d) return d;
         if (IsDuplicateRequest(req.IdempotencyKey, out var dup)) return dup!;
 
-        var grower = await _db.Growers.Include(g => g.Village)
-            .FirstOrDefaultAsync(g => g.GrowerCode == req.GrowerCode.Trim() && !g.IsDeleted);
-        if (grower == null) return NotFound(new { message = $"No grower found with code '{req.GrowerCode}'. Example: 101/1" });
+        var grower = req.GrowerId > 0
+            ? await _db.Growers.Include(g => g.Village).FirstOrDefaultAsync(g => g.Id == req.GrowerId && !g.IsDeleted)
+            : await _db.Growers.Include(g => g.Village).FirstOrDefaultAsync(g => g.GrowerCode == req.GrowerCode.Trim() && !g.IsDeleted);
+        if (grower == null) return NotFound(new { message = $"No grower found with ID '{req.GrowerId}'. Example: 100001" });
         if (!grower.Status) return Conflict(new { message = $"Grower '{grower.GrowerName}' is INACTIVE and cannot be used." });
 
         var loanType = await _db.LoanTypes.FirstOrDefaultAsync(t => t.Id == req.LoanTypeId && !t.IsDeleted && t.Status);
@@ -277,18 +277,19 @@ public class LoanRecoveryController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] int? loanId, [FromQuery] string? growerCode,
+    public async Task<IActionResult> List([FromQuery] int? loanId, [FromQuery] int? growerId, [FromQuery] string? growerCode,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         if (Deny("View") is { } d) return d;
         var q = await ScopedQueryAsync();
         if (loanId.HasValue) q = q.Where(r => r.LoanId == loanId);
-        if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(r => r.GrowerCode == growerCode.Trim());
+        if (growerId.HasValue) q = q.Where(r => r.GrowerId == growerId.Value);
+        else if (!string.IsNullOrWhiteSpace(growerCode)) q = q.Where(r => r.GrowerCode == growerCode.Trim());
         var total = await q.CountAsync();
         var items = await q.OrderByDescending(r => r.Id).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(r => new
             {
-                recoveryId = r.Id, r.LoanId, r.GrowerCode, GrowerName = r.Loan.Grower.GrowerName,
+                recoveryId = r.Id, r.LoanId, r.GrowerId, r.GrowerCode, GrowerName = r.Loan.Grower.GrowerName,
                 r.RecoveryAmount, r.RecoveryDate, r.RecoveredByUserName, r.RecoveryStatus, r.PrintCount
             }).ToListAsync();
         return Ok(new { items, totalCount = total, page, pageSize });
@@ -301,7 +302,7 @@ public class LoanRecoveryController : ControllerBase
         var q = await ScopedQueryAsync();
         var r = await q.Where(x => x.Id == id).Select(r => new
         {
-            recoveryId = r.Id, r.LoanId, r.GrowerCode, GrowerName = r.Loan.Grower.GrowerName,
+            recoveryId = r.Id, r.LoanId, r.GrowerId, r.GrowerCode, GrowerName = r.Loan.Grower.GrowerName,
             r.RecoveryAmount, r.RecoveryDate, r.RecoveredByUserName, r.Remarks, r.RecoveryStatus, r.PrintCount
         }).FirstOrDefaultAsync();
         // 404 (not 403) for out-of-scope IDs: does not leak other farmers' record existence

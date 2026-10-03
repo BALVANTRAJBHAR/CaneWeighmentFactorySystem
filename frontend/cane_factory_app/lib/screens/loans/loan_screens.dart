@@ -15,10 +15,16 @@ class LoanTypesScreen extends StatelessWidget {
         module: 'LoanType',
         endpoint: '/api/loan-types',
         fields: [
-          FieldSpec('loanTypeName', 'Loan Type Name', hint: 'Example: Fertilizer Loan', maxLength: 80),
-          FieldSpec('description', 'Description', hint: 'Optional description', required: false, maxLength: 250),
+          FieldSpec('loanTypeName', 'Loan Type Name',
+              hint: 'Example: Fertilizer Loan', maxLength: 80),
+          FieldSpec('description', 'Description',
+              hint: 'Optional description', required: false, maxLength: 250),
         ],
-        columns: [ColumnSpec('id', 'ID'), ColumnSpec('loanTypeName', 'Loan Type'), ColumnSpec('description', 'Description')],
+        columns: [
+          ColumnSpec('id', 'ID'),
+          ColumnSpec('loanTypeName', 'Loan Type'),
+          ColumnSpec('description', 'Description')
+        ],
       );
 }
 
@@ -30,7 +36,7 @@ class LoanScreen extends StatefulWidget {
 }
 
 class _LoanScreenState extends State<LoanScreen> {
-  final _growerCode = TextEditingController();
+  final _growerId = TextEditingController();
   Map<String, dynamic>? _grower;
   String? _growerError;
   int? _loanTypeId;
@@ -48,10 +54,19 @@ class _LoanScreenState extends State<LoanScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _growerId.dispose();
+    _amount.dispose();
+    _remarks.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadTypes() async {
     try {
       final res = await ApiClient.instance.dio.get('/api/loan-types');
-      if (res.statusCode == 200 && mounted) setState(() => _loanTypes = res.data['items']);
+      if (res.statusCode == 200 && mounted)
+        setState(() => _loanTypes = res.data['items']);
     } catch (_) {}
   }
 
@@ -59,7 +74,8 @@ class _LoanScreenState extends State<LoanScreen> {
     setState(() => _loading = true);
     try {
       final res = await ApiClient.instance.dio.get('/api/loans');
-      if (res.statusCode == 200 && mounted) setState(() => _items = res.data['items']);
+      if (res.statusCode == 200 && mounted)
+        setState(() => _items = res.data['items']);
     } catch (_) {}
     if (mounted) setState(() => _loading = false);
   }
@@ -67,7 +83,9 @@ class _LoanScreenState extends State<LoanScreen> {
   void _toast(String msg, {bool error = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(msg),
-        backgroundColor: error ? Theme.of(context).colorScheme.error : const Color(0xFF2E7D32)));
+        backgroundColor: error
+            ? Theme.of(context).colorScheme.error
+            : const Color(0xFF2E7D32)));
   }
 
   Future<void> _lookupGrower() async {
@@ -75,8 +93,14 @@ class _LoanScreenState extends State<LoanScreen> {
       _grower = null;
       _growerError = null;
     });
+    final id = int.tryParse(_growerId.text.trim());
+    if (id == null || id < 100001 || id > 999999) {
+      setState(() => _growerError =
+          'Enter a valid 6-digit Grower ID (for example 100001).');
+      return;
+    }
     final res = await ApiClient.instance.dio
-        .get('/api/growers/by-code', queryParameters: {'code': _growerCode.text.trim()});
+        .get('/api/growers/by-id', queryParameters: {'id': id});
     setState(() {
       if (res.statusCode == 200) {
         _grower = Map<String, dynamic>.from(res.data);
@@ -87,24 +111,28 @@ class _LoanScreenState extends State<LoanScreen> {
   }
 
   Future<void> _issue() async {
-    if (_grower == null) return _toast('Lookup a valid Grower Code first (press ENTER).', error: true);
+    if (_grower == null)
+      return _toast('Lookup a valid 6-digit Grower ID first (press ENTER).',
+          error: true);
     if (_loanTypeId == null) return _toast('Select Loan Type.', error: true);
     final amt = double.tryParse(_amount.text) ?? 0;
-    if (amt <= 0) return _toast('Enter a valid Loan Amount greater than 0.', error: true);
+    if (amt <= 0)
+      return _toast('Enter a valid Loan Amount greater than 0.', error: true);
     setState(() => _saving = true);
     final res = await ApiClient.instance.dio.post('/api/loans', data: {
-      'growerCode': _grower!['growerCode'],
+      'growerId': _grower!['growerId'],
       'loanTypeId': _loanTypeId,
       'loanAmount': amt,
       'remarks': _remarks.text.trim().isEmpty ? null : _remarks.text.trim(),
-      'idempotencyKey': 'loan-${_grower!['growerCode']}-${DateTime.now().millisecondsSinceEpoch ~/ 30000}',
+      'idempotencyKey':
+          'loan-${_grower!['growerId']}-${DateTime.now().millisecondsSinceEpoch ~/ 30000}',
     });
     setState(() => _saving = false);
     if (res.statusCode == 200) {
       _toast(res.data['message']);
       setState(() {
         _grower = null;
-        _growerCode.clear();
+        _growerId.clear();
         _amount.clear();
         _remarks.clear();
         _loanTypeId = null;
@@ -133,18 +161,27 @@ class _LoanScreenState extends State<LoanScreen> {
         title: Text('Cancel Loan $loanId?'),
         content: TextField(
             controller: reasonCtl,
-            decoration: const InputDecoration(labelText: 'Cancellation Reason (min 5 characters)')),
+            decoration: const InputDecoration(
+                labelText: 'Cancellation Reason (min 5 characters)')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Back')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Cancel Loan')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Back')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Cancel Loan')),
         ],
       ),
     );
     if (ok != true) return;
-    final res = await ApiClient.instance.dio
-        .post('/api/loans/$loanId/cancel', data: {'reason': reasonCtl.text.trim()});
+    final res = await ApiClient.instance.dio.post('/api/loans/$loanId/cancel',
+        data: {'reason': reasonCtl.text.trim()});
     if (!mounted) return;
-    _toast(res.statusCode == 200 ? res.data['message'] : ApiClient.errorMessage(res), error: res.statusCode != 200);
+    _toast(
+        res.statusCode == 200
+            ? res.data['message']
+            : ApiClient.errorMessage(res),
+        error: res.statusCode != 200);
     _load();
   }
 
@@ -160,74 +197,121 @@ class _LoanScreenState extends State<LoanScreen> {
           Card(
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('ISSUE LOAN', style: TextStyle(fontWeight: FontWeight.w800, color: Theme.of(context).colorScheme.primary)),
-                const SizedBox(height: 10),
-                Wrap(spacing: 12, runSpacing: 12, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                  SizedBox(
-                    width: 200,
-                    child: TextField(
-                      controller: _growerCode,
-                      decoration: const InputDecoration(
-                          labelText: 'Grower Code', hintText: 'Example: 101/1', prefixIcon: Icon(Icons.badge_outlined, size: 18)),
-                      onSubmitted: (_) => _lookupGrower(),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('ISSUE LOAN',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.primary)),
+                    const SizedBox(height: 10),
+                    Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 200,
+                            child: TextField(
+                              controller: _growerId,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly
+                              ],
+                              maxLength: 6,
+                              decoration: const InputDecoration(
+                                  labelText: 'Grower ID',
+                                  hintText: 'Example: 100001',
+                                  counterText: '',
+                                  prefixIcon:
+                                      Icon(Icons.badge_outlined, size: 18)),
+                              onSubmitted: (_) => _lookupGrower(),
+                            ),
+                          ),
+                          FilledButton.tonal(
+                              onPressed: _lookupGrower,
+                              child: const Text('Lookup (Enter)')),
+                          SizedBox(
+                            width: 220,
+                            child: DropdownButtonFormField<int>(
+                              value: _loanTypeId,
+                              decoration: const InputDecoration(
+                                  labelText: 'Loan Type',
+                                  hintText: 'Select Loan Type'),
+                              items: [
+                                for (final t in _loanTypes)
+                                  DropdownMenuItem(
+                                      value: t['id'] as int,
+                                      child: Text(t['loanTypeName']))
+                              ],
+                              onChanged: (v) => setState(() => _loanTypeId = v),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 160,
+                            child: TextField(
+                              controller: _amount,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              inputFormatters: [
+                                FilteringTextInputFormatter.allow(
+                                    RegExp(r'^\d*\.?\d{0,2}'))
+                              ],
+                              decoration: const InputDecoration(
+                                  labelText: 'Loan Amount (Rs)',
+                                  hintText: 'Example: 5000.00'),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 260,
+                            child: TextField(
+                              controller: _remarks,
+                              decoration: const InputDecoration(
+                                  labelText: 'Remarks (optional)'),
+                            ),
+                          ),
+                        ]),
+                    if (_grower != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10),
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                              color: const Color(0xFF2E7D32)
+                                  .withValues(alpha: 0.10),
+                              borderRadius: BorderRadius.circular(8)),
+                          child: Text(
+                              '${_grower!['growerName']}  S/o ${_grower!['fatherName']}  •  Village: ${_grower!['villageName']}',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600)),
+                        ),
+                      ),
+                    if (_growerError != null)
+                      Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(_growerError!,
+                              style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error))),
+                    const SizedBox(height: 14),
+                    FilledButton.icon(
+                      onPressed: _saving ? null : _issue,
+                      icon: const Icon(Icons.savings_outlined),
+                      label: Text(_saving ? 'Issuing...' : 'ISSUE LOAN'),
+                      style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 30, vertical: 16)),
                     ),
-                  ),
-                  FilledButton.tonal(onPressed: _lookupGrower, child: const Text('Lookup (Enter)')),
-                  SizedBox(
-                    width: 220,
-                    child: DropdownButtonFormField<int>(
-                      value: _loanTypeId,
-                      decoration: const InputDecoration(labelText: 'Loan Type', hintText: 'Select Loan Type'),
-                      items: [for (final t in _loanTypes) DropdownMenuItem(value: t['id'] as int, child: Text(t['loanTypeName']))],
-                      onChanged: (v) => setState(() => _loanTypeId = v),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 160,
-                    child: TextField(
-                      controller: _amount,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))],
-                      decoration: const InputDecoration(labelText: 'Loan Amount (Rs)', hintText: 'Example: 5000.00'),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 260,
-                    child: TextField(
-                      controller: _remarks,
-                      decoration: const InputDecoration(labelText: 'Remarks (optional)'),
-                    ),
-                  ),
-                ]),
-                if (_grower != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 10),
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                          color: const Color(0xFF2E7D32).withValues(alpha: 0.10), borderRadius: BorderRadius.circular(8)),
-                      child: Text('${_grower!['growerName']}  S/o ${_grower!['fatherName']}  •  Village: ${_grower!['villageName']}',
-                          style: const TextStyle(fontWeight: FontWeight.w600)),
-                    ),
-                  ),
-                if (_growerError != null)
-                  Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(_growerError!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
-                const SizedBox(height: 14),
-                FilledButton.icon(
-                  onPressed: _saving ? null : _issue,
-                  icon: const Icon(Icons.savings_outlined),
-                  label: Text(_saving ? 'Issuing...' : 'ISSUE LOAN'),
-                  style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 16)),
-                ),
-              ]),
+                  ]),
             ),
           ),
         const SizedBox(height: 10),
         Row(children: [
-          Text('Loan Register', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+          Text('Loan Register',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700)),
           const Spacer(),
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ]),
@@ -253,19 +337,27 @@ class _LoanScreenState extends State<LoanScreen> {
                       ], rows: [
                         for (final l in _items)
                           DataRow(cells: [
-                            DataCell(Text('${l['loanId']}', style: const TextStyle(fontWeight: FontWeight.w700))),
-                            DataCell(Text('${l['growerCode']} ${l['growerName']}')),
+                            DataCell(Text('${l['loanId']}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700))),
+                            DataCell(
+                                Text('${l['growerId']} ${l['growerName']}')),
                             DataCell(Text('${l['villageName']}')),
                             DataCell(Text('${l['loanTypeName']}')),
-                            DataCell(Text((l['loanAmount'] as num).toStringAsFixed(2))),
-                            DataCell(Text((l['recoveredAmount'] as num).toStringAsFixed(2))),
-                            DataCell(Text((l['outstandingAmount'] as num).toStringAsFixed(2))),
+                            DataCell(Text(
+                                (l['loanAmount'] as num).toStringAsFixed(2))),
+                            DataCell(Text((l['recoveredAmount'] as num)
+                                .toStringAsFixed(2))),
+                            DataCell(Text((l['outstandingAmount'] as num)
+                                .toStringAsFixed(2))),
                             DataCell(_statusChip(l['loanStatus'])),
                             if (canCancel)
-                              DataCell(l['loanStatus'] == 'ACTIVE' && l['recoveredAmount'] == 0
+                              DataCell(l['loanStatus'] == 'ACTIVE' &&
+                                      l['recoveredAmount'] == 0
                                   ? IconButton(
                                       tooltip: 'Cancel Loan',
-                                      icon: const Icon(Icons.cancel_outlined, size: 18),
+                                      icon: const Icon(Icons.cancel_outlined,
+                                          size: 18),
                                       onPressed: () => _cancelLoan(l['loanId']))
                                   : const SizedBox.shrink()),
                           ]),
@@ -286,7 +378,8 @@ class _LoanScreenState extends State<LoanScreen> {
       _ => Colors.grey,
     };
     return Chip(
-        label: Text(s ?? '-', style: const TextStyle(fontSize: 10, color: Colors.white)),
+        label: Text(s ?? '-',
+            style: const TextStyle(fontSize: 10, color: Colors.white)),
         backgroundColor: color,
         visualDensity: VisualDensity.compact);
   }
@@ -319,7 +412,8 @@ class _LoanRecoveryScreenState extends State<LoanRecoveryScreen> {
     setState(() => _loading = true);
     try {
       final res = await ApiClient.instance.dio.get('/api/loan-recoveries');
-      if (res.statusCode == 200 && mounted) setState(() => _items = res.data['items']);
+      if (res.statusCode == 200 && mounted)
+        setState(() => _items = res.data['items']);
     } catch (_) {}
     if (mounted) setState(() => _loading = false);
   }
@@ -327,7 +421,9 @@ class _LoanRecoveryScreenState extends State<LoanRecoveryScreen> {
   void _toast(String msg, {bool error = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(msg),
-        backgroundColor: error ? Theme.of(context).colorScheme.error : const Color(0xFF2E7D32)));
+        backgroundColor: error
+            ? Theme.of(context).colorScheme.error
+            : const Color(0xFF2E7D32)));
   }
 
   Future<void> _fetchLoan() async {
@@ -348,15 +444,20 @@ class _LoanRecoveryScreenState extends State<LoanRecoveryScreen> {
   }
 
   Future<void> _record() async {
-    if (_loan == null) return _toast('Fetch a valid Loan ID first (press ENTER).', error: true);
+    if (_loan == null)
+      return _toast('Fetch a valid Loan ID first (press ENTER).', error: true);
     final amt = double.tryParse(_amount.text) ?? 0;
-    if (amt <= 0) return _toast('Enter a valid Recovery Amount greater than 0.', error: true);
+    if (amt <= 0)
+      return _toast('Enter a valid Recovery Amount greater than 0.',
+          error: true);
     setState(() => _saving = true);
-    final res = await ApiClient.instance.dio.post('/api/loan-recoveries', data: {
+    final res =
+        await ApiClient.instance.dio.post('/api/loan-recoveries', data: {
       'loanId': _loan!['loanId'],
       'recoveryAmount': amt,
       'remarks': _remarks.text.trim().isEmpty ? null : _remarks.text.trim(),
-      'idempotencyKey': 'lr-${_loan!['loanId']}-${DateTime.now().millisecondsSinceEpoch ~/ 15000}',
+      'idempotencyKey':
+          'lr-${_loan!['loanId']}-${DateTime.now().millisecondsSinceEpoch ~/ 15000}',
     });
     setState(() => _saving = false);
     if (res.statusCode == 200) {
@@ -391,18 +492,28 @@ class _LoanRecoveryScreenState extends State<LoanRecoveryScreen> {
         title: Text('Reverse Recovery $recoveryId?'),
         content: TextField(
             controller: reasonCtl,
-            decoration: const InputDecoration(labelText: 'Reversal Reason (min 5 characters)')),
+            decoration: const InputDecoration(
+                labelText: 'Reversal Reason (min 5 characters)')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Back')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Reverse')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Back')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Reverse')),
         ],
       ),
     );
     if (ok != true) return;
-    final res = await ApiClient.instance.dio
-        .post('/api/loan-recoveries/$recoveryId/reverse', data: {'reason': reasonCtl.text.trim()});
+    final res = await ApiClient.instance.dio.post(
+        '/api/loan-recoveries/$recoveryId/reverse',
+        data: {'reason': reasonCtl.text.trim()});
     if (!mounted) return;
-    _toast(res.statusCode == 200 ? res.data['message'] : ApiClient.errorMessage(res), error: res.statusCode != 200);
+    _toast(
+        res.statusCode == 200
+            ? res.data['message']
+            : ApiClient.errorMessage(res),
+        error: res.statusCode != 200);
     _load();
   }
 
@@ -418,70 +529,106 @@ class _LoanRecoveryScreenState extends State<LoanRecoveryScreen> {
           Card(
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('RECORD RECOVERY', style: TextStyle(fontWeight: FontWeight.w800, color: Theme.of(context).colorScheme.primary)),
-                const SizedBox(height: 10),
-                Wrap(spacing: 12, runSpacing: 12, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                  SizedBox(
-                    width: 200,
-                    child: TextField(
-                      controller: _loanIdCtl,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      decoration: const InputDecoration(
-                          labelText: 'Loan ID', hintText: 'Example: 1', prefixIcon: Icon(Icons.receipt_long, size: 18)),
-                      onSubmitted: (_) => _fetchLoan(),
-                    ),
-                  ),
-                  FilledButton.tonal(onPressed: _fetchLoan, child: const Text('Fetch (Enter)')),
-                  SizedBox(
-                    width: 160,
-                    child: TextField(
-                      controller: _amount,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))],
-                      decoration: const InputDecoration(labelText: 'Recovery Amount (Rs)', hintText: 'Example: 1000.00'),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 260,
-                    child: TextField(
-                      controller: _remarks,
-                      decoration: const InputDecoration(labelText: 'Remarks (optional)'),
-                    ),
-                  ),
-                ]),
-                if (_loan != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 10),
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8)),
-                      child: Text(
-                        '${_loan!['growerCode']} ${_loan!['growerName']}  •  Loan Amount: Rs ${(_loan!['loanAmount'] as num).toStringAsFixed(2)}'
-                        '  •  Outstanding: Rs ${(_loan!['outstandingAmount'] as num).toStringAsFixed(2)}  •  Status: ${_loan!['loanStatus']}',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('RECORD RECOVERY',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.primary)),
+                    const SizedBox(height: 10),
+                    Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 200,
+                            child: TextField(
+                              controller: _loanIdCtl,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly
+                              ],
+                              decoration: const InputDecoration(
+                                  labelText: 'Loan ID',
+                                  hintText: 'Example: 1',
+                                  prefixIcon:
+                                      Icon(Icons.receipt_long, size: 18)),
+                              onSubmitted: (_) => _fetchLoan(),
+                            ),
+                          ),
+                          FilledButton.tonal(
+                              onPressed: _fetchLoan,
+                              child: const Text('Fetch (Enter)')),
+                          SizedBox(
+                            width: 160,
+                            child: TextField(
+                              controller: _amount,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              inputFormatters: [
+                                FilteringTextInputFormatter.allow(
+                                    RegExp(r'^\d*\.?\d{0,2}'))
+                              ],
+                              decoration: const InputDecoration(
+                                  labelText: 'Recovery Amount (Rs)',
+                                  hintText: 'Example: 1000.00'),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 260,
+                            child: TextField(
+                              controller: _remarks,
+                              decoration: const InputDecoration(
+                                  labelText: 'Remarks (optional)'),
+                            ),
+                          ),
+                        ]),
+                    if (_loan != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10),
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(8)),
+                          child: Text(
+                            '${_loan!['growerId']} ${_loan!['growerName']}  •  Loan Amount: Rs ${(_loan!['loanAmount'] as num).toStringAsFixed(2)}'
+                            '  •  Outstanding: Rs ${(_loan!['outstandingAmount'] as num).toStringAsFixed(2)}  •  Status: ${_loan!['loanStatus']}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
                       ),
+                    if (_loanError != null)
+                      Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(_loanError!,
+                              style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error))),
+                    const SizedBox(height: 14),
+                    FilledButton.icon(
+                      onPressed: _saving ? null : _record,
+                      icon: const Icon(Icons.currency_rupee_outlined),
+                      label: Text(_saving ? 'Recording...' : 'RECORD RECOVERY'),
+                      style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 30, vertical: 16)),
                     ),
-                  ),
-                if (_loanError != null)
-                  Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(_loanError!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
-                const SizedBox(height: 14),
-                FilledButton.icon(
-                  onPressed: _saving ? null : _record,
-                  icon: const Icon(Icons.currency_rupee_outlined),
-                  label: Text(_saving ? 'Recording...' : 'RECORD RECOVERY'),
-                  style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 16)),
-                ),
-              ]),
+                  ]),
             ),
           ),
         const SizedBox(height: 10),
         Row(children: [
-          Text('Recovery Register', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+          Text('Recovery Register',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700)),
           const Spacer(),
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ]),
@@ -502,26 +649,40 @@ class _LoanRecoveryScreenState extends State<LoanRecoveryScreen> {
                         const DataColumn(label: Text('Date')),
                         const DataColumn(label: Text('By')),
                         const DataColumn(label: Text('Status')),
-                        if (canReverse) const DataColumn(label: Text('Actions')),
+                        if (canReverse)
+                          const DataColumn(label: Text('Actions')),
                       ], rows: [
                         for (final r in _items)
                           DataRow(cells: [
-                            DataCell(Text('${r['recoveryId']}', style: const TextStyle(fontWeight: FontWeight.w700))),
+                            DataCell(Text('${r['recoveryId']}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700))),
                             DataCell(Text('${r['loanId']}')),
-                            DataCell(Text('${r['growerCode']} ${r['growerName']}')),
-                            DataCell(Text((r['recoveryAmount'] as num).toStringAsFixed(2))),
-                            DataCell(Text('${r['recoveryDate']}'.replaceFirst('T', ' ').split('.').first)),
+                            DataCell(
+                                Text('${r['growerId']} ${r['growerName']}')),
+                            DataCell(Text((r['recoveryAmount'] as num)
+                                .toStringAsFixed(2))),
+                            DataCell(Text('${r['recoveryDate']}'
+                                .replaceFirst('T', ' ')
+                                .split('.')
+                                .first)),
                             DataCell(Text('${r['recoveredByUserName']}')),
                             DataCell(Chip(
-                                label: Text(r['recoveryStatus'] ?? '-', style: const TextStyle(fontSize: 10, color: Colors.white)),
-                                backgroundColor: r['recoveryStatus'] == 'ACTIVE' ? const Color(0xFF2E7D32) : Colors.red,
+                                label: Text(r['recoveryStatus'] ?? '-',
+                                    style: const TextStyle(
+                                        fontSize: 10, color: Colors.white)),
+                                backgroundColor: r['recoveryStatus'] == 'ACTIVE'
+                                    ? const Color(0xFF2E7D32)
+                                    : Colors.red,
                                 visualDensity: VisualDensity.compact)),
                             if (canReverse)
                               DataCell(r['recoveryStatus'] == 'ACTIVE'
                                   ? IconButton(
                                       tooltip: 'Reverse',
-                                      icon: const Icon(Icons.undo_outlined, size: 18),
-                                      onPressed: () => _reverse(r['recoveryId']))
+                                      icon: const Icon(Icons.undo_outlined,
+                                          size: 18),
+                                      onPressed: () =>
+                                          _reverse(r['recoveryId']))
                                   : const SizedBox.shrink()),
                           ]),
                       ]),

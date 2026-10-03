@@ -12,7 +12,7 @@ gaps on rollback/restart).
 
 ## Design
 Table `NumberSequences(Name NVARCHAR(64) PK, NextValue BIGINT)` — one row per sequence:
-`ZoneId`, `VillageId` (start 101), `GrowerId`, `GrowerSeq:{villageId}` (per-village grower code),
+`ZoneId`, `VillageId` (start 101), `GrowerId` (six-digit, start 100001), `GrowerSeq:{villageId}` (legacy internal village sequence),
 `PurchaseId`, later `AdviceNumber`, `LoanId`, `PaymentId`, …
 
 Reservation (`SequenceGenerator.NextAsync`) runs **inside the caller's DB transaction**:
@@ -39,7 +39,7 @@ await tx.CommitAsync();          // number is consumed only here
 ```
 
 ## Grower codes
-`GrowerCode = "{VillageId}/{GrowerSequence}"` using per-village sequence rows
+The public identifier is `Grower.Id` (`100001`, `100002`, ...). `GrowerCode = "{VillageId}/{GrowerSequence}"` is retained only as a legacy/internal compatibility value
 (`GrowerSeq:101` → 101/1, 101/2; `GrowerSeq:102` → 102/1). Uniqueness is additionally guaranteed
 by unique indexes on `(VillageId, GrowerSequence)` and `GrowerCode`.
 

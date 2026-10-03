@@ -45,7 +45,12 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> List([FromQuery] string? search, [FromQuery] bool includeInactive = false,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
+        // The system Developer account is hidden from Admin and every other
+        // role. A signed-in Developer may see the identity for diagnostics,
+        // but it remains reserved and cannot be edited from User Management.
         var q = _db.Users.Where(u => !u.IsDeleted);
+        if (!IsDeveloper)
+            q = q.Where(u => !u.UserRoles.Any(ur => ur.Role.Name == "Developer"));
         if (!includeInactive) q = q.Where(u => u.Status);
         if (!string.IsNullOrWhiteSpace(search))
             q = q.Where(u => u.Username.Contains(search) || u.FullName.Contains(search) || u.Mobile.Contains(search));
@@ -84,8 +89,8 @@ public class UsersController : ControllerBase
         if (req.RoleIds.Count == 0) return BadRequest(new { message = "At least one role is required." });
         var validRoles = await _db.Roles.Where(r => req.RoleIds.Contains(r.Id) && !r.IsDeleted).ToListAsync();
         if (validRoles.Count != req.RoleIds.Count) return BadRequest(new { message = "One or more roles do not exist." });
-        if (!IsDeveloper && validRoles.Any(r => r.Name == "Developer"))
-            return await RejectDeveloperRoleAttemptAsync("Create", null, req.RoleIds);
+        if (validRoles.Any(r => r.Name == "Developer"))
+            return BadRequest(new { message = "Developer role is reserved for the system developer and cannot be assigned from User Management." });
 
         var user = new User
         {
@@ -117,8 +122,8 @@ public class UsersController : ControllerBase
         var validRoles = await _db.Roles.Where(r => req.RoleIds.Contains(r.Id) && !r.IsDeleted).ToListAsync();
         if (validRoles.Count != req.RoleIds.Distinct().Count()) return BadRequest(new { message = "One or more roles do not exist." });
         var targetIsDeveloper = await _db.UserRoles.AnyAsync(ur => ur.UserId == id && ur.Role.Name == "Developer");
-        if (!IsDeveloper && (targetIsDeveloper || validRoles.Any(r => r.Name == "Developer")))
-            return await RejectDeveloperRoleAttemptAsync("Edit", id.ToString(), req.RoleIds);
+        if (targetIsDeveloper || validRoles.Any(r => r.Name == "Developer"))
+            return BadRequest(new { message = "Developer accounts and the Developer role cannot be managed from User Management." });
 
         var old = new { user.FullName, user.Mobile, user.Email, user.Status, Roles = user.UserRoles.Select(r => r.RoleId).ToList() };
         user.FullName = Validators.Norm(req.FullName);

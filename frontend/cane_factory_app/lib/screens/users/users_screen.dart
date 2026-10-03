@@ -35,7 +35,6 @@ class _UsersScreenState extends State<UsersScreen> {
   }
 
   Future<void> _openForm([Map<String, dynamic>? existing]) async {
-    final isDeveloper = context.read<AuthProvider>().hasRole('Developer');
     final c = {
       'username': TextEditingController(text: existing?['username'] ?? ''),
       'fullName': TextEditingController(text: existing?['fullName'] ?? ''),
@@ -73,13 +72,16 @@ class _UsersScreenState extends State<UsersScreen> {
                         hintText: 'Example: Ram Prasad'),
                     onChanged: (value) {
                       if (!fullNameHiEdited) {
-                        c['fullNameHi']!.text = HindiTransliterator.transliterate(value);
+                        c['fullNameHi']!.text =
+                            HindiTransliterator.transliterate(value);
                       }
                     }),
                 const SizedBox(height: 10),
                 TextField(
                     controller: c['fullNameHi'],
-                    decoration: const InputDecoration(labelText: 'Full Name (Hindi)', suffixIcon: Icon(Icons.translate)),
+                    decoration: const InputDecoration(
+                        labelText: 'Full Name (Hindi)',
+                        suffixIcon: Icon(Icons.translate)),
                     onChanged: (_) => fullNameHiEdited = true),
                 const SizedBox(height: 10),
                 TextField(
@@ -109,8 +111,8 @@ class _UsersScreenState extends State<UsersScreen> {
                     child: Text('Roles:',
                         style: Theme.of(ctx).textTheme.labelLarge)),
                 Wrap(spacing: 6, children: [
-                  for (final r in _roles.where((r) =>
-                      isDeveloper || r['name']?.toString() != 'Developer'))
+                  for (final r in _roles
+                      .where((r) => r['name']?.toString() != 'Developer'))
                     FilterChip(
                       label: Text(r['name']),
                       selected: selectedRoles.contains(r['id']),
@@ -173,6 +175,13 @@ class _UsersScreenState extends State<UsersScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
+    // Defense in depth: hide the reserved Developer identity locally for
+    // non-Developer sessions even if an older API deployment returns it.
+    final visibleUsers = auth.hasRole('Developer')
+        ? _users
+        : _users
+            .where((u) => !(u['roles'] as List).contains('Developer'))
+            .toList();
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -195,10 +204,10 @@ class _UsersScreenState extends State<UsersScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : ListView.separated(
-                    itemCount: _users.length,
+                    itemCount: visibleUsers.length,
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (_, i) {
-                      final u = _users[i];
+                      final u = visibleUsers[i];
                       return ListTile(
                         leading: CircleAvatar(
                             child: Text('${u['username']}'
@@ -218,8 +227,7 @@ class _UsersScreenState extends State<UsersScreen> {
                                   : Colors.grey,
                               visualDensity: VisualDensity.compact),
                           if (auth.can('User.Edit') &&
-                              (auth.hasRole('Developer') ||
-                                  !(u['roles'] as List).contains('Developer')))
+                              !(u['roles'] as List).contains('Developer'))
                             IconButton(
                                 icon: const Icon(Icons.edit_outlined, size: 18),
                                 onPressed: () =>

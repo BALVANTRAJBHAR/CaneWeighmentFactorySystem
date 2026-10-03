@@ -142,7 +142,7 @@ public class RatesController : ControllerBase
         if (Deny("Approve") is { } d) return d;
         var affected = await UnpaidQuery(varietyTypeId).Select(p => new
         {
-            p.Id, p.GrowerCode, p.FinalWeightQuintal, OldRate = p.Rate, OldAmount = p.PurchaseAmount,
+            p.Id, p.GrowerId, p.FinalWeightQuintal, OldRate = p.Rate, OldAmount = p.PurchaseAmount,
             NewRate = newRate,
             NewAmount = p.FinalWeightQuintal == null ? null : (decimal?)Math.Round(p.FinalWeightQuintal.Value * newRate, 2)
         }).ToListAsync();

@@ -31,13 +31,14 @@ public class SalePurchaseWeighmentController : ControllerBase
     private readonly ICameraCaptureService _capture;
     private readonly IMemoryCache _cache;
     private readonly ILogger<SalePurchaseWeighmentController> _log;
+    private readonly RateOverrideService _rateOverrides;
 
     public SalePurchaseWeighmentController(AppDbContext db, ICurrentUser current, IAuditService audit,
         ISequenceGenerator sequence, WeighingService weighing, ISmsService sms, ICameraCaptureService capture, IMemoryCache cache,
-        ILogger<SalePurchaseWeighmentController> log)
+        ILogger<SalePurchaseWeighmentController> log, RateOverrideService rateOverrides)
     {
         _db = db; _current = current; _audit = audit; _sequence = sequence; _weighing = weighing;
-        _sms = sms; _capture = capture; _cache = cache; _log = log;
+        _sms = sms; _capture = capture; _cache = cache; _log = log; _rateOverrides = rateOverrides;
     }
 
     private IActionResult? Deny(string action) => _current.HasPermission($"SalePurchase.{action}")
@@ -211,7 +212,9 @@ public class SalePurchaseWeighmentController : ControllerBase
                 record.GrossByUserId = _current.UserId;
                 record.GrossByUserName = _current.Username ?? "";
                 // Snapshot the item rate at final/gross time.  A later rate revision never alters this completed sale.
-                record.Rate = WeightCalculator.R2(itemRate.Rate);
+                record.Rate = await _rateOverrides.ValidateAndStageAsync("SALE", record.Id, itemRate.Rate, req.Rate,
+                    req.ApprovedByUserId, req.RateReasonId, req.RateOverrideRemark, req.RateEvidenceToken,
+                    _current.UserId!.Value, HttpContext.RequestAborted);
                 record.Amount = WeightCalculator.R2(finalWeight * record.Rate.Value);
                 record.WeighmentStatus = "COMPLETED";
                 record.UpdatedAt = DateTime.UtcNow;
@@ -224,6 +227,10 @@ public class SalePurchaseWeighmentController : ControllerBase
         catch (SalePurchaseStateException ex)
         {
             return StatusCode(ex.StatusCode, new { message = ex.Message });
+        }
+        catch (RateOverrideValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)
         {

@@ -34,7 +34,7 @@ generated migration script `database/scripts/02_schema_migration.sql`).
 ## Phase 3 — Grower / Rate / Purchase
 | Test | Result |
 |---|---|
-| Grower create → GrowerCode **101/1** (transactional per-village sequence) | ✅ |
+| Grower create → six-digit Grower ID **100001** (transactional continuous sequence) | ✅ |
 | Duplicate Aadhaar → **blocked** (hash-unique); Aadhaar stored AES-encrypted, masked in responses | ✅ |
 | Duplicate mobile / same name+father in village → 422 warning `requiresConfirmation` | ✅ |
 | Rate create 375.50 effective-dated; overlap of active periods blocked | ✅ |

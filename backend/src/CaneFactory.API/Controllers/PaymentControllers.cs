@@ -115,12 +115,14 @@ public class PaymentController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] string? growerCode, [FromQuery] string? status,
+    public async Task<IActionResult> List([FromQuery] int? growerId, [FromQuery] string? growerCode, [FromQuery] string? status,
         [FromQuery] int? adviceNumber, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         if (Deny("View") is { } d) return d;
         var q = await ScopedQueryAsync();
-        if (!string.IsNullOrWhiteSpace(growerCode))
+        if (growerId.HasValue)
+            q = q.Where(p => p.GrowerId == growerId.Value);
+        else if (!string.IsNullOrWhiteSpace(growerCode))
         {
             var search = growerCode.Trim();
             q = q.Where(p => p.GrowerCode.Contains(search) || p.Grower.GrowerName.Contains(search));
@@ -131,7 +133,7 @@ public class PaymentController : ControllerBase
         var items = await q.OrderByDescending(p => p.Id).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(p => new
             {
-                paymentId = p.Id, p.AdviceNumber, p.GrowerCode, GrowerName = p.Grower.GrowerName,
+                paymentId = p.Id, p.AdviceNumber, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName,
                 VillageName = p.Grower.Village.VillageName, p.TotalPurchaseAmount, p.LoanDeductedAmount,
                 p.NetPayableAmount, PaymentModeName = p.PaymentMode.ModeName, p.TransactionRefNumber,
                 p.PaymentDate, p.PaidByUserName, p.PaymentStatus, p.PrintCount
@@ -154,7 +156,7 @@ public class PaymentController : ControllerBase
             .OrderBy(pp => pp.PurchaseId).Select(pp => pp.PurchaseId).ToListAsync();
         return Ok(new
         {
-            paymentId = p.Id, p.AdviceNumber, p.GrowerCode, GrowerName = p.Grower.GrowerName,
+            paymentId = p.Id, p.AdviceNumber, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName,
             FatherName = p.Grower.FatherName, VillageName = p.Grower.Village.VillageName,
             p.TotalPurchaseAmount, p.LoanDeductedAmount, p.NetPayableAmount,
             PaymentModeName = p.PaymentMode.ModeName, p.TransactionRefNumber, p.PaymentDate,
@@ -166,7 +168,7 @@ public class PaymentController : ControllerBase
     /// total amount, and estimated loan deduction/net-payable a POST with the same criteria would
     /// produce. Lets the Flutter UI show the operator a confirmation screen first.</summary>
     [HttpGet("eligible-purchases")]
-    public async Task<IActionResult> EligiblePurchases([FromQuery] string selectionMode, [FromQuery] string? growerCode,
+    public async Task<IActionResult> EligiblePurchases([FromQuery] string selectionMode, [FromQuery] int? growerId, [FromQuery] string? growerCode,
         [FromQuery] int? purchaseId, [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate)
     {
         if (Deny("View") is { } d) return d;
@@ -182,11 +184,11 @@ public class PaymentController : ControllerBase
 
         // Date Range is a batch operation: each grower still receives an independent Payment ID,
         // Advice Number, cash-book row, evidence set and printable slip.
-        if (mode == "DATE_RANGE" && string.IsNullOrWhiteSpace(growerCode))
+        if (mode == "DATE_RANGE" && !growerId.HasValue && string.IsNullOrWhiteSpace(growerCode))
             return await PreviewDateRangeBatchAsync(fromDate, toDate);
 
         Grower? grower;
-        try { grower = await ResolveSelectionGrowerAsync(mode, growerCode, purchaseId, fromDate, toDate, includeVillage: true); }
+        try { grower = await ResolveSelectionGrowerAsync(mode, growerId, growerCode, purchaseId, fromDate, toDate, includeVillage: true); }
         catch (PaymentSelectionException ex) { return Conflict(new { message = ex.Message }); }
         if (grower == null) return NotFound(new { message = mode == "SINGLE"
             ? $"Purchase ID {purchaseId} does not exist." : "No eligible grower was found for the selected criteria." });
@@ -211,14 +213,14 @@ public class PaymentController : ControllerBase
                 return Conflict(new
                 {
                     message = $"Purchase ID {purchaseId} is not final yet. Tare is pending; payment is allowed only after Final Weight is saved.",
-                    growerCode = grower.GrowerCode,
+                    growerId = grower.Id, growerCode = grower.GrowerCode,
                     growerName = grower.GrowerName,
                     fatherName = grower.FatherName,
                     villageName = grower.Village?.VillageName ?? "-",
                     selectedPurchase
                 });
             if (selected.PaymentStatus != "PENDING")
-                return Ok(new { growerCode = grower.GrowerCode, growerName = grower.GrowerName,
+                return Ok(new { growerId = grower.Id, growerCode = grower.GrowerCode, growerName = grower.GrowerName,
                     fatherName = grower.FatherName, villageName = grower.Village?.VillageName ?? "-", selectedPurchase,
                     eligiblePurchases = Array.Empty<object>(),
                     outstandingLoans = Array.Empty<object>(), totalPurchaseAmount = 0m, totalOutstandingLoan = 0m,
@@ -232,12 +234,13 @@ public class PaymentController : ControllerBase
             .ToListAsync();
         var totalPurchaseAmount = WeightCalculator.R2(eligible.Sum(p => p.PurchaseAmount ?? 0));
         var totalFinalWeight = WeightCalculator.R2(eligible.Sum(p => p.FinalWeightQuintal ?? 0));
-        var outstandingLoans = await _db.Loans.Where(l => l.GrowerCode == grower.GrowerCode && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
+        var outstandingLoans = await _db.Loans.Where(l => l.GrowerId == grower.Id && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
             .OrderBy(l => l.IssueDate)
             .Select(l => new { loanId = l.Id, l.OutstandingAmount }).ToListAsync();
         var estimatedDeduction = WeightCalculator.R2(Math.Min(outstandingLoans.Sum(l => l.OutstandingAmount), totalPurchaseAmount));
         return Ok(new
         {
+            growerId = grower.Id,
             growerCode = grower.GrowerCode,
             growerName = grower.GrowerName,
             fatherName = grower.FatherName,
@@ -304,11 +307,11 @@ public class PaymentController : ControllerBase
         if (mode == "DATE_RANGE" && req.FromDate!.Value.Date > req.ToDate!.Value.Date)
             return BadRequest(new { message = "From Date must not be after To Date." });
 
-        if (mode == "DATE_RANGE" && string.IsNullOrWhiteSpace(req.GrowerCode))
+        if (mode == "DATE_RANGE" && !req.GrowerId.HasValue && string.IsNullOrWhiteSpace(req.GrowerCode))
             return await IssueDateRangeBatchAsync(req);
 
         Grower? grower;
-        try { grower = await ResolveSelectionGrowerAsync(mode, req.GrowerCode, req.PurchaseId, req.FromDate, req.ToDate, includeVillage: true); }
+        try { grower = await ResolveSelectionGrowerAsync(mode, req.GrowerId, req.GrowerCode, req.PurchaseId, req.FromDate, req.ToDate, includeVillage: true); }
         catch (PaymentSelectionException ex) { return Conflict(new { message = ex.Message }); }
         if (grower == null) return NotFound(new { message = mode == "SINGLE"
             ? $"Purchase ID {req.PurchaseId} does not exist." : "No eligible grower was found for the selected criteria." });
@@ -340,7 +343,7 @@ public class PaymentController : ControllerBase
 
         // Automatic Loan deduction - FIFO (oldest ACTIVE loan first), never exceeding the payable amount.
         var remaining = totalPurchaseAmount;
-        var activeLoans = await _db.Loans.Where(l => l.GrowerCode == grower.GrowerCode && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
+        var activeLoans = await _db.Loans.Where(l => l.GrowerId == grower.Id && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
             .OrderBy(l => l.IssueDate).ToListAsync();
         foreach (var loan in activeLoans)
         {
@@ -449,7 +452,8 @@ public class PaymentController : ControllerBase
             var placeholders = new Dictionary<string, string>
             {
                 ["GrowerName"] = grower.GrowerName,
-                ["GrowerCode"] = grower.GrowerCode,
+                ["GrowerCode"] = grower.Id.ToString(),
+                ["GrowerId"] = grower.Id.ToString(),
                 ["AdviceNumber"] = adviceNumber.ToString(),
                 ["TotalPurchaseAmount"] = totalPurchaseAmount.ToString("F2"),
                 ["LoanDeducted"] = totalDeducted.ToString("F2"),
@@ -532,7 +536,7 @@ public class PaymentController : ControllerBase
         var paymentSummaries = new List<object>();
         foreach (var result in completed)
             paymentSummaries.Add(new { paymentId = result.Payment.Id, adviceNumber = result.Payment.AdviceNumber,
-                growerCode = result.Grower.GrowerCode, growerName = result.Grower.GrowerName,
+                growerId = result.Grower.Id, growerCode = result.Grower.GrowerCode, growerName = result.Grower.GrowerName,
                 totalPurchaseAmount = result.Payment.TotalPurchaseAmount, loanDeductedAmount = result.Payment.LoanDeductedAmount,
                 netPayableAmount = result.Payment.NetPayableAmount, purchaseCount = result.PurchaseCount,
                 captureQueued = false, cashEvidenceRequired = isCash, autoPrint = await AutoPrintAsync(result.Payment.Id) });
@@ -558,7 +562,7 @@ public class PaymentController : ControllerBase
         var totalPurchaseAmount = WeightCalculator.R2(eligible.Sum(p => p.PurchaseAmount ?? 0));
         var remaining = totalPurchaseAmount;
         var totalDeducted = 0m;
-        var activeLoans = await _db.Loans.Where(l => l.GrowerCode == grower.GrowerCode && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
+        var activeLoans = await _db.Loans.Where(l => l.GrowerId == grower.Id && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
             .OrderBy(l => l.IssueDate).ToListAsync();
         foreach (var loan in activeLoans)
         {
@@ -621,7 +625,8 @@ public class PaymentController : ControllerBase
         {
             var placeholders = new Dictionary<string, string>
             {
-                ["GrowerName"] = grower.GrowerName, ["GrowerCode"] = grower.GrowerCode,
+                ["GrowerName"] = grower.GrowerName, ["GrowerCode"] = grower.Id.ToString(),
+                ["GrowerId"] = grower.Id.ToString(),
                 ["AdviceNumber"] = payment.AdviceNumber.ToString(), ["TotalPurchaseAmount"] = payment.TotalPurchaseAmount.ToString("F2"),
                 ["LoanDeducted"] = payment.LoanDeductedAmount.ToString("F2"), ["NetPayable"] = payment.NetPayableAmount.ToString("F2"),
                 ["PaymentMode"] = paymentModeName
@@ -647,12 +652,12 @@ public class PaymentController : ControllerBase
         if (string.IsNullOrWhiteSpace(grower.AccountHolderName) || grower.Bank == null
             || string.IsNullOrWhiteSpace(grower.Bank.BankName) || string.IsNullOrWhiteSpace(grower.Bank.BranchName)
             || string.IsNullOrWhiteSpace(grower.Bank.IFSC) || string.IsNullOrWhiteSpace(grower.BankAccountNumber))
-            return $"Bank payment cannot be completed for grower {grower.GrowerCode}. Add account holder name, bank name, branch, IFSC and account number in Grower Master.";
+            return $"Bank payment cannot be completed for Grower ID {grower.Id}. Add account holder name, bank name, branch, IFSC and account number in Grower Master.";
         return null;
     }
 
     /// <summary>Resolves the owner of a payment selection without trusting a grower code for a single purchase.</summary>
-    private async Task<Grower?> ResolveSelectionGrowerAsync(string mode, string? growerCode, int? purchaseId,
+    private async Task<Grower?> ResolveSelectionGrowerAsync(string mode, int? growerId, string? growerCode, int? purchaseId,
         DateTime? fromDate, DateTime? toDate, bool includeVillage = false)
     {
         if (mode == "SINGLE")
@@ -664,6 +669,13 @@ public class PaymentController : ControllerBase
                 : await _db.Growers.FirstOrDefaultAsync(g => g.Id == purchase.GrowerId && !g.IsDeleted);
         }
 
+        if (growerId.HasValue)
+        {
+            return includeVillage
+                ? await _db.Growers.Include(g => g.Village).Include(g => g.Bank)
+                    .FirstOrDefaultAsync(g => g.Id == growerId.Value && !g.IsDeleted)
+                : await _db.Growers.FirstOrDefaultAsync(g => g.Id == growerId.Value && !g.IsDeleted);
+        }
         if (!string.IsNullOrWhiteSpace(growerCode))
         {
             var text = growerCode.Trim();
@@ -671,7 +683,7 @@ public class PaymentController : ControllerBase
                     && (g.GrowerCode == text || g.GrowerName.Contains(text) || g.Mobile == text))
                 .OrderBy(g => g.GrowerCode).Take(2).ToListAsync();
             if (matches.Count > 1)
-                throw new PaymentSelectionException("More than one grower matches this name. Enter the Grower Code or full mobile number.");
+                throw new PaymentSelectionException("More than one grower matches this name. Enter the six-digit Grower ID.");
             if (matches.Count == 0) return null;
             if (!includeVillage) return matches[0];
             return await _db.Growers.Include(g => g.Village).Include(g => g.Bank)
@@ -816,11 +828,12 @@ public class PaymentController : ControllerBase
         {
             paymentId = payment.Id,
             payment.AdviceNumber,
+            payment.GrowerId,
             payment.GrowerCode,
             payment.NetPayableAmount,
             camera,
             configuredPath = root,
-            filenamePattern = @"{path}\yyyy-MM-dd\GrowerCode-AdviceNo-PurchaseId-PaymentId.jpg",
+            filenamePattern = @"{path}\yyyy-MM-dd\GrowerId-AdviceNo-PurchaseId-PaymentId.jpg",
             purchases
         });
     }
@@ -918,8 +931,7 @@ public class PaymentController : ControllerBase
         var now = DateTime.Now;
         var folder = Path.Combine(root, now.ToString("yyyy-MM-dd"));
         Directory.CreateDirectory(folder);
-        var code = new string(payment.GrowerCode.ToUpperInvariant().Where(char.IsLetterOrDigit).ToArray());
-        var imageName = $"{(string.IsNullOrWhiteSpace(code) ? "UNKNOWN" : code)}-{payment.AdviceNumber}-UPLOAD-{id}-{now:HHmmssfff}{extension}";
+        var imageName = $"{payment.GrowerId}-{payment.AdviceNumber}-UPLOAD-{id}-{now:HHmmssfff}{extension}";
         var filePath = Path.Combine(folder, imageName);
         await using (var output = System.IO.File.Create(filePath))
             await image.CopyToAsync(output, ct);

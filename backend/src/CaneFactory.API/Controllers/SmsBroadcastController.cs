@@ -33,7 +33,7 @@ public class SmsBroadcastController : ControllerBase
             return StatusCode(403, new { message = "You do not have 'Sms.Configure' permission." });
         var items = await _db.Growers.AsNoTracking()
             .Where(x => !x.IsDeleted && x.Status && x.Mobile != null && x.Mobile.Length == 10)
-            .OrderBy(x => x.GrowerCode)
+            .OrderBy(x => x.Id)
             .Select(x => new { x.Id, x.GrowerCode, x.GrowerName, x.FatherName, x.Mobile })
             .ToListAsync();
         // The sender must see the selected destination before explicitly sending it. The list is only

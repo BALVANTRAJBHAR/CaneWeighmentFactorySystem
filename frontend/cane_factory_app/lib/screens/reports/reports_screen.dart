@@ -28,7 +28,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   String _reportType = 'purchases';
   DateTime? _fromDate;
   DateTime? _toDate;
-  final _growerCode = TextEditingController();
+  final _growerId = TextEditingController();
   final _statusCtrl = TextEditingController();
   bool _loading = false;
   String? _error;
@@ -56,13 +56,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
     if (_reportType == 'profit-loss' || _reportType == 'cash-book') {
       // Profit/loss and Cash Book use only the date-range filters.
     } else if (_reportType == 'sale-purchases') {
-      if (_growerCode.text.trim().isNotEmpty)
-        q['vehicleNumber'] = _growerCode.text.trim();
+      if (_growerId.text.trim().isNotEmpty)
+        q['vehicleNumber'] = _growerId.text.trim();
       if (_statusCtrl.text.trim().isNotEmpty)
         q['status'] = _statusCtrl.text.trim();
     } else if (_reportType != 'daily-collection') {
-      if (_growerCode.text.trim().isNotEmpty)
-        q['growerCode'] = _growerCode.text.trim();
+      if (_growerId.text.trim().isNotEmpty) {
+        final id = int.tryParse(_growerId.text.trim());
+        if (id != null) q['growerId'] = id;
+      }
       if (_statusCtrl.text.trim().isNotEmpty) {
         q[_reportType == 'purchases' ? 'paymentStatus' : 'status'] =
             _statusCtrl.text.trim();
@@ -107,12 +109,19 @@ class _ReportsScreenState extends State<ReportsScreen> {
     _search();
   }
 
+  @override
+  void dispose() {
+    _growerId.dispose();
+    _statusCtrl.dispose();
+    super.dispose();
+  }
+
   List<String> get _columns {
     switch (_reportType) {
       case 'payments':
         return [
           'paymentId',
-          'growerCode',
+          'growerId',
           'growerName',
           'netPayableAmount',
           'paymentModeName',
@@ -122,7 +131,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       case 'loans':
         return [
           'loanId',
-          'growerCode',
+          'growerId',
           'growerName',
           'loanAmount',
           'outstandingAmount',
@@ -162,7 +171,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
           'entryType',
           'sourceType',
           'sourceName',
-          'growerCode',
+          'growerId',
           'growerName',
           'paymentId',
           'netPayableAmount',
@@ -174,7 +183,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         return [
           'purchaseId',
           'purchaseDate',
-          'growerCode',
+          'growerId',
           'growerName',
           'villageName',
           'vehicleNumber',
@@ -239,14 +248,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   SizedBox(
                       width: 160,
                       child: TextField(
-                          controller: _growerCode,
+                          controller: _growerId,
                           decoration: InputDecoration(
                               labelText: _reportType == 'sale-purchases'
                                   ? 'Vehicle Number'
-                                  : 'Grower Code',
+                                  : 'Grower ID',
                               hintText: _reportType == 'sale-purchases'
                                   ? 'UP32AB1234'
-                                  : '101/1'))),
+                                  : '100001'))),
                 if (_reportType != 'daily-collection' &&
                     _reportType != 'profit-loss' &&
                     _reportType != 'cash-book')

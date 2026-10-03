@@ -48,6 +48,7 @@ public class UserGuideController : ControllerBase
                 "Only one device configuration can be ACTIVE. History of every change is stored and auditable." }),
             new Section("4. Weight Rules & Sound", new[]{
                 "Configure Minimum Weight (Quintal), apply-to flags for Gross/Tare/CanePurchase/SalePurchase.",
+                "If a restart leaves the vehicle-clear safety lock stuck, physically verify that the platform is empty, then use Configuration → Weight Rules → Developer Unlock and enter an audit reason.",
                 "Sound Configuration: language (Hindi/English), volume, speech rate, repeat mode (OFF/ONCE/TWICE/CONTINUOUS) and interval.",
                 "Edit announcement text per event: Below Minimum, Weighing Active, Weighment Completed." }),
             new Section("5. Camera / SMS / Reports / Farmer Portal / Backup", new[]{
@@ -61,6 +62,7 @@ public class UserGuideController : ControllerBase
                 "Storage root default D:\\CanePaymentData - configurable in System Settings. Backup guide is in docs/BACKUP_GUIDE.md." }),
             new Section("6. Security & Users", new[]{
                 "Create Admin first, then other users. No public registration exists.",
+                "The system Developer identity and Developer role are intentionally hidden from User Management and cannot be assigned there.",
                 "Every new user gets a temporary password and must change it at first login.",
                 "Deactivating a user instantly revokes refresh tokens; access tokens die within 60 seconds.",
                 "Audit Log screen shows every critical action with old/new values." }),
@@ -72,7 +74,7 @@ public class UserGuideController : ControllerBase
                 "You manage business operations: masters, growers, purchases, locking, reports and users.",
                 "Developer-only infrastructure (device/SMS/backup credentials) is not visible to you by design." }),
             new Section("2. Masters", new[]{
-                "Maintain Zone → Village → Grower hierarchy. Village IDs start at 101; grower codes are VillageId/Sequence (e.g. 101/1).",
+                "Maintain Zone → Village → Grower hierarchy. Village IDs start at 101; public Grower IDs are six digits starting at 100001.",
                 "All masters validate duplicates server-side; soft delete only - business-critical records with transactions cannot be deleted.",
                 "Rate Master is versioned: create a new rate period instead of editing old rates. Unpaid recalculation requires Approve permission with preview + confirmation." }),
             new Section("3. Purchases & Locking", new[]{
@@ -112,7 +114,7 @@ public class UserGuideController : ControllerBase
                 "Live weight, stability, device status and enabled cameras are always visible." }),
             new Section("2. GROSS Step-by-step", new[]{
                 "1. Select (O) GROSS.",
-                "2. Type Grower Code (Example: 101/1) and press ENTER - name/father/village appear read-only.",
+                "2. Type the 6-digit Grower ID (Example: 100001) and press ENTER - name/father/village appear read-only.",
                 "3. Select Vehicle Type, enter Vehicle Number (Example: UP32AB1234).",
                 "4. Select Variety Type - the Variety list loads automatically for that type.",
                 "5. Wait for a stable live weight at or above the minimum weight.",

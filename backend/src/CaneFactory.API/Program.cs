@@ -76,6 +76,7 @@ builder.Services.AddSingleton<ICameraContinuousStreamProvider>(sp => sp.GetRequi
 builder.Services.AddSingleton<ICameraContinuousStreamProvider>(sp => sp.GetRequiredService<OnvifCaptureProvider>());
 builder.Services.AddSingleton<ICameraCaptureProvider, SimulatorCaptureProvider>();
 builder.Services.AddScoped<ICameraCaptureService, CameraCaptureService>();
+builder.Services.AddScoped<CaneFactory.API.Services.RateOverrideService>();
 
 // ---- Print engine (Phase 7): centralized A4/DotMatrix renderers + orchestration service ----
 builder.Services.AddSingleton<IPrintRenderer, A4PdfRenderer>();

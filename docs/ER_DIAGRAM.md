@@ -1,7 +1,7 @@
 # ER DIAGRAM (text) — Core Relationships
 
 ```
-ZONE (Id seq:1) ─────< VILLAGE (Id seq:101) ─────< GROWER (GrowerCode = VillageId/Seq)
+ZONE (Id seq:1) ─────< VILLAGE (Id seq:101) ─────< GROWER (public Id seq:100001)
                                                      │  BankId >──── BANK
                                                      │
                                                      ├────< PURCHASE (Id seq:1)

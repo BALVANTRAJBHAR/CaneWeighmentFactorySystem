@@ -392,7 +392,7 @@ public class CameraCaptureService : ICameraCaptureService
     }
 
     /// <summary>Payment evidence contract:
-    /// {PaymentEvidenceRoot}\\yyyy-MM-dd\\{GrowerCode}-{AdviceNo}-{PurchaseId}-{PaymentId}.jpg.
+    /// {PaymentEvidenceRoot}\\yyyy-MM-dd\\{GrowerId}-{AdviceNo}-{PurchaseId}-{PaymentId}.jpg.
     /// Retakes receive an R suffix so the replaced file remains available to the audit trail.</summary>
     private async Task<(int imageId, string imageName)> SavePaymentImageAsync(byte[] bytes, Payment payment,
         int purchaseId, CameraConfig cam, int? capturedByUserId, bool replaceExisting, CancellationToken ct)
@@ -408,7 +408,7 @@ public class CameraCaptureService : ICameraCaptureService
         {
             foreach (var prior in existing.Where(i => i.Status)) prior.Status = false;
         }
-        var stem = $"{SanitizeFileComponent(payment.GrowerCode)}-{payment.AdviceNumber}-{purchaseId}-{payment.Id}";
+        var stem = $"{payment.GrowerId}-{payment.AdviceNumber}-{purchaseId}-{payment.Id}";
         var fileName = existing.Count == 0 ? $"{stem}.jpg" : $"{stem}-R{existing.Count + 1:D2}.jpg";
         var fullPath = Path.Combine(folder, fileName);
         await File.WriteAllBytesAsync(fullPath, bytes, ct);
@@ -429,7 +429,7 @@ public class CameraCaptureService : ICameraCaptureService
         _db.PaymentImages.Add(image);
         await _db.SaveChangesAsync(ct);
         await _audit.LogAsync(replaceExisting ? "ImageRetaken" : "ImageCaptured", "CashEvidence", "Payment", payment.Id.ToString(),
-            newValue: new { payment.Id, purchaseId, payment.GrowerCode, payment.AdviceNumber, cam.CameraNumber, fileName });
+            newValue: new { payment.Id, purchaseId, payment.GrowerId, payment.AdviceNumber, cam.CameraNumber, fileName });
         return (image.Id, fileName);
     }
 

@@ -11,6 +11,7 @@ import '../../core/sound_controller.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/live_weight_provider.dart';
 import '../../widgets/camera_live_preview_panel.dart';
+import '../../widgets/rate_override_panel.dart';
 
 /// UNIFIED CANE WEIGHMENT MAIN FORM.
 /// One form with (O) GROSS / (O) TARE radio modes - the visible sections, grid and
@@ -29,9 +30,10 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   // the window is restored/maximized.  A stable GlobalKey preserves the live
   // MJPEG connection instead of disposing it and reconnecting on every resize.
   final _cameraPreviewKey = GlobalKey();
+  final _rateOverrideKey = GlobalKey<RateOverridePanelState>();
 
   // GROSS state
-  final _growerCode = TextEditingController();
+  final _growerId = TextEditingController();
   Map<String, dynamic>? _grower;
   String? _growerError;
   int? _vehicleTypeId;
@@ -74,6 +76,11 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   void dispose() {
     _evidenceFlashTimer?.cancel();
     _liveWeightProvider.removeListener(_onLiveWeightChanged);
+    _growerId.dispose();
+    _vehicleNumber.dispose();
+    _cutting.dispose();
+    _tax.dispose();
+    _purchaseIdCtl.dispose();
     _sound.dispose();
     super.dispose();
   }
@@ -111,8 +118,10 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         // Operators can still adjust them before saving when an authorised exception is needed.
         if (rules.statusCode == 200 && rules.data is Map) {
           final values = Map<String, dynamic>.from(rules.data);
-          _cutting.text = ((values['defaultCuttingPercent'] as num?) ?? 0).toStringAsFixed(2);
-          _tax.text = ((values['defaultTaxPercent'] as num?) ?? 0).toStringAsFixed(2);
+          _cutting.text = ((values['defaultCuttingPercent'] as num?) ?? 0)
+              .toStringAsFixed(2);
+          _tax.text =
+              ((values['defaultTaxPercent'] as num?) ?? 0).toStringAsFixed(2);
         }
       });
     } catch (_) {}
@@ -217,8 +226,14 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       _grower = null;
       _growerError = null;
     });
-    final res = await ApiClient.instance.dio.get('/api/growers/by-code',
-        queryParameters: {'code': _growerCode.text.trim()});
+    final id = int.tryParse(_growerId.text.trim());
+    if (id == null || id < 100001 || id > 999999) {
+      setState(() => _growerError =
+          'Enter a valid 6-digit Grower ID (for example 100001).');
+      return;
+    }
+    final res = await ApiClient.instance.dio
+        .get('/api/growers/by-id', queryParameters: {'id': id});
     setState(() {
       if (res.statusCode == 200) {
         _grower = Map<String, dynamic>.from(res.data);
@@ -257,7 +272,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   Future<void> _saveGross() async {
     final live = context.read<LiveWeightProvider>().current;
     if (_grower == null)
-      return _toast('Lookup a valid Grower Code first (press ENTER).',
+      return _toast('Lookup a valid 6-digit Grower ID first (press ENTER).',
           error: true);
     if (_vehicleTypeId == null)
       return _toast('Select Vehicle Type.', error: true);
@@ -270,7 +285,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     try {
       final res =
           await ApiClient.instance.dio.post('/api/weighment/gross', data: {
-        'growerCode': _grower!['growerCode'],
+        'growerId': _grower!['growerId'],
         'vehicleTypeId': _vehicleTypeId,
         'vehicleNumber': _vehicleNumber.text.trim().toUpperCase(),
         'varietyTypeId': _varietyTypeId,
@@ -279,7 +294,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         'taxPercent': double.tryParse(_tax.text) ?? 0,
         'scaleReadingKg': live.weightKg,
         'idempotencyKey':
-            'gross-${_grower!['growerCode']}-${DateTime.now().microsecondsSinceEpoch}',
+            'gross-${_grower!['growerId']}-${DateTime.now().microsecondsSinceEpoch}',
       });
       if (!mounted) return;
       if (res.statusCode == 200) {
@@ -289,7 +304,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         // reset new-entry fields; keep configuration selections for fast operation
         setState(() {
           _grower = null;
-          _growerCode.clear();
+          _growerId.clear();
           _vehicleNumber.clear();
           _capturedImages = [];
         });
@@ -320,12 +335,19 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       return _toast(
           'Select a pending purchase (double-click a row or enter Purchase ID).',
           error: true);
+    final rateOverride =
+        _rateOverrideKey.currentState?.validateAndBuildPayload();
+    if (rateOverride == null) {
+      return _toast('Check the rate and required rate-change approval fields.',
+          error: true);
+    }
     setState(() => _saving = true);
     try {
       final res =
           await ApiClient.instance.dio.post('/api/weighment/tare', data: {
         'purchaseId': _selectedPurchase!['purchaseId'],
         'scaleReadingKg': live.weightKg,
+        ...rateOverride,
         // A failed validation must be retryable; each distinct user click gets a new request key.
         'idempotencyKey':
             'tare-${_selectedPurchase!['purchaseId']}-${DateTime.now().microsecondsSinceEpoch}',
@@ -563,11 +585,15 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
               SizedBox(
                 width: 200,
                 child: TextField(
-                  controller: _growerCode,
+                  controller: _growerId,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  maxLength: 6,
                   autofocus: true,
                   decoration: const InputDecoration(
-                      labelText: 'Grower Code',
-                      hintText: 'Example: 101/1',
+                      labelText: 'Grower ID',
+                      hintText: 'Example: 100001',
+                      counterText: '',
                       prefixIcon: Icon(Icons.badge_outlined, size: 18)),
                   onSubmitted: (_) => _lookupGrower(),
                 ),
@@ -776,13 +802,12 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                     borderRadius: BorderRadius.circular(10)),
                 child: Wrap(spacing: 26, runSpacing: 8, children: [
                   _ro('Purchase ID', '${p['purchaseId']}'),
-                  _ro('Grower', '${p['growerCode']} ${p['growerName']}'),
+                  _ro('Grower', '${p['growerId']} ${p['growerName']}'),
                   _ro('Father', '${p['fatherName']}'),
                   _ro('Village', '${p['villageName']}'),
                   _ro('Vehicle',
                       '${p['vehicleNumber']} (${p['vehicleTypeName']})'),
                   _ro('Variety', '${p['varietyName']}'),
-                  _ro('Rate', (p['rate'] as num).toStringAsFixed(2)),
                   _ro('Gross Weight',
                       '${(p['grossWeightQuintal'] as num).toStringAsFixed(2)} Qtl'),
                   _ro(
@@ -796,6 +821,13 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                       (p['cuttingPercent'] as num).toStringAsFixed(2)),
                   _ro('Tax %', (p['taxPercent'] as num).toStringAsFixed(2)),
                 ]),
+              ),
+              const SizedBox(height: 12),
+              RateOverridePanel(
+                key: _rateOverrideKey,
+                masterRate: (p['rate'] as num?)?.toDouble(),
+                transactionType: 'CANE',
+                transactionId: p['purchaseId'] as int?,
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
@@ -830,7 +862,9 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           flex: _capturedImages.isEmpty ? 1 : 3,
           child: CameraLivePreviewPanel(
               key: _cameraPreviewKey,
-              cameras: _cameras, compact: true, squareCards: true)),
+              cameras: _cameras,
+              compact: true,
+              squareCards: true)),
       if (_capturedImages.isNotEmpty) ...[
         const Divider(height: 12),
         const Padding(
@@ -929,7 +963,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                       dataRowMaxHeight: 36,
                       columns: const [
                         DataColumn(label: Text('Purchase ID')),
-                        DataColumn(label: Text('Grower Code')),
+                        DataColumn(label: Text('Grower ID')),
                         DataColumn(label: Text('Name')),
                         DataColumn(label: Text('Father Name')),
                         DataColumn(label: Text('Village')),
@@ -948,7 +982,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                               DataCell(Text('${p['purchaseId']}',
                                   style: const TextStyle(
                                       fontWeight: FontWeight.w700))),
-                              DataCell(Text('${p['growerCode']}')),
+                              DataCell(Text('${p['growerId']}')),
                               DataCell(Text('${p['growerName']}')),
                               DataCell(Text('${p['fatherName']}')),
                               DataCell(Text('${p['villageName']}')),

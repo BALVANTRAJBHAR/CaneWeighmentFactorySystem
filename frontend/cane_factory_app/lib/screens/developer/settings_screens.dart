@@ -71,6 +71,10 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
   final _cut = TextEditingController();
   final _tax = TextEditingController();
   final _cooldown = TextEditingController();
+  bool _platformLocked = false;
+  bool _platformStatusLoading = true;
+  bool _unlockingPlatform = false;
+  String? _platformStatusError;
 
   @override
   void initState() {
@@ -88,6 +92,127 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
         _tax.text = (v['defaultTaxPercent'] as num).toStringAsFixed(2);
         _cooldown.text = '${v['vehicleReweighCooldownMinutes'] ?? 30}';
       });
+    }
+    await _loadPlatformLock();
+  }
+
+  Future<void> _loadPlatformLock() async {
+    if (mounted) setState(() => _platformStatusLoading = true);
+    try {
+      final res = await ApiClient.instance.dio
+          .get('/api/config/weighbridge-platform-lock');
+      if (mounted) {
+        setState(() {
+          if (res.statusCode == 200) {
+            _platformLocked = res.data['locked'] == true;
+            _platformStatusError = null;
+          } else if (res.statusCode == 404) {
+            _platformStatusError =
+                'Server API update required — lock status endpoint is not deployed.';
+          } else {
+            _platformStatusError = ApiClient.errorMessage(res,
+                'Lock status could not be loaded (HTTP ${res.statusCode}).');
+          }
+          _platformStatusLoading = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _platformStatusError = ApiClient.exceptionMessage(
+              error, 'Lock status could not be loaded from the server.');
+          _platformStatusLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _unlockPlatform() async {
+    final reason = TextEditingController();
+    var physicallyConfirmed = false;
+    final approved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Developer Safety Unlock'),
+          content: SizedBox(
+            width: 500,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text(
+                'Use this only after checking the weighbridge physically. Unlocking while a vehicle is still on the platform can allow a duplicate weighment.',
+              ),
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: physicallyConfirmed,
+                title: const Text(
+                    'I have physically confirmed that the platform is empty.'),
+                onChanged: (value) =>
+                    setDialogState(() => physicallyConfirmed = value == true),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: reason,
+                maxLength: 500,
+                decoration: const InputDecoration(
+                  labelText: 'Unlock reason',
+                  hintText: 'Example: Digitizer restarted after vehicle left',
+                ),
+                onChanged: (_) => setDialogState(() {}),
+              ),
+            ]),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: physicallyConfirmed && reason.text.trim().length >= 5
+                  ? () => Navigator.pop(dialogContext, true)
+                  : null,
+              icon: const Icon(Icons.lock_open),
+              label: const Text('Unlock Platform'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final unlockReason = reason.text.trim();
+    reason.dispose();
+    if (approved != true || !mounted) return;
+
+    setState(() => _unlockingPlatform = true);
+    try {
+      final res = await ApiClient.instance.dio.post(
+        '/api/config/weighbridge-platform-lock/unlock',
+        data: {'reason': unlockReason},
+      );
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        showResult(context, res);
+        await _loadPlatformLock();
+      } else {
+        final message = res.statusCode == 404
+            ? 'Developer Unlock is not deployed on the server API. Publish/restart the updated API, then try again.'
+            : ApiClient.errorMessage(
+                res, 'Platform unlock failed (HTTP ${res.statusCode}).');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(message),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(ApiClient.exceptionMessage(
+              error, 'Platform lock could not be released.')),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _unlockingPlatform = false);
     }
   }
 
@@ -150,6 +275,69 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
             onChanged: (x) => setState(() => v[e.$1] = x)),
       const SizedBox(height: 10),
       FilledButton(onPressed: _save, child: const Text('Save Weight Rules')),
+      const SizedBox(height: 18),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            Icon(
+              _platformStatusError != null
+                  ? Icons.sync_problem
+                  : _platformLocked
+                      ? Icons.lock
+                      : Icons.lock_open,
+              color: _platformStatusError != null
+                  ? Colors.orange
+                  : _platformLocked
+                      ? Theme.of(context).colorScheme.error
+                      : const Color(0xFF2E7D32),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Weighbridge Platform Safety Lock',
+                      style: TextStyle(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Text(_platformStatusLoading
+                      ? 'Checking lock status...'
+                      : _platformStatusError != null
+                          ? _platformStatusError!
+                          : _platformLocked
+                              ? 'LOCKED — a genuine zero reading or Developer safety override is required.'
+                              : 'UNLOCKED — the next vehicle weighment may start.'),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            IconButton(
+              tooltip: 'Refresh lock status',
+              onPressed: _platformStatusLoading ? null : _loadPlatformLock,
+              icon: _platformStatusLoading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh),
+            ),
+            const SizedBox(width: 6),
+            // Always keep the recovery action visible. The lock can be armed
+            // after this tab was opened, so a status snapshot must never hide
+            // the only manual recovery path.
+            FilledButton.tonalIcon(
+              onPressed: _unlockingPlatform ? null : _unlockPlatform,
+              icon: _unlockingPlatform
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.lock_open),
+              label: const Text('Developer Unlock'),
+            ),
+          ]),
+        ),
+      ),
     ]);
   }
 }
@@ -199,9 +387,8 @@ class _SoundTabState extends State<_SoundTab> {
   Widget build(BuildContext context) {
     if (cfg == null) return const Center(child: CircularProgressIndicator());
     final hindiSelected = cfg!['language'] == 'hi';
-    final availableWindowsVoices = hindiSelected
-        ? _sound.windowsHindiVoices
-        : _sound.windowsVoices;
+    final availableWindowsVoices =
+        hindiSelected ? _sound.windowsHindiVoices : _sound.windowsVoices;
     final selectedWindowsVoice =
         availableWindowsVoices.contains(_sound.windowsVoiceName)
             ? _sound.windowsVoiceName!
@@ -420,9 +607,11 @@ class _CamerasTabState extends State<_CamerasTab> {
           await ApiClient.instance.dio.get('/api/config/payment-evidence');
       if (paymentEvidence.statusCode == 200 && mounted) {
         _paymentEvidenceRootController.text =
-            paymentEvidence.data['configuredPath']?.toString() ?? r'C:\WeighmentImage\Payment';
+            paymentEvidence.data['configuredPath']?.toString() ??
+                r'C:\WeighmentImage\Payment';
         final id = paymentEvidence.data['selectedCameraId'];
-        setState(() => _paymentEvidenceCameraId = id is num ? id.toInt() : int.tryParse('$id'));
+        setState(() => _paymentEvidenceCameraId =
+            id is num ? id.toInt() : int.tryParse('$id'));
       }
     } catch (_) {
       // The normal camera catalogue remains usable while an older API is deployed.
@@ -445,15 +634,16 @@ class _CamerasTabState extends State<_CamerasTab> {
           content: Text('Select an active camera for Cash Payment Evidence.')));
       return;
     }
-    final res = await ApiClient.instance.dio.put('/api/config/payment-evidence',
-        data: {
-          'cameraId': _paymentEvidenceCameraId,
-          'path': _paymentEvidenceRootController.text.trim(),
-        });
+    final res =
+        await ApiClient.instance.dio.put('/api/config/payment-evidence', data: {
+      'cameraId': _paymentEvidenceCameraId,
+      'path': _paymentEvidenceRootController.text.trim(),
+    });
     if (mounted) showResult(context, res);
     if (res.statusCode == 200 && mounted) {
       setState(() => _paymentEvidenceRootController.text =
-          res.data['configuredPath']?.toString() ?? _paymentEvidenceRootController.text);
+          res.data['configuredPath']?.toString() ??
+              _paymentEvidenceRootController.text);
     }
   }
 
@@ -662,10 +852,14 @@ class _CamerasTabState extends State<_CamerasTab> {
 
   @override
   Widget build(BuildContext context) {
-    final paymentEvidenceCameras = cams.where((camera) =>
-        camera['status'] == true && camera['captureEnabled'] == true && camera['liveViewEnabled'] == true).toList();
-    final selectedPaymentCamera = paymentEvidenceCameras.any(
-            (camera) => camera['id'] == _paymentEvidenceCameraId)
+    final paymentEvidenceCameras = cams
+        .where((camera) =>
+            camera['status'] == true &&
+            camera['captureEnabled'] == true &&
+            camera['liveViewEnabled'] == true)
+        .toList();
+    final selectedPaymentCamera = paymentEvidenceCameras
+            .any((camera) => camera['id'] == _paymentEvidenceCameraId)
         ? _paymentEvidenceCameraId
         : null;
     return ListView(padding: const EdgeInsets.all(16), children: [
@@ -732,8 +926,8 @@ class _CamerasTabState extends State<_CamerasTab> {
                                     child: Text(
                                         'Camera ${(camera['cameraNumber'] as num).toInt().toString().padLeft(2, '0')} • ${camera['vendor']}'))
                             ],
-                            onChanged: (value) =>
-                                setState(() => _paymentEvidenceCameraId = value))),
+                            onChanged: (value) => setState(
+                                () => _paymentEvidenceCameraId = value))),
                     SizedBox(
                         width: 420,
                         child: TextField(
@@ -742,7 +936,7 @@ class _CamerasTabState extends State<_CamerasTab> {
                                 labelText: 'Payment Evidence Path',
                                 hintText: r'C:\WeighmentImage\Payment',
                                 helperText:
-                                    r'Files: path\yyyy-MM-dd\GrowerCode-AdviceNo-PurchaseId-PaymentId.jpg'))),
+                                    r'Files: path\yyyy-MM-dd\GrowerId-AdviceNo-PurchaseId-PaymentId.jpg'))),
                     FilledButton.icon(
                         onPressed: _savePaymentEvidence,
                         icon: const Icon(Icons.save_outlined),
@@ -863,8 +1057,7 @@ class _PrintTabState extends State<_PrintTab> {
         }
         setState(() {
           v = config;
-          _printers =
-              PrintService.installedPrinters().map((p) => p.name).toList();
+          _printers = PrintService.installedPrinterNames();
         });
       }
     });
@@ -1234,8 +1427,8 @@ class _SmsTabState extends State<_SmsTab> {
     setState(() {
       testing = false;
       if (res.statusCode == 200 && res.data is Map) {
-        androidConnectionStatus = res.data['status']?.toString() ??
-            androidConnectionStatus;
+        androidConnectionStatus =
+            res.data['status']?.toString() ?? androidConnectionStatus;
       }
     });
     if (context.mounted) showResult(context, res);
@@ -1392,7 +1585,7 @@ class _SmsTabState extends State<_SmsTab> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                            'Placeholders: {GrowerName} {GrowerCode} {VehicleNumber} {FinalWeight} {PurchaseAmount} '
+                            'Placeholders: {GrowerName} {GrowerId} {VehicleNumber} {FinalWeight} {PurchaseAmount} '
                             '{AdviceNumber} {TotalPurchaseAmount} {LoanDeducted} {NetPayable} {PaymentMode}',
                             style: TextStyle(
                                 fontSize: 11, fontStyle: FontStyle.italic)),
@@ -1980,10 +2173,10 @@ class _BackupTabState extends State<_BackupTab> {
         folderCtrl.text = v['backupFolderPath'] ?? r'E:\Backup';
         differentialEnabled = v['differentialEnabled'] == true;
         transactionLogEnabled = v['transactionLogEnabled'] == true;
-        backupStatus = statusResponse.statusCode == 200 &&
-                statusResponse.data is Map
-            ? Map<String, dynamic>.from(statusResponse.data)
-            : {};
+        backupStatus =
+            statusResponse.statusCode == 200 && statusResponse.data is Map
+                ? Map<String, dynamic>.from(statusResponse.data)
+                : {};
       });
     }
   }
@@ -2113,8 +2306,7 @@ class _BackupTabState extends State<_BackupTab> {
                 '/api/backup/task-scheduler-xml', 'CaneFactoryBackup-Task.xml'),
             child: const Text('Download Task Scheduler XML')),
         OutlinedButton.icon(
-            onPressed:
-                downloadingBackup ? null : _downloadCurrentBackup,
+            onPressed: downloadingBackup ? null : _downloadCurrentBackup,
             icon: downloadingBackup
                 ? const SizedBox(
                     width: 16,

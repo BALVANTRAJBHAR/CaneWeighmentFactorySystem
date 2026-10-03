@@ -8,6 +8,7 @@ import '../../core/print_service.dart';
 import '../../core/sound_controller.dart';
 import '../../providers/live_weight_provider.dart';
 import '../../widgets/camera_live_preview_panel.dart';
+import '../../widgets/rate_override_panel.dart';
 
 /// Separate non-cane SalePurchase workflow. It never uses the Payment screen/API.
 class SalePurchaseWeighmentScreen extends StatefulWidget {
@@ -29,6 +30,7 @@ class _SalePurchaseWeighmentScreenState
   Map<String, dynamic>? _selected;
   Map<String, dynamic>? _itemRate;
   bool _gross = false, _saving = false;
+  final _rateOverrideKey = GlobalKey<RateOverridePanelState>();
   late final LiveWeightProvider _liveWeightProvider;
 
   @override
@@ -267,11 +269,18 @@ class _SalePurchaseWeighmentScreenState
       return _toast(
           'Double-click a pending row or enter a SalePurchase ID and press ENTER.',
           error: true);
+    final rateOverride =
+        _rateOverrideKey.currentState?.validateAndBuildPayload();
+    if (rateOverride == null) {
+      return _toast('Check the rate and required rate-change approval fields.',
+          error: true);
+    }
     setState(() => _saving = true);
     try {
       final res = await ApiClient.instance.dio
           .post('/api/sale-purchase-weighment/gross', data: {
         'salePurchaseId': _selected!['salePurchaseId'],
+        ...rateOverride,
         'idempotencyKey':
             'sp-gross-${_selected!['salePurchaseId']}-${DateTime.now().microsecondsSinceEpoch}'
       });
@@ -407,7 +416,8 @@ class _SalePurchaseWeighmentScreenState
             child: SizedBox(
               width: compact ? double.infinity : 270,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -527,9 +537,6 @@ class _SalePurchaseWeighmentScreenState
                   },
                   icon: const Icon(Icons.search),
                   label: const Text('Lookup')),
-              if (_selected != null) ...[
-                _calculationBox('Item Rate (automatic)', _rateText),
-              ],
               FilledButton.icon(
                   onPressed: _saving ? null : _saveGross,
                   icon: const Icon(Icons.save),
@@ -552,14 +559,23 @@ class _SalePurchaseWeighmentScreenState
                 'Live Gross: ${context.watch<LiveWeightProvider>().current.weightQuintal.toStringAsFixed(2)} Qtl'),
             Text('Final: ${(finalWeight ?? 0).toStringAsFixed(2)} Qtl',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
-            Text('Rate: $_rateText / Qtl',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-          ])
+          ]),
+        if (_selected != null) ...[
+          const SizedBox(height: 14),
+          RateOverridePanel(
+            key: _rateOverrideKey,
+            masterRate: (_itemRate?['rate'] as num?)?.toDouble(),
+            transactionType: 'SALE',
+            transactionId: _selected!['salePurchaseId'] as int?,
+          ),
+        ]
       ]);
 
   String get _rateText {
     final rate = (_itemRate?['rate'] as num?)?.toDouble();
-    return rate == null ? 'Configure Sale Rate Master' : rate.toStringAsFixed(2);
+    return rate == null
+        ? 'Configure Sale Rate Master'
+        : rate.toStringAsFixed(2);
   }
 
   Widget _calculationBox(String label, String value) => SizedBox(

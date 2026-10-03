@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
@@ -20,7 +20,7 @@ class PaymentScreen extends StatefulWidget {
 
 class _PaymentScreenState extends State<PaymentScreen> {
   String _mode = 'FARMER';
-  final _growerCode = TextEditingController();
+  final _growerId = TextEditingController();
   final _purchaseId = TextEditingController();
   DateTime? _fromDate;
   DateTime? _toDate;
@@ -47,7 +47,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   @override
   void dispose() {
     _searchTimer?.cancel();
-    _growerCode.dispose();
+    _growerId.dispose();
     _purchaseId.dispose();
     _txnRef.dispose();
     super.dispose();
@@ -116,7 +116,18 @@ class _PaymentScreenState extends State<PaymentScreen> {
       _previewing = true;
     });
     final params = <String, dynamic>{'selectionMode': _mode};
-    if (_mode == 'FARMER') params['growerCode'] = _growerCode.text.trim();
+    if (_mode == 'FARMER') {
+      final growerId = int.tryParse(_growerId.text.trim());
+      if (growerId == null || growerId < 100001 || growerId > 999999) {
+        setState(() {
+          _previewing = false;
+          _previewError =
+              'Enter a valid 6-digit Grower ID (for example 100001).';
+        });
+        return;
+      }
+      params['growerId'] = growerId;
+    }
     if (_mode == 'SINGLE') params['purchaseId'] = _purchaseId.text.trim();
     if (_mode == 'DATE_RANGE' || _mode == 'FARMER') {
       if (_fromDate != null) params['fromDate'] = _fromDate!.toIso8601String();
@@ -137,7 +148,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
       if (mounted && generation == _previewGeneration)
         setState(() => _previewError = ApiClient.exceptionMessage(e));
     } finally {
-      if (mounted && generation == _previewGeneration) setState(() => _previewing = false);
+      if (mounted && generation == _previewGeneration)
+        setState(() => _previewing = false);
     }
   }
 
@@ -156,9 +168,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
         'transactionRefNumber':
             _txnRef.text.trim().isEmpty ? null : _txnRef.text.trim(),
         'idempotencyKey':
-            'pay-${_growerCode.text.trim()}-${DateTime.now().microsecondsSinceEpoch}',
+            'pay-${_growerId.text.trim()}-${DateTime.now().microsecondsSinceEpoch}',
       };
-      if (_mode == 'FARMER') data['growerCode'] = _growerCode.text.trim();
+      if (_mode == 'FARMER')
+        data['growerId'] = int.tryParse(_growerId.text.trim());
       if (_mode == 'SINGLE')
         data['purchaseId'] = int.tryParse(_purchaseId.text.trim());
       if (_mode == 'DATE_RANGE' || _mode == 'FARMER') {
@@ -172,7 +185,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         _toast(res.data['message']);
         setState(() {
           _preview = null;
-          _growerCode.clear();
+          _growerId.clear();
           _purchaseId.clear();
           _txnRef.clear();
           _fromDate = null;
@@ -190,7 +203,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
             // Compatibility fallback for an API that has not yet been upgraded.
             for (final raw in (res.data['payments'] as List? ?? [])) {
               final payment = Map<String, dynamic>.from(raw as Map);
-              await _handleAutoPrint(payment['autoPrint'], payment['paymentId']);
+              await _handleAutoPrint(
+                  payment['autoPrint'], payment['paymentId']);
             }
           }
         } else {
@@ -209,7 +223,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
   Future<void> _handleAutoPrint(dynamic autoPrint, dynamic paymentId) async {
     if (autoPrint == null) return;
     if (autoPrint['shouldAutoPrint'] != true) {
-      await openPdfAfterSave(context, autoPrint['documentUrl'], 'payment-$paymentId.pdf');
+      await openPdfAfterSave(
+          context, autoPrint['documentUrl'], 'payment-$paymentId.pdf');
       return;
     }
     final outcome = await PrintService.printDocument(
@@ -279,8 +294,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
               initialContext: Map<String, dynamic>.from(res.data)));
     } catch (error) {
       if (mounted) {
-        _toast(ApiClient.exceptionMessage(error,
-            'Payment evidence form could not be opened.'), error: true);
+        _toast(
+            ApiClient.exceptionMessage(
+                error, 'Payment evidence form could not be opened.'),
+            error: true);
       }
     }
   }
@@ -290,40 +307,90 @@ class _PaymentScreenState extends State<PaymentScreen> {
         type: FileType.custom, allowedExtensions: const ['jpg', 'jpeg', 'png']);
     final path = picked?.files.single.path;
     if (path == null) return;
-    final res = await ApiClient.instance.dio.post('/api/payments/$paymentId/images/upload',
+    final res = await ApiClient.instance.dio.post(
+        '/api/payments/$paymentId/images/upload',
         data: FormData.fromMap({'image': await MultipartFile.fromFile(path)}));
     if (!mounted) return;
-    _toast(res.statusCode == 200 ? res.data['message'] : ApiClient.errorMessage(res),
+    _toast(
+        res.statusCode == 200
+            ? res.data['message']
+            : ApiClient.errorMessage(res),
         error: res.statusCode != 200);
   }
 
   Future<void> _viewEvidence(int paymentId) async {
     try {
-      final res = await ApiClient.instance.dio.get('/api/payments/$paymentId/images');
+      final res =
+          await ApiClient.instance.dio.get('/api/payments/$paymentId/images');
       if (!mounted) return;
       if (res.statusCode != 200) {
         _toast(ApiClient.errorMessage(res), error: true);
         return;
       }
       final images = List<dynamic>.from(res.data);
-      await showDialog<void>(context: context, builder: (ctx) => AlertDialog(
-        title: Text('Cash Evidence • Payment $paymentId'),
-        content: SizedBox(width: 720, height: 480, child: images.isEmpty
-            ? const Center(child: Text('No evidence images saved.'))
-            : GridView.builder(itemCount: images.length, gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 220, mainAxisSpacing: 10, crossAxisSpacing: 10), itemBuilder: (_, index) {
-                final image = images[index];
-                return FutureBuilder<Response<List<int>>>(future: ApiClient.instance.dio.get<List<int>>('/api/images/payment/${image['id']}/file', options: Options(responseType: ResponseType.bytes)), builder: (_, snap) {
-                  if (snap.hasError) return const Center(child: Icon(Icons.broken_image_outlined));
-                  if (!snap.hasData || snap.data!.data == null) return const Center(child: CircularProgressIndicator());
-                  return InkWell(onTap: () => showDialog<void>(context: ctx, builder: (_) => Dialog(child: InteractiveViewer(child: Image.memory(Uint8List.fromList(snap.data!.data!))))), child: Column(children: [Expanded(child: Image.memory(Uint8List.fromList(snap.data!.data!), fit: BoxFit.cover)), Text(image['imageName'].toString(), overflow: TextOverflow.ellipsis)]));
-                });
-              })),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
-      ));
+      await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+                title: Text('Cash Evidence • Payment $paymentId'),
+                content: SizedBox(
+                    width: 720,
+                    height: 480,
+                    child: images.isEmpty
+                        ? const Center(child: Text('No evidence images saved.'))
+                        : GridView.builder(
+                            itemCount: images.length,
+                            gridDelegate:
+                                const SliverGridDelegateWithMaxCrossAxisExtent(
+                                    maxCrossAxisExtent: 220,
+                                    mainAxisSpacing: 10,
+                                    crossAxisSpacing: 10),
+                            itemBuilder: (_, index) {
+                              final image = images[index];
+                              return FutureBuilder<Response<List<int>>>(
+                                  future: ApiClient.instance.dio.get<List<int>>(
+                                      '/api/images/payment/${image['id']}/file',
+                                      options: Options(
+                                          responseType: ResponseType.bytes)),
+                                  builder: (_, snap) {
+                                    if (snap.hasError)
+                                      return const Center(
+                                          child: Icon(
+                                              Icons.broken_image_outlined));
+                                    if (!snap.hasData ||
+                                        snap.data!.data == null)
+                                      return const Center(
+                                          child: CircularProgressIndicator());
+                                    return InkWell(
+                                        onTap: () => showDialog<void>(
+                                            context: ctx,
+                                            builder: (_) => Dialog(
+                                                child: InteractiveViewer(
+                                                    child: Image.memory(
+                                                        Uint8List.fromList(snap
+                                                            .data!.data!))))),
+                                        child: Column(children: [
+                                          Expanded(
+                                              child: Image.memory(
+                                                  Uint8List.fromList(
+                                                      snap.data!.data!),
+                                                  fit: BoxFit.cover)),
+                                          Text(image['imageName'].toString(),
+                                              overflow: TextOverflow.ellipsis)
+                                        ]));
+                                  });
+                            })),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Close'))
+                ],
+              ));
     } catch (error) {
       if (mounted) {
-        _toast(ApiClient.exceptionMessage(error,
-            'Saved payment evidence could not be opened.'), error: true);
+        _toast(
+            ApiClient.exceptionMessage(
+                error, 'Saved payment evidence could not be opened.'),
+            error: true);
       }
     }
   }
@@ -354,7 +421,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
             child: Card(
                 child: _loading
                     ? const Center(child: CircularProgressIndicator())
-                    : _buildTable(canCancel, canCaptureEvidence, canViewEvidence))),
+                    : _buildTable(
+                        canCancel, canCaptureEvidence, canViewEvidence))),
       ]),
     );
   }
@@ -372,7 +440,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
           SegmentedButton<String>(
             segments: const [
               ButtonSegment(value: 'SINGLE', label: Text('Single Purchase')),
-              ButtonSegment(value: 'DATE_RANGE', label: Text('Date Range (All Farmers)')),
+              ButtonSegment(
+                  value: 'DATE_RANGE', label: Text('Date Range (All Farmers)')),
               ButtonSegment(
                   value: 'FARMER', label: Text('Farmer-wise (All Pending)')),
             ],
@@ -404,13 +473,19 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   SizedBox(
                     width: 200,
                     child: TextField(
-                      controller: _growerCode,
+                      controller: _growerId,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      maxLength: 6,
                       decoration: const InputDecoration(
-                          labelText: 'Grower Code or Name', hintText: 'Example: 101/1 or Ramesh'),
+                          labelText: 'Grower ID',
+                          hintText: 'Example: 100001',
+                          counterText: ''),
                       onChanged: (v) {
                         setState(_invalidatePreview);
                         if (v.trim().isNotEmpty) {
-                          _searchTimer = Timer(const Duration(milliseconds: 350), _loadPreview);
+                          _searchTimer = Timer(
+                              const Duration(milliseconds: 350), _loadPreview);
                         }
                       },
                       onSubmitted: (_) => _previewing ? null : _loadPreview(),
@@ -456,7 +531,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       items: [
                         for (final m in _paymentModes)
                           DropdownMenuItem(
-                              value: m['id'] as int, child: Text(m['modeName'], overflow: TextOverflow.ellipsis))
+                              value: m['id'] as int,
+                              child: Text(m['modeName'],
+                                  overflow: TextOverflow.ellipsis))
                       ],
                       onChanged: (v) => setState(() => _paymentModeId = v),
                     ),
@@ -506,21 +583,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 style: TextStyle(
                     color: Theme.of(context).colorScheme.error,
                     fontWeight: FontWeight.w700)),
-          if (!batch && _preview!['growerCode'] != null) ...[
+          if (!batch && _preview!['growerId'] != null) ...[
             const SizedBox(height: 8),
             const Text('Selected Purchase / Grower Details',
                 style: TextStyle(fontWeight: FontWeight.w800)),
             const SizedBox(height: 4),
             Wrap(spacing: 18, runSpacing: 5, children: [
-              Text('Grower Code: ${_preview!['growerCode']}'),
+              Text('Grower ID: ${_preview!['growerId']}'),
               Text('Name: ${_preview!['growerName'] ?? '-'}'),
               Text('Father Name: ${_preview!['fatherName'] ?? '-'}'),
               Text('Village: ${_preview!['villageName'] ?? '-'}'),
               if (selectedPurchase != null) ...[
                 Text('Purchase ID: ${selectedPurchase['purchaseId']}'),
                 Text('Vehicle: ${selectedPurchase['vehicleNumber'] ?? '-'}'),
-                Text('Final Weight: ${((selectedPurchase['finalWeightQuintal'] ?? 0) as num).toStringAsFixed(2)} Qtl'),
-                Text('Amount: Rs ${((selectedPurchase['purchaseAmount'] ?? 0) as num).toStringAsFixed(2)}'),
+                Text(
+                    'Final Weight: ${((selectedPurchase['finalWeightQuintal'] ?? 0) as num).toStringAsFixed(2)} Qtl'),
+                Text(
+                    'Amount: Rs ${((selectedPurchase['purchaseAmount'] ?? 0) as num).toStringAsFixed(2)}'),
               ],
             ]),
           ],
@@ -529,13 +608,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
               style: const TextStyle(fontWeight: FontWeight.w700)),
           if (batch) ...[
             const SizedBox(height: 8),
-            const Text('Each row will create a separate Payment ID, Advice Number, PDF slip and cash-evidence capture.',
+            const Text(
+                'Each row will create a separate Payment ID, Advice Number, PDF slip and cash-evidence capture.',
                 style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
             const SizedBox(height: 5),
             for (final raw in batchGrowers)
               Builder(builder: (_) {
                 final g = Map<String, dynamic>.from(raw as Map);
-                return Text('${g['growerCode']} • ${g['growerName']} — ${g['purchaseCount']} purchase(s), '
+                return Text(
+                    '${g['growerId']} • ${g['growerName']} — ${g['purchaseCount']} purchase(s), '
                     'Rs ${(g['estimatedNetPayable'] as num).toStringAsFixed(2)} net',
                     style: const TextStyle(fontSize: 12));
               }),
@@ -560,7 +641,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
     );
   }
 
-  Widget _buildTable(bool canCancel, bool canCaptureEvidence, bool canViewEvidence) {
+  Widget _buildTable(
+      bool canCancel, bool canCaptureEvidence, bool canViewEvidence) {
     return SingleChildScrollView(
       scrollDirection: Axis.vertical,
       child: SingleChildScrollView(
@@ -583,7 +665,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
               DataCell(Text('${p['paymentId']}',
                   style: const TextStyle(fontWeight: FontWeight.w700))),
               DataCell(Text('${p['adviceNumber']}')),
-              DataCell(Text('${p['growerCode']} ${p['growerName']}')),
+              DataCell(Text('${p['growerId']} ${p['growerName']}')),
               DataCell(
                   Text((p['totalPurchaseAmount'] as num).toStringAsFixed(2))),
               DataCell(
@@ -599,23 +681,30 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       : Colors.red,
                   visualDensity: VisualDensity.compact)),
               if (canCaptureEvidence || canViewEvidence)
-                DataCell(p['paymentModeName']?.toString().toUpperCase() == 'CASH'
+                DataCell(p['paymentModeName']?.toString().toUpperCase() ==
+                        'CASH'
                     ? Row(mainAxisSize: MainAxisSize.min, children: [
                         if (canCaptureEvidence) ...[
                           IconButton(
                               tooltip: 'Open live camera / Capture or Retake',
-                              icon: const Icon(Icons.camera_alt_outlined, size: 18),
-                              onPressed: () => _openPaymentEvidence(p['paymentId'] as int)),
+                              icon: const Icon(Icons.camera_alt_outlined,
+                                  size: 18),
+                              onPressed: () =>
+                                  _openPaymentEvidence(p['paymentId'] as int)),
                           IconButton(
                               tooltip: 'Upload evidence image',
-                              icon: const Icon(Icons.upload_file_outlined, size: 18),
-                              onPressed: () => _uploadEvidence(p['paymentId'] as int)),
+                              icon: const Icon(Icons.upload_file_outlined,
+                                  size: 18),
+                              onPressed: () =>
+                                  _uploadEvidence(p['paymentId'] as int)),
                         ],
                         if (canViewEvidence)
                           IconButton(
                               tooltip: 'View saved evidence',
-                              icon: const Icon(Icons.photo_library_outlined, size: 18),
-                              onPressed: () => _viewEvidence(p['paymentId'] as int)),
+                              icon: const Icon(Icons.photo_library_outlined,
+                                  size: 18),
+                              onPressed: () =>
+                                  _viewEvidence(p['paymentId'] as int)),
                       ])
                     : const Text('-')),
               if (canCancel)
@@ -660,8 +749,7 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
     _contextData = Map<String, dynamic>.from(widget.initialContext);
     _selectFirstPurchase();
     _refreshPreview();
-    _previewTimer = Timer.periodic(
-        const Duration(seconds: 2), (_) {
+    _previewTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (mounted && !_capturing) _refreshPreview(silent: true);
     });
   }
@@ -715,7 +803,8 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
         setState(() => _previewError = ApiClient.errorMessage(res));
       }
     } catch (error) {
-      if (mounted) setState(() => _previewError = ApiClient.exceptionMessage(error));
+      if (mounted)
+        setState(() => _previewError = ApiClient.exceptionMessage(error));
     } finally {
       _previewLoading = false;
       if (!silent && mounted) setState(() {});
@@ -743,12 +832,11 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
     final retake = evidence != null;
     setState(() => _capturing = true);
     try {
-      final res = await ApiClient.instance.dio.post(
-          '/api/payments/${widget.paymentId}/images/capture',
-          data: {
-            'purchaseId': _purchaseId,
-            'replaceExisting': retake,
-          });
+      final res = await ApiClient.instance.dio
+          .post('/api/payments/${widget.paymentId}/images/capture', data: {
+        'purchaseId': _purchaseId,
+        'replaceExisting': retake,
+      });
       if (!mounted) return;
       if (res.statusCode == 200) {
         await _reloadContext();
@@ -762,7 +850,8 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
         setState(() => _previewError = ApiClient.errorMessage(res));
       }
     } catch (error) {
-      if (mounted) setState(() => _previewError = ApiClient.exceptionMessage(error));
+      if (mounted)
+        setState(() => _previewError = ApiClient.exceptionMessage(error));
     } finally {
       if (mounted) setState(() => _capturing = false);
     }
@@ -781,12 +870,15 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
       content: SizedBox(
           width: 800,
           height: 570,
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Text(
                 'Grower: ' +
-                    (_contextData['growerCode']?.toString() ?? '-') +
+                    (_contextData['growerId']?.toString() ?? '-') +
                     ' • Net payable: Rs ' +
-                    ((_contextData['netPayableAmount'] as num?)?.toStringAsFixed(2) ?? '-'),
+                    ((_contextData['netPayableAmount'] as num?)
+                            ?.toStringAsFixed(2) ??
+                        '-'),
                 style: const TextStyle(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             if (camera == null)
@@ -794,26 +886,35 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
                   'Payment Evidence Camera is not configured. Developer: choose an active camera in Configuration > Cameras.',
                   style: TextStyle(color: Colors.red))
             else
-              Text(
-                  'Live camera: Camera ' +
-                      ((camera['cameraNumber'] as num?)?.toInt().toString().padLeft(2, '0') ?? '-') +
-                      ' • ' +
-                      (camera['vendor']?.toString() ?? '')),
+              Text('Live camera: Camera ' +
+                  ((camera['cameraNumber'] as num?)
+                          ?.toInt()
+                          .toString()
+                          .padLeft(2, '0') ??
+                      '-') +
+                  ' • ' +
+                  (camera['vendor']?.toString() ?? '')),
             const SizedBox(height: 10),
             Expanded(
                 child: Container(
                     color: Colors.black,
                     alignment: Alignment.center,
                     child: _preview != null
-                        ? Image.memory(_preview!, fit: BoxFit.contain,
-                            gaplessPlayback: true)
-                        : Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                            if (_previewLoading) const CircularProgressIndicator(),
-                            const SizedBox(height: 10),
-                            Text(_previewError ?? 'Connecting to live camera...',
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(color: Colors.white)),
-                          ]))),
+                        ? Image.memory(_preview!,
+                            fit: BoxFit.contain, gaplessPlayback: true)
+                        : Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                                if (_previewLoading)
+                                  const CircularProgressIndicator(),
+                                const SizedBox(height: 10),
+                                Text(
+                                    _previewError ??
+                                        'Connecting to live camera...',
+                                    textAlign: TextAlign.center,
+                                    style:
+                                        const TextStyle(color: Colors.white)),
+                              ]))),
             const SizedBox(height: 12),
             Row(children: [
               const Text('Purchase ID: '),
@@ -826,13 +927,16 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
                       items: [
                         for (final purchase in purchases)
                           DropdownMenuItem<int>(
-                              value: ((purchase as Map)['purchaseId'] as num).toInt(),
+                              value: ((purchase as Map)['purchaseId'] as num)
+                                  .toInt(),
                               child: Text('Purchase ' +
                                   purchase['purchaseId'].toString() +
                                   ' • Vehicle ' +
-                                  (purchase['vehicleNumber']?.toString() ?? '-')))
+                                  (purchase['vehicleNumber']?.toString() ??
+                                      '-')))
                       ],
-                      onChanged: (value) => setState(() => _purchaseId = value))),
+                      onChanged: (value) =>
+                          setState(() => _purchaseId = value))),
               const SizedBox(width: 18),
               Expanded(
                   child: Text(
@@ -840,14 +944,17 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
                           ? 'Existing evidence found. Capture will safely RETAKE it.'
                           : 'No active evidence for this purchase.',
                       style: TextStyle(
-                          color: hasEvidence ? Colors.orange : Colors.grey.shade700,
+                          color: hasEvidence
+                              ? Colors.orange
+                              : Colors.grey.shade700,
                           fontWeight: FontWeight.w600))),
             ]),
             const SizedBox(height: 8),
             Text(
                 'Save path: ' +
-                    (_contextData['configuredPath']?.toString() ?? r'C:\WeighmentImage\Payment') +
-                    r'\yyyy-MM-dd\GrowerCode-AdviceNo-PurchaseId-PaymentId.jpg',
+                    (_contextData['configuredPath']?.toString() ??
+                        r'C:\WeighmentImage\Payment') +
+                    r'\yyyy-MM-dd\GrowerId-AdviceNo-PurchaseId-PaymentId.jpg',
                 style: const TextStyle(fontSize: 12)),
           ])),
       actions: [
@@ -863,7 +970,9 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
                 : _capture,
             icon: _capturing
                 ? const SizedBox(
-                    width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2))
                 : Icon(hasEvidence ? Icons.refresh : Icons.camera_alt_outlined),
             label: Text(_capturing
                 ? 'Saving...'

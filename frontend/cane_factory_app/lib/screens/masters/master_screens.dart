@@ -143,6 +143,22 @@ class MastersHubScreen extends StatelessWidget {
       ),
       'Rates': const RateScreen(),
       'Sale Rates': const SaleItemRateScreen(),
+      'Rate Reasons': const MasterCrudScreen(
+        title: 'Rate Reason',
+        module: 'RateReason',
+        endpoint: '/api/rate-reasons',
+        fields: [
+          FieldSpec('reasonName', 'Reason',
+              hint: 'Example: Quality deduction', maxLength: 150),
+          FieldSpec('description', 'Description',
+              hint: 'Optional explanation', required: false, maxLength: 500),
+        ],
+        columns: [
+          ColumnSpec('id', 'ID'),
+          ColumnSpec('reasonName', 'Reason'),
+          ColumnSpec('description', 'Description'),
+        ],
+      ),
       'Items': const MasterCrudScreen(
         title: 'Item',
         module: 'Item',
@@ -278,8 +294,8 @@ class _SaleItemRateScreenState extends State<SaleItemRateScreen> {
     setState(() => _loading = true);
     try {
       final results = await Future.wait([
-        ApiClient.instance.dio
-            .get('/api/sale-item-rates', queryParameters: {'includeInactive': true}),
+        ApiClient.instance.dio.get('/api/sale-item-rates',
+            queryParameters: {'includeInactive': true}),
         ApiClient.instance.dio.get('/api/items'),
       ]);
       if (results[0].statusCode == 200) _rates = results[0].data['items'] ?? [];
@@ -301,7 +317,8 @@ class _SaleItemRateScreenState extends State<SaleItemRateScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setD) => AlertDialog(
-          title: Text(revisionOf == null ? 'New Sale Rate Period' : 'Revise Sale Rate'),
+          title: Text(
+              revisionOf == null ? 'New Sale Rate Period' : 'Revise Sale Rate'),
           content: SizedBox(
             width: 400,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -310,22 +327,35 @@ class _SaleItemRateScreenState extends State<SaleItemRateScreen> {
                 decoration: const InputDecoration(labelText: 'Item'),
                 items: [
                   for (final item in _items)
-                    DropdownMenuItem(value: item['id'] as int, child: Text('${item['itemName']}')),
+                    DropdownMenuItem(
+                        value: item['id'] as int,
+                        child: Text('${item['itemName']}')),
                 ],
-                onChanged: revisionOf == null ? (value) => setD(() => itemId = value) : null,
+                onChanged: revisionOf == null
+                    ? (value) => setD(() => itemId = value)
+                    : null,
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: rateCtl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(labelText: 'Rate (per Quintal)', hintText: 'Example: 375.00'),
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                    labelText: 'Rate (per Quintal)',
+                    hintText: 'Example: 375.00'),
               ),
               const SizedBox(height: 12),
               Row(children: [
-                Expanded(child: Text('Effective From: ${DateFormat('dd-MM-yyyy').format(from)}')),
+                Expanded(
+                    child: Text(
+                        'Effective From: ${DateFormat('dd-MM-yyyy').format(from)}')),
                 TextButton(
                   onPressed: () async {
-                    final date = await showDatePicker(context: ctx, initialDate: from, firstDate: DateTime(2020), lastDate: DateTime(2035));
+                    final date = await showDatePicker(
+                        context: ctx,
+                        initialDate: from,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2035));
                     if (date != null) setD(() => from = date);
                   },
                   child: const Text('Pick Date'),
@@ -334,22 +364,31 @@ class _SaleItemRateScreenState extends State<SaleItemRateScreen> {
             ]),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(revisionOf == null ? 'Save' : 'Save Revision')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(revisionOf == null ? 'Save' : 'Save Revision')),
           ],
         ),
       ),
     );
     if (save != true || itemId == null) return;
-    final response = await ApiClient.instance.dio.post('/api/sale-item-rates', data: {
+    final response =
+        await ApiClient.instance.dio.post('/api/sale-item-rates', data: {
       'itemId': itemId,
       'rate': double.tryParse(rateCtl.text) ?? 0,
       'effectiveFrom': from.toIso8601String(),
     });
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(response.statusCode == 200 ? response.data['message'] : ApiClient.errorMessage(response)),
-      backgroundColor: response.statusCode == 200 ? const Color(0xFF2E7D32) : Theme.of(context).colorScheme.error,
+      content: Text(response.statusCode == 200
+          ? response.data['message']
+          : ApiClient.errorMessage(response)),
+      backgroundColor: response.statusCode == 200
+          ? const Color(0xFF2E7D32)
+          : Theme.of(context).colorScheme.error,
     ));
     _load();
   }
@@ -357,11 +396,19 @@ class _SaleItemRateScreenState extends State<SaleItemRateScreen> {
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Row(children: [
-            Text('Sale Rate Master (item-wise)', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+            Text('Sale Rate Master (item-wise)',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
             const Spacer(),
-            FilledButton.icon(onPressed: _newRate, icon: const Icon(Icons.add), label: const Text('New Sale Rate Period')),
+            FilledButton.icon(
+                onPressed: _newRate,
+                icon: const Icon(Icons.add),
+                label: const Text('New Sale Rate Period')),
           ]),
           const SizedBox(height: 10),
           Expanded(
@@ -371,15 +418,28 @@ class _SaleItemRateScreenState extends State<SaleItemRateScreen> {
                   : SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: DataTable(columns: const [
-                        DataColumn(label: Text('ID')), DataColumn(label: Text('Item')), DataColumn(label: Text('Rate')),
-                        DataColumn(label: Text('Effective From')), DataColumn(label: Text('Effective To')), DataColumn(label: Text('Action')),
+                        DataColumn(label: Text('ID')),
+                        DataColumn(label: Text('Item')),
+                        DataColumn(label: Text('Rate')),
+                        DataColumn(label: Text('Effective From')),
+                        DataColumn(label: Text('Effective To')),
+                        DataColumn(label: Text('Action')),
                       ], rows: [
                         for (final rate in _rates)
                           DataRow(cells: [
-                            DataCell(Text('${rate['id']}')), DataCell(Text('${rate['itemName']}')),
-                            DataCell(Text((rate['rate'] as num).toStringAsFixed(2))),
-                            DataCell(Text(_date(rate['effectiveFrom']))), DataCell(Text(_date(rate['effectiveTo']))),
-                            DataCell(TextButton.icon(onPressed: () => _newRate(revisionOf: Map<String, dynamic>.from(rate)), icon: const Icon(Icons.edit_calendar_outlined, size: 16), label: const Text('Revise'))),
+                            DataCell(Text('${rate['id']}')),
+                            DataCell(Text('${rate['itemName']}')),
+                            DataCell(
+                                Text((rate['rate'] as num).toStringAsFixed(2))),
+                            DataCell(Text(_date(rate['effectiveFrom']))),
+                            DataCell(Text(_date(rate['effectiveTo']))),
+                            DataCell(TextButton.icon(
+                                onPressed: () => _newRate(
+                                    revisionOf:
+                                        Map<String, dynamic>.from(rate)),
+                                icon: const Icon(Icons.edit_calendar_outlined,
+                                    size: 16),
+                                label: const Text('Revise'))),
                           ]),
                       ]),
                     ),
@@ -651,8 +711,8 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                           for (final p in _items)
                             DataRow(cells: [
                               DataCell(Text('${p['purchaseId']}')),
-                              DataCell(Text(
-                                  '${p['growerCode']} ${p['growerName']}')),
+                              DataCell(
+                                  Text('${p['growerId']} ${p['growerName']}')),
                               DataCell(Text('${p['villageName']}')),
                               DataCell(Text('${p['vehicleNumber']}')),
                               DataCell(Text(_formatDate(p['purchaseDate']))),

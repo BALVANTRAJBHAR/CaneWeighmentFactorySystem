@@ -24,6 +24,9 @@ public class AppDbContext : DbContext
     public DbSet<VarietyType> VarietyTypes => Set<VarietyType>();
     public DbSet<Variety> Varieties => Set<Variety>();
     public DbSet<RateMaster> Rates => Set<RateMaster>();
+    public DbSet<RateReasonMaster> RateReasons => Set<RateReasonMaster>();
+    public DbSet<RateOverrideEvidence> RateOverrideEvidences => Set<RateOverrideEvidence>();
+    public DbSet<WeighmentRateOverride> WeighmentRateOverrides => Set<WeighmentRateOverride>();
     public DbSet<Item> Items => Set<Item>();
     public DbSet<Party> Parties => Set<Party>();
     public DbSet<Season> Seasons => Set<Season>();
@@ -129,6 +132,36 @@ public class AppDbContext : DbContext
         {
             e.Property(x => x.Rate).HasPrecision(12, 2);
             e.HasIndex(x => new { x.VarietyTypeId, x.EffectiveFrom });
+        });
+        b.Entity<RateReasonMaster>(e =>
+        {
+            e.Property(x => x.ReasonName).HasMaxLength(150).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(500);
+            e.HasIndex(x => x.ReasonName).IsUnique();
+        });
+        b.Entity<RateOverrideEvidence>(e =>
+        {
+            e.Property(x => x.Token).HasMaxLength(64).IsRequired();
+            e.Property(x => x.TransactionType).HasMaxLength(16).IsRequired();
+            e.Property(x => x.Source).HasMaxLength(32).IsRequired();
+            e.Property(x => x.ImageName).HasMaxLength(260).IsRequired();
+            e.Property(x => x.FilePath).HasMaxLength(1000).IsRequired();
+            e.Property(x => x.FileHash).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => x.Token).IsUnique();
+            e.HasIndex(x => new { x.TransactionType, x.TransactionId });
+        });
+        b.Entity<WeighmentRateOverride>(e =>
+        {
+            e.Property(x => x.TransactionType).HasMaxLength(16).IsRequired();
+            e.Property(x => x.MasterRate).HasPrecision(12, 2);
+            e.Property(x => x.ApprovedRate).HasPrecision(12, 2);
+            e.Property(x => x.ApprovedByUserName).HasMaxLength(100).IsRequired();
+            e.Property(x => x.RateReasonText).HasMaxLength(150).IsRequired();
+            e.Property(x => x.Remark).HasMaxLength(500);
+            e.HasIndex(x => new { x.TransactionType, x.TransactionId }).IsUnique();
+            e.HasOne(x => x.Evidence).WithMany().HasForeignKey(x => x.EvidenceId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.ApprovedByUserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<RateReasonMaster>().WithMany().HasForeignKey(x => x.RateReasonId).OnDelete(DeleteBehavior.Restrict);
         });
         b.Entity<Item>(e => { e.HasIndex(x => x.ItemName).IsUnique(); e.Property(x => x.ItemNameHi).HasMaxLength(50); });
         b.Entity<Party>(e =>

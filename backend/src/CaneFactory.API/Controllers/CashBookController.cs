@@ -70,7 +70,9 @@ public class CashBookController : ControllerBase
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = search.Trim();
+            var isGrowerId = int.TryParse(term, out var parsedGrowerId);
             q = q.Where(x => (x.SourceName != null && x.SourceName.Contains(term)) ||
+                (isGrowerId && x.GrowerId == parsedGrowerId) ||
                 (x.GrowerCode != null && x.GrowerCode.Contains(term)) ||
                 (x.GrowerName != null && x.GrowerName.Contains(term)) ||
                 (x.ReferenceNumber != null && x.ReferenceNumber.Contains(term)));

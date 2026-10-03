@@ -2,6 +2,9 @@ namespace CaneFactory.Application.DTOs;
 
 public class GrossSaveRequest
 {
+    public int GrowerId { get; set; }
+    // Kept temporarily so an older desktop client can finish an in-progress
+    // rollout. New clients identify growers only by the six-digit GrowerId.
     public string GrowerCode { get; set; } = string.Empty;
     public int VehicleTypeId { get; set; }
     public string VehicleNumber { get; set; } = string.Empty;
@@ -17,6 +20,11 @@ public class TareSaveRequest
 {
     public int PurchaseId { get; set; }
     public decimal ScaleReadingKg { get; set; }
+    public decimal? Rate { get; set; }
+    public int? ApprovedByUserId { get; set; }
+    public int? RateReasonId { get; set; }
+    public string? RateOverrideRemark { get; set; }
+    public string? RateEvidenceToken { get; set; }
     public string? IdempotencyKey { get; set; }
 }
 
@@ -114,5 +122,9 @@ public class SalePurchaseGrossSaveRequest
 {
     public int SalePurchaseId { get; set; }
     public decimal? Rate { get; set; }
+    public int? ApprovedByUserId { get; set; }
+    public int? RateReasonId { get; set; }
+    public string? RateOverrideRemark { get; set; }
+    public string? RateEvidenceToken { get; set; }
     public string? IdempotencyKey { get; set; }
 }

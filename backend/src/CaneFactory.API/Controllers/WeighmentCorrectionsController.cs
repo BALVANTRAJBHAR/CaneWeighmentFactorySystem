@@ -65,7 +65,7 @@ public class WeighmentCorrectionsController : ControllerBase
             if (!p.Status || p.GrossTareStatus == "CANCELLED" || p.LockStatus == "LOCKED")
                 return Conflict(new { message = "Inactive, cancelled or locked purchases cannot be corrected." });
             updatedBy = p.UpdatedBy;
-            record = new { p.Id, p.GrowerCode, name = p.Grower.GrowerName, p.VarietyTypeId, p.VarietyId,
+            record = new { p.Id, p.GrowerId, p.GrowerCode, name = p.Grower.GrowerName, p.VarietyTypeId, p.VarietyId,
                 varietyName = p.Variety.VarietyName, p.VehicleTypeId, p.VehicleType.VehicleTypeName, p.VehicleNumber,
                 p.GrossWeightQuintal, p.TareWeightQuintal, p.FinalWeightQuintal, p.Rate,
                 amount = p.PurchaseAmount, status = p.GrossTareStatus, p.PaymentStatus,

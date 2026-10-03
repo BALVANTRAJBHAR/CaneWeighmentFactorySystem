@@ -4,6 +4,7 @@ namespace CaneFactory.Application.DTOs;
 public class PurchaseReportRow
 {
     public int PurchaseId { get; set; }
+    public int GrowerId { get; set; }
     public string GrowerCode { get; set; } = string.Empty;
     public string GrowerName { get; set; } = string.Empty;
     public string VillageName { get; set; } = string.Empty;
@@ -27,6 +28,7 @@ public class PaymentReportRow
 {
     public int PaymentId { get; set; }
     public int AdviceNumber { get; set; }
+    public int GrowerId { get; set; }
     public string GrowerCode { get; set; } = string.Empty;
     public string GrowerName { get; set; } = string.Empty;
     public string VillageName { get; set; } = string.Empty;
@@ -48,6 +50,7 @@ public class PaymentReportRow
 public class LoanReportRow
 {
     public int LoanId { get; set; }
+    public int GrowerId { get; set; }
     public string GrowerCode { get; set; } = string.Empty;
     public string GrowerName { get; set; } = string.Empty;
     public string VillageName { get; set; } = string.Empty;

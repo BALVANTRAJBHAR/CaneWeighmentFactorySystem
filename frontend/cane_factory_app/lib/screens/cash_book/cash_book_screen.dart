@@ -88,9 +88,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
 
   Future<void> _pickDate({required bool receipt, required bool from}) async {
     final current =
-        receipt
-            ? _receiptDate
-            : (from ? _fromDate : _toDate) ?? DateTime.now();
+        receipt ? _receiptDate : (from ? _fromDate : _toDate) ?? DateTime.now();
     final picked = await showDatePicker(
       context: context,
       initialDate: current,
@@ -167,20 +165,21 @@ class _CashBookScreenState extends State<CashBookScreen> {
       return _toast('Enter a valid cash amount.', error: true);
     }
     if (_cashOutRemarks.text.trim().isEmpty) {
-      return _toast('Enter the purpose / remarks for this payment.', error: true);
+      return _toast('Enter the purpose / remarks for this payment.',
+          error: true);
     }
     setState(() => _saving = true);
     try {
-      final res = await ApiClient.instance.dio.post('/api/cash-book/payments',
-          data: {
-            'entryDate': _paymentDate.toIso8601String(),
-            'paidTo': _paidTo.text.trim(),
-            'amount': amount,
-            'referenceNumber': _cashOutReference.text.trim().isEmpty
-                ? null
-                : _cashOutReference.text.trim(),
-            'remarks': _cashOutRemarks.text.trim(),
-          });
+      final res =
+          await ApiClient.instance.dio.post('/api/cash-book/payments', data: {
+        'entryDate': _paymentDate.toIso8601String(),
+        'paidTo': _paidTo.text.trim(),
+        'amount': amount,
+        'referenceNumber': _cashOutReference.text.trim().isEmpty
+            ? null
+            : _cashOutReference.text.trim(),
+        'remarks': _cashOutRemarks.text.trim(),
+      });
       if (!mounted) return;
       if (res.statusCode == 200) {
         _toast(res.data['message'] ?? 'Other cash payment saved.');
@@ -252,7 +251,9 @@ class _CashBookScreenState extends State<CashBookScreen> {
         decoration: BoxDecoration(
             border: Border(
                 bottom: BorderSide(
-                    color: Theme.of(context).dividerColor.withValues(alpha: 0.6)))),
+                    color: Theme.of(context)
+                        .dividerColor
+                        .withValues(alpha: 0.6)))),
         child: Row(children: [
           _entryTabButton('Cash Receipt', 'RECEIPT', Icons.south_west_outlined),
           _entryTabButton(
@@ -270,7 +271,9 @@ class _CashBookScreenState extends State<CashBookScreen> {
         decoration: BoxDecoration(
           border: Border(
               bottom: BorderSide(
-                  color: selected ? Theme.of(context).colorScheme.primary : Colors.transparent,
+                  color: selected
+                      ? Theme.of(context).colorScheme.primary
+                      : Colors.transparent,
                   width: 3)),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -519,7 +522,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
                           DataColumn(label: Text('Date')),
                           DataColumn(label: Text('Entry')),
                           DataColumn(label: Text('Source')),
-                          DataColumn(label: Text('Grower Code / Name')),
+                          DataColumn(label: Text('Grower ID / Name')),
                           DataColumn(label: Text('Payment ID')),
                           DataColumn(label: Text('Net Payable (₹)')),
                           DataColumn(label: Text('Cash In (₹)')),
@@ -534,9 +537,9 @@ class _CashBookScreenState extends State<CashBookScreen> {
                               DataCell(Text(_entryLabel(row))),
                               DataCell(Text(
                                   '${row['sourceType']} • ${row['sourceName'] ?? '-'}')),
-                              DataCell(Text(row['growerCode'] == null
+                              DataCell(Text(row['growerId'] == null
                                   ? '-'
-                                  : '${row['growerCode']} ${row['growerName'] ?? ''}')),
+                                  : '${row['growerId']} ${row['growerName'] ?? ''}')),
                               DataCell(Text('${row['paymentId'] ?? '-'}')),
                               DataCell(Text(row['netPayableAmount'] == null
                                   ? '-'

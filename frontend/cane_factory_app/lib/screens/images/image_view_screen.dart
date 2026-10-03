@@ -25,10 +25,10 @@ enum _ImageSource {
       };
 
   String get hint => switch (this) {
-        _ImageSource.purchase => 'Purchase ID, Grower Code or Grower Name',
+        _ImageSource.purchase => 'Purchase ID, Grower ID or Grower Name',
         _ImageSource.salePurchase => 'Sale ID or Party Name',
         _ImageSource.payment =>
-          'Payment ID, Advice Number, Grower Code or Grower Name',
+          'Payment ID, Advice Number, Grower ID or Grower Name',
       };
 }
 
@@ -230,11 +230,11 @@ class _ImageViewScreenState extends State<ImageViewScreen> {
 
   String _helpText(_ImageSource source) => switch (source) {
         _ImageSource.purchase =>
-          'Purchase ID returns its image records. Grower Code or Name can return multiple purchases.',
+          'Purchase ID returns its image records. Grower ID or Name can return multiple purchases.',
         _ImageSource.salePurchase =>
           'Sale ID returns its image records. Party Name can return multiple transactions.',
         _ImageSource.payment =>
-          'Payment ID or Advice Number returns matching images. Grower Code or Name can return multiple payments.',
+          'Payment ID or Advice Number returns matching images. Grower ID or Name can return multiple payments.',
       };
 }
 
@@ -303,10 +303,7 @@ class _ImageResultCard extends StatelessWidget {
       'purchase' => (
           'Purchase ID: ' + _v(item['purchaseId']),
           <String>[
-            'Grower: ' +
-                _v(item['growerCode']) +
-                ' • ' +
-                _v(item['growerName']),
+            'Grower: ' + _v(item['growerId']) + ' • ' + _v(item['growerName']),
             'Vehicle: ' + _v(item['vehicleNumber']),
             'Stage: ' + _v(item['captureStage']),
             'Status: ' + _v(item['transactionStatus']),
@@ -328,10 +325,7 @@ class _ImageResultCard extends StatelessWidget {
               '  •  Advice No: ' +
               _v(item['adviceNumber']),
           <String>[
-            'Grower: ' +
-                _v(item['growerCode']) +
-                ' • ' +
-                _v(item['growerName']),
+            'Grower: ' + _v(item['growerId']) + ' • ' + _v(item['growerName']),
             if (item['purchaseId'] != null)
               'Purchase ID: ' + _v(item['purchaseId']),
             'Mode: ' + _v(item['paymentMode']),

@@ -4,6 +4,7 @@ using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
 using CaneFactory.Infrastructure.Camera;
 using CaneFactory.API.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text;
@@ -57,6 +58,71 @@ public class ConfigController : ControllerBase
         await _db.SaveChangesAsync();
         await _audit.LogAsync("SystemSettingChange", "WeightRule", "WeightRuleConfig", r.Id.ToString(), oldValue: old, newValue: src);
         return Ok(new { message = $"Weight rules saved. Minimum weight: {r.MinimumWeightQuintal:F2} Quintal." });
+    }
+
+    /// <summary>Developer-only status for the persisted vehicle/platform safety lock.</summary>
+    [Authorize(Roles = "Developer")]
+    [HasPermission("WeightRule.Configure")]
+    [HttpGet("weighbridge-platform-lock")]
+    public async Task<IActionResult> GetWeighbridgePlatformLock()
+    {
+        var setting = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Key == "WeighbridgePlatformClearRequired");
+        return Ok(new
+        {
+            locked = setting?.Value == "1",
+            lastChangedAt = setting?.UpdatedAt,
+            lastChangedBy = setting?.UpdatedBy
+        });
+    }
+
+    /// <summary>
+    /// Manual safety override for recovery after an application/digitizer restart. The developer
+    /// must first physically verify that the weighbridge is empty and provide an audit reason.
+    /// </summary>
+    [Authorize(Roles = "Developer")]
+    [HasPermission("WeightRule.Configure")]
+    [HttpPost("weighbridge-platform-lock/unlock")]
+    public async Task<IActionResult> UnlockWeighbridgePlatform([FromBody] Dictionary<string, string> body)
+    {
+        var reason = (body.GetValueOrDefault("reason") ?? string.Empty).Trim();
+        if (reason.Length < 5)
+            return BadRequest(new { message = "Enter an unlock reason of at least 5 characters after physically confirming that the platform is empty." });
+        if (reason.Length > 500)
+            return BadRequest(new { message = "Unlock reason cannot exceed 500 characters." });
+
+        var setting = await _db.SystemSettings
+            .FirstOrDefaultAsync(s => s.Key == "WeighbridgePlatformClearRequired");
+        var wasLocked = setting?.Value == "1";
+        if (setting == null)
+        {
+            setting = new SystemSetting
+            {
+                Key = "WeighbridgePlatformClearRequired",
+                Value = "0",
+                Description = "Requires a genuine zero indication before the next vehicle weighment."
+            };
+            _db.SystemSettings.Add(setting);
+        }
+        else
+        {
+            setting.Value = "0";
+        }
+        setting.UpdatedAt = DateTime.UtcNow;
+        setting.UpdatedBy = _current.UserId;
+        await _db.SaveChangesAsync();
+
+        await _audit.LogAsync("SafetyOverride", "WeightRule", "SystemSetting", setting.Id.ToString(),
+            oldValue: new { Locked = wasLocked },
+            newValue: new { Locked = false, Reason = reason, PhysicalPlatformConfirmedEmpty = true });
+
+        return Ok(new
+        {
+            message = wasLocked
+                ? "Weighbridge platform lock released. The override was recorded in Audit Log."
+                : "Weighbridge platform was already unlocked. The confirmation was recorded in Audit Log.",
+            locked = false
+        });
     }
 
     // ---------------------------------------------------------------- SOUND / TTS
@@ -317,7 +383,7 @@ public class ConfigController : ControllerBase
             message = $"Payment evidence camera {camera.CameraNumber:D2} and path saved successfully.",
             selectedCameraId = camera.Id,
             configuredPath = effectivePath,
-            filenamePattern = @"{path}\yyyy-MM-dd\GrowerCode-AdviceNo-PurchaseId-PaymentId.jpg"
+            filenamePattern = @"{path}\yyyy-MM-dd\GrowerId-AdviceNo-PurchaseId-PaymentId.jpg"
         });
     }
 

@@ -69,7 +69,7 @@ public class FarmerController : ControllerBase
         {
             profile = new
             {
-                grower.GrowerCode, grower.GrowerName, grower.FatherName, VillageName = grower.Village.VillageName,
+                growerId = grower.Id, grower.GrowerCode, grower.GrowerName, grower.FatherName, VillageName = grower.Village.VillageName,
                 grower.Mobile, grower.Email, BankName = grower.Bank?.BankName, AccountMasked = MaskAccount(grower.BankAccountNumber)
             },
             summary = new
@@ -130,7 +130,7 @@ public class FarmerController : ControllerBase
         if (format == "json")
             return Ok(new
             {
-                growerCode = grower.GrowerCode, growerName = grower.GrowerName, fromDate = from, toDate = to,
+                growerId = grower.Id, growerName = grower.GrowerName, fromDate = from, toDate = to,
                 entries = sorted.Select(e => new { date = e.Date, type = e.Type, reference = e.Reference, details = e.Details, amount = e.Amount }),
                 totals = new { totalCredit, totalDebit, netBalance = totalCredit - totalDebit }
             });
@@ -145,7 +145,7 @@ public class FarmerController : ControllerBase
             ("Total Debit (Rs)", totalDebit.ToString("F2")),
             ("Net Balance (Rs)", (totalCredit - totalDebit).ToString("F2"))
         };
-        var title = $"Statement - {grower.GrowerName} ({grower.GrowerCode})";
+        var title = $"Statement - {grower.GrowerName} (Grower ID {grower.Id})";
         if (format == "pdf")
             return File(_export.ToPdf(title, $"{from:dd-MM-yyyy} to {to:dd-MM-yyyy}", headers, tableRows, totals), "application/pdf", "Farmer-Statement.pdf");
         return File(_export.ToExcel(title, headers, tableRows, totals),

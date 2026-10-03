@@ -96,10 +96,10 @@ Future<void> postDownloadAndNotify(
   } on DioException catch (e) {
     final message = e.response == null
         ? 'Download failed: ${e.message}'
-        : _downloadFailureMessage(
-            e.response?.data, e.response?.statusCode);
+        : _downloadFailureMessage(e.response?.data, e.response?.statusCode);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     }
   } catch (e) {
     if (context.mounted) {
@@ -116,10 +116,15 @@ Future<void> postDownloadAndNotify(
 Future<void> openPdfAfterSave(
     BuildContext context, String path, String filename,
     {String successMessage = 'Auto print is off. PDF opened.',
-    String failurePrefix = 'Transaction saved, but the PDF could not be opened:'}) async {
+    String failurePrefix =
+        'Transaction saved, but the PDF could not be opened:'}) async {
   try {
     final res = await ApiClient.instance.dio.get<List<int>>(path,
-        options: Options(responseType: ResponseType.bytes));
+        options: Options(
+          responseType: ResponseType.bytes,
+          receiveTimeout: const Duration(minutes: 2),
+          sendTimeout: const Duration(seconds: 30),
+        ));
     if (res.statusCode != 200 || res.data == null) {
       var message = 'PDF generation failed (HTTP ${res.statusCode}).';
       try {
@@ -128,21 +133,60 @@ Future<void> openPdfAfterSave(
       } catch (_) {}
       throw StateError(message);
     }
+    final bytes = res.data!;
+    if (bytes.length < 5 ||
+        bytes[0] != 0x25 ||
+        bytes[1] != 0x50 ||
+        bytes[2] != 0x44 ||
+        bytes[3] != 0x46 ||
+        bytes[4] != 0x2D) {
+      throw const FormatException('Server response is not a valid PDF.');
+    }
     final dir = await getApplicationDocumentsDirectory();
     final file = File('${dir.path}${Platform.pathSeparator}$filename');
-    await file.writeAsBytes(res.data!, flush: true);
-    final opened = await launchUrl(file.uri,
-        mode: LaunchMode.externalApplication, webOnlyWindowName: '_blank');
-    if (!opened)
-      throw StateError('No application is associated with PDF files.');
+    await file.writeAsBytes(bytes, flush: true);
+
+    var opened = false;
+    Object? lastOpenError;
+    for (var attempt = 0; attempt < 3 && !opened; attempt++) {
+      try {
+        opened = await launchUrl(file.uri,
+            mode: LaunchMode.externalApplication, webOnlyWindowName: '_blank');
+      } catch (error) {
+        lastOpenError = error;
+      }
+      if (!opened && attempt < 2) {
+        await Future<void>.delayed(Duration(milliseconds: 350 * (attempt + 1)));
+      }
+    }
+
+    // url_launcher ultimately delegates file URIs to ShellExecute on Windows.
+    // Some PDF viewers intermittently reject rapid consecutive ShellExecute
+    // calls; Explorer provides a second, independent shell-open path.
+    if (!opened && Platform.isWindows) {
+      try {
+        await Process.start('explorer.exe', <String>[file.path],
+            mode: ProcessStartMode.detached);
+        opened = true;
+      } catch (error) {
+        lastOpenError = error;
+      }
+    }
+    if (!opened) {
+      throw StateError(lastOpenError == null
+          ? 'No application is associated with PDF files.'
+          : 'The operating system could not open the PDF: $lastOpenError');
+    }
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(successMessage)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(successMessage),
+          backgroundColor: const Color(0xFF2E7D32)));
     }
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('$failurePrefix $e')));
+          content: Text('$failurePrefix $e'),
+          backgroundColor: Theme.of(context).colorScheme.error));
     }
   }
 }
