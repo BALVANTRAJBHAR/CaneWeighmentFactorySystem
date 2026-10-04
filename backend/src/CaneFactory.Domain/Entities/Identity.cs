@@ -4,6 +4,9 @@ namespace CaneFactory.Domain.Entities;
 
 public class User : BaseEntity
 {
+    /// <summary>Immutable ownership link for Farmer accounts. Null for staff users.</summary>
+    public int? GrowerId { get; set; }
+    public Grower? Grower { get; set; }
     public string Username { get; set; } = string.Empty;
     public string FullName { get; set; } = string.Empty;
     public string? FullNameHi { get; set; }
@@ -11,6 +14,9 @@ public class User : BaseEntity
     public string? Email { get; set; }
     public string PasswordHash { get; set; } = string.Empty;
     public bool MustChangePassword { get; set; }
+    /// <summary>Incrementing security stamp embedded in JWTs. Password/status changes invalidate
+    /// already-issued access tokens immediately, not only after their normal expiry.</summary>
+    public int TokenVersion { get; set; } = 1;
     public int FailedLoginCount { get; set; }
     public DateTime? LockoutEnd { get; set; }
     public DateTime? LastLoginAt { get; set; }

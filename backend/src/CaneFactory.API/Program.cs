@@ -62,6 +62,7 @@ builder.Services.AddSingleton<ILiveWeightBroadcaster, SignalRWeightBroadcaster>(
 builder.Services.AddSingleton<WeighingService>();
 builder.Services.AddHostedService<WeighingRecoveryService>();
 builder.Services.AddScoped<UserStateService>();
+builder.Services.AddScoped<FarmerAccountService>();
 builder.Services.AddScoped<LicenseService>();
 builder.Services.AddScoped<BackupExecutionService>();
 builder.Services.AddHostedService<BackupSchedulerService>();
@@ -247,13 +248,18 @@ app.Use(async (ctx, next) =>
 });
 
 // Global account-state gate: deactivated users and pending forced-password-change users
-// are blocked on ALL business APIs (auth endpoints excluded so they can change the password).
+// are blocked on all protected APIs. Only unauthenticated login/refresh/recovery endpoints are
+// excluded; the forced change-password endpoint checks account/token state but permits the
+// MustChangePassword flag by design.
 app.Use(async (ctx, next) =>
 {
     var path = ctx.Request.Path;
+    var isPublicAuthEndpoint = path.StartsWithSegments("/api/auth/login")
+        || path.StartsWithSegments("/api/auth/refresh")
+        || path.StartsWithSegments("/api/auth/forgot-password");
     if (ctx.User.Identity?.IsAuthenticated == true
         && path.StartsWithSegments("/api")
-        && !path.StartsWithSegments("/api/auth")
+        && !isPublicAuthEndpoint
         && !path.StartsWithSegments("/api/ping")
         && !path.StartsWithSegments("/api/health"))
     {
@@ -261,13 +267,64 @@ app.Use(async (ctx, next) =>
         if (int.TryParse(sub, out var uid))
         {
             var state = ctx.RequestServices.GetRequiredService<UserStateService>();
-            if (!await state.IsActiveAsync(uid))
+            var versionText = ctx.User.FindFirst("ver")?.Value;
+            var requirePasswordChanged = !path.StartsWithSegments("/api/auth/change-password");
+            if (!int.TryParse(versionText, out var tokenVersion)
+                || !await state.IsActiveAsync(uid, tokenVersion, requirePasswordChanged))
             {
-                ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+                // 401 lets supported clients rotate a legacy/stale token once. If its refresh
+                // session was revoked (password/status change), refresh fails and the client logs out.
+                ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 await ctx.Response.WriteAsJsonAsync(new
-                { message = "Account is inactive or a password change is required before using the application." });
+                { message = "Session is no longer valid, or a password change is required. Please login again." });
                 return;
             }
+        }
+    }
+    await next();
+});
+
+// Farmer identities are deliberately confined to the read-only self-service API.  Permission
+// claims are not trusted as a record-ownership boundary, including claims in older tokens.
+app.Use(async (ctx, next) =>
+{
+    if (ctx.User.Identity?.IsAuthenticated == true && ctx.User.IsInRole("Farmer"))
+    {
+        var path = ctx.Request.Path;
+        if (path.StartsWithSegments("/hubs"))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await ctx.Response.WriteAsJsonAsync(new
+            { message = "Farmer accounts cannot access live factory device streams." });
+            return;
+        }
+
+        if (!path.StartsWithSegments("/api"))
+        {
+            await next();
+            return;
+        }
+
+        var allowed = path.StartsWithSegments("/api/farmer")
+            || path.StartsWithSegments("/api/auth")
+            || path.StartsWithSegments("/api/dashboard/header")
+            || path.StartsWithSegments("/api/health")
+            || path.StartsWithSegments("/api/ping")
+            || path.StartsWithSegments("/api/license");
+        if (!allowed)
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await ctx.Response.WriteAsJsonAsync(new
+            { message = "Farmer accounts have read-only access to their own records only." });
+            return;
+        }
+
+        var remote = ctx.Connection.RemoteIpAddress;
+        if (!ctx.Request.IsHttps && (remote == null || !System.Net.IPAddress.IsLoopback(remote)))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status426UpgradeRequired;
+            await ctx.Response.WriteAsJsonAsync(new { message = "Farmer access requires HTTPS." });
+            return;
         }
     }
     await next();
@@ -286,8 +343,8 @@ using (var scope = app.Services.CreateScope())
     else if (db.Database.GetMigrations().Any()) db.Database.Migrate();
     else db.Database.EnsureCreated();
     await DbSeeder.SeedAsync(db, app.Configuration);
+    await scope.ServiceProvider.GetRequiredService<FarmerAccountService>()
+        .SynchronizeExistingGrowersAsync();
 }
 
 app.Run();
-
-

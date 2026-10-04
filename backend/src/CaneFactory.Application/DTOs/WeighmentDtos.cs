@@ -11,7 +11,7 @@ public class GrossSaveRequest
     public int VarietyTypeId { get; set; }
     public int VarietyId { get; set; }
     public decimal CuttingPercent { get; set; }
-    public decimal TaxPercent { get; set; }
+    public decimal OtherDeductionPercent { get; set; }
     public decimal ScaleReadingKg { get; set; }
     public string? IdempotencyKey { get; set; }
 }
@@ -48,8 +48,8 @@ public class PurchaseDto
     public decimal? NetWeightQuintal { get; set; }
     public decimal CuttingPercent { get; set; }
     public decimal? CuttingWeightQuintal { get; set; }
-    public decimal TaxPercent { get; set; }
-    public decimal? TaxWeightQuintal { get; set; }
+    public decimal OtherDeductionPercent { get; set; }
+    public decimal? OtherDeductionWeightQuintal { get; set; }
     public decimal? FinalWeightQuintal { get; set; }
     public decimal Rate { get; set; }
     public decimal? PurchaseAmount { get; set; }

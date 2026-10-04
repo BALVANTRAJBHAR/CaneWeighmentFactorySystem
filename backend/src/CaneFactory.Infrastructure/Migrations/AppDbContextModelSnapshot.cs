@@ -1186,6 +1186,10 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<bool>("AutoPrint")
                         .HasColumnType("bit");
 
+                    b.Property<string>("A4PrinterName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -1194,6 +1198,19 @@ namespace CaneFactory.Infrastructure.Migrations
 
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<int>("DotMatrixHeaderReservedLines")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DotMatrixPageLines")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("DotMatrixPrintHeader")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("DotMatrixPrinterName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<int?>("DeletedBy")
                         .HasColumnType("int");
@@ -1366,11 +1383,11 @@ namespace CaneFactory.Infrastructure.Migrations
                         .HasPrecision(12, 2)
                         .HasColumnType("decimal(12,2)");
 
-                    b.Property<decimal>("TaxPercent")
+                    b.Property<decimal>("OtherDeductionPercent")
                         .HasPrecision(12, 2)
                         .HasColumnType("decimal(12,2)");
 
-                    b.Property<decimal?>("TaxWeightQuintal")
+                    b.Property<decimal?>("OtherDeductionWeightQuintal")
                         .HasPrecision(12, 2)
                         .HasColumnType("decimal(12,2)");
 
@@ -2322,6 +2339,9 @@ namespace CaneFactory.Infrastructure.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<int?>("GrowerId")
+                        .HasColumnType("int");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 
@@ -2355,6 +2375,11 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<string>("ThemeMode")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<int>("TokenVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1);
+
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2");
 
@@ -2370,6 +2395,10 @@ namespace CaneFactory.Infrastructure.Migrations
 
                     b.HasIndex("Username")
                         .IsUnique();
+
+                    b.HasIndex("GrowerId")
+                        .IsUnique()
+                        .HasFilter("[GrowerId] IS NOT NULL");
 
                     b.ToTable("Users");
                 });
@@ -2748,7 +2777,7 @@ namespace CaneFactory.Infrastructure.Migrations
                         .HasPrecision(5, 2)
                         .HasColumnType("decimal(5,2)");
 
-                    b.Property<decimal>("DefaultTaxPercent")
+                    b.Property<decimal>("DefaultOtherDeductionPercent")
                         .HasPrecision(5, 2)
                         .HasColumnType("decimal(5,2)");
 
@@ -3073,6 +3102,13 @@ namespace CaneFactory.Infrastructure.Migrations
 
             modelBuilder.Entity("CaneFactory.Domain.Entities.User", b =>
                 {
+                    b.HasOne("CaneFactory.Domain.Entities.Grower", "Grower")
+                        .WithOne()
+                        .HasForeignKey("CaneFactory.Domain.Entities.User", "GrowerId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Grower");
+
                     b.Navigation("UserRoles");
                 });
 #pragma warning restore 612, 618

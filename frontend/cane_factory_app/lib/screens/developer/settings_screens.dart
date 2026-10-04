@@ -69,7 +69,7 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
   Map<String, dynamic> v = {};
   final _min = TextEditingController();
   final _cut = TextEditingController();
-  final _tax = TextEditingController();
+  final _otherDeduction = TextEditingController();
   final _cooldown = TextEditingController();
   bool _platformLocked = false;
   bool _platformStatusLoading = true;
@@ -89,7 +89,8 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
         v = Map<String, dynamic>.from(res.data);
         _min.text = (v['minimumWeightQuintal'] as num).toStringAsFixed(2);
         _cut.text = (v['defaultCuttingPercent'] as num).toStringAsFixed(2);
-        _tax.text = (v['defaultTaxPercent'] as num).toStringAsFixed(2);
+        _otherDeduction.text =
+            (v['defaultOtherDeductionPercent'] as num).toStringAsFixed(2);
         _cooldown.text = '${v['vehicleReweighCooldownMinutes'] ?? 30}';
       });
     }
@@ -222,7 +223,8 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
       ...v,
       'minimumWeightQuintal': double.tryParse(_min.text) ?? 10,
       'defaultCuttingPercent': double.tryParse(_cut.text) ?? 0,
-      'defaultTaxPercent': double.tryParse(_tax.text) ?? 0,
+      'defaultOtherDeductionPercent':
+          double.tryParse(_otherDeduction.text) ?? 0,
       'vehicleReweighCooldownMinutes': int.tryParse(_cooldown.text) ?? 30,
     });
     if (mounted) showResult(context, res);
@@ -250,9 +252,10 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
         SizedBox(
             width: 220,
             child: TextField(
-                controller: _tax,
+                controller: _otherDeduction,
                 decoration: const InputDecoration(
-                    labelText: 'Default Tax %', hintText: 'Example: 0.00'))),
+                    labelText: 'Default Other Deduction %',
+                    hintText: 'Example: 0.00'))),
         SizedBox(
             width: 280,
             child: TextField(
@@ -1055,6 +1058,9 @@ class _PrintTabState extends State<_PrintTab> {
             config['printerType'] == 'A4') {
           config['a4PrinterName'] = config['printerName'] ?? '';
         }
+        config['dotMatrixPrintHeader'] ??= true;
+        config['dotMatrixPageLines'] ??= 108;
+        config['dotMatrixHeaderReservedLines'] ??= 9;
         setState(() {
           v = config;
           _printers = PrintService.installedPrinterNames();
@@ -1134,6 +1140,72 @@ class _PrintTabState extends State<_PrintTab> {
               'When enabled, Gross/Tare camera images are included below the A4 weighment details.'),
           value: v!['printImages'] != false,
           onChanged: (x) => setState(() => v!['printImages'] = x)),
+      if (v!['printerType'] == 'DotMatrix') ...[
+        const SizedBox(height: 8),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('DOT MATRIX PRINTING',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Print Header'),
+                  subtitle: Text(v!['dotMatrixPrintHeader'] == true
+                      ? 'ON — logo, company name, address and QR are printed in every half-page header.'
+                      : 'OFF — use for pre-printed stationery. Header space remains blank and details start below it.'),
+                  value: v!['dotMatrixPrintHeader'] == true,
+                  onChanged: (x) =>
+                      setState(() => v!['dotMatrixPrintHeader'] = x),
+                ),
+                Wrap(spacing: 14, runSpacing: 14, children: [
+                  SizedBox(
+                    width: 210,
+                    child: TextFormField(
+                      initialValue: '${v!['dotMatrixHeaderReservedLines']}',
+                      decoration: const InputDecoration(
+                        labelText: 'Header Reserved Height',
+                        suffixText: 'lines',
+                        helperText: 'Default 9 ≈ 1 inch',
+                      ),
+                      keyboardType: TextInputType.number,
+                      onChanged: (text) => setState(() =>
+                          v!['dotMatrixHeaderReservedLines'] =
+                              int.tryParse(text) ?? 9),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 210,
+                    child: TextFormField(
+                      initialValue: '${v!['dotMatrixPageLines']}',
+                      decoration: const InputDecoration(
+                        labelText: 'Physical Page Height',
+                        suffixText: 'lines',
+                        helperText: 'Even value; default 108',
+                      ),
+                      keyboardType: TextInputType.number,
+                      onChanged: (text) => setState(() =>
+                          v!['dotMatrixPageLines'] = int.tryParse(text) ?? 108),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 210,
+                    child: InputDecorator(
+                      decoration:
+                          const InputDecoration(labelText: 'Page Layout'),
+                      child: Text(
+                          '2 Slips Per Page • ${(v!['dotMatrixPageLines'] as num? ?? 108).toInt() ~/ 2} lines each'),
+                    ),
+                  ),
+                ]),
+              ],
+            ),
+          ),
+        ),
+      ],
       Wrap(spacing: 14, runSpacing: 14, children: [
         for (final e in [
           ('grossCopies', 'Gross Copies'),

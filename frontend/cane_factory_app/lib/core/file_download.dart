@@ -1,10 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'api_client.dart';
+import 'file_save_adapter.dart';
 
 /// Phase 11/12/13: shared PDF/Excel/script download helper for Reports, Farmer Statement and
 /// Backup script generation - fetches bytes via Dio and saves next to the user's Downloads
@@ -23,13 +21,10 @@ Future<void> downloadAndNotify(
       }
       return;
     }
-    final dir = await getDownloadsDirectory() ??
-        await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}${Platform.pathSeparator}$filename');
-    await file.writeAsBytes(res.data!);
+    final savedPath = await saveDownloadedBytes(res.data!, filename);
     if (context.mounted) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Saved: ${file.path}')));
+          .showSnackBar(SnackBar(content: Text('Saved: $savedPath')));
     }
   } catch (e) {
     if (context.mounted) {
@@ -85,13 +80,10 @@ Future<void> postDownloadAndNotify(
       }
       return;
     }
-    final dir = await getDownloadsDirectory() ??
-        await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}${Platform.pathSeparator}$filename');
-    await file.writeAsBytes(res.data!, flush: true);
+    final savedPath = await saveDownloadedBytes(res.data!, filename);
     if (context.mounted) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Saved: ${file.path}')));
+          .showSnackBar(SnackBar(content: Text('Saved: $savedPath')));
     }
   } on DioException catch (e) {
     final message = e.response == null
@@ -142,40 +134,9 @@ Future<void> openPdfAfterSave(
         bytes[4] != 0x2D) {
       throw const FormatException('Server response is not a valid PDF.');
     }
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}${Platform.pathSeparator}$filename');
-    await file.writeAsBytes(bytes, flush: true);
-
-    var opened = false;
-    Object? lastOpenError;
-    for (var attempt = 0; attempt < 3 && !opened; attempt++) {
-      try {
-        opened = await launchUrl(file.uri,
-            mode: LaunchMode.externalApplication, webOnlyWindowName: '_blank');
-      } catch (error) {
-        lastOpenError = error;
-      }
-      if (!opened && attempt < 2) {
-        await Future<void>.delayed(Duration(milliseconds: 350 * (attempt + 1)));
-      }
-    }
-
-    // url_launcher ultimately delegates file URIs to ShellExecute on Windows.
-    // Some PDF viewers intermittently reject rapid consecutive ShellExecute
-    // calls; Explorer provides a second, independent shell-open path.
-    if (!opened && Platform.isWindows) {
-      try {
-        await Process.start('explorer.exe', <String>[file.path],
-            mode: ProcessStartMode.detached);
-        opened = true;
-      } catch (error) {
-        lastOpenError = error;
-      }
-    }
+    final opened = await saveAndOpenPdf(bytes, filename);
     if (!opened) {
-      throw StateError(lastOpenError == null
-          ? 'No application is associated with PDF files.'
-          : 'The operating system could not open the PDF: $lastOpenError');
+      throw StateError('No application is associated with PDF files.');
     }
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(

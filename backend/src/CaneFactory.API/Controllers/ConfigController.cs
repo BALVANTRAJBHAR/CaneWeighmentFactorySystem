@@ -40,10 +40,10 @@ public class ConfigController : ControllerBase
         if (src.MinimumWeightQuintal < 0) return BadRequest(new { message = "Minimum weight cannot be negative." });
         if (src.VehicleReweighCooldownMinutes is < 0 or > 43200)
             return BadRequest(new { message = "Vehicle reweigh cooldown must be between 0 and 43,200 minutes (30 days)." });
-        if (src.DefaultCuttingPercent is < 0 or > 100 || src.DefaultTaxPercent is < 0 or > 100)
-            return BadRequest(new { message = "Cutting/Tax % must be between 0 and 100." });
+        if (src.DefaultCuttingPercent is < 0 or > 100 || src.DefaultOtherDeductionPercent is < 0 or > 100)
+            return BadRequest(new { message = "Cutting/Other Deduction % must be between 0 and 100." });
         var r = await _db.WeightRules.FirstAsync(x => !x.IsDeleted);
-        var old = new { r.MinimumWeightQuintal, r.Enabled, r.ApplyToGross, r.ApplyToTare, r.DefaultCuttingPercent, r.DefaultTaxPercent, r.VehicleReweighCooldownMinutes };
+        var old = new { r.MinimumWeightQuintal, r.Enabled, r.ApplyToGross, r.ApplyToTare, r.DefaultCuttingPercent, r.DefaultOtherDeductionPercent, r.VehicleReweighCooldownMinutes };
         r.MinimumWeightQuintal = Math.Round(src.MinimumWeightQuintal, 2);
         r.Enabled = src.Enabled;
         r.ApplyToCanePurchase = src.ApplyToCanePurchase;
@@ -51,7 +51,7 @@ public class ConfigController : ControllerBase
         r.ApplyToGross = src.ApplyToGross;
         r.ApplyToTare = src.ApplyToTare;
         r.DefaultCuttingPercent = Math.Round(src.DefaultCuttingPercent, 2);
-        r.DefaultTaxPercent = Math.Round(src.DefaultTaxPercent, 2);
+        r.DefaultOtherDeductionPercent = Math.Round(src.DefaultOtherDeductionPercent, 2);
         r.VehicleReweighCooldownMinutes = src.VehicleReweighCooldownMinutes;
         r.UpdatedAt = DateTime.UtcNow;
         r.UpdatedBy = _current.UserId;
@@ -512,7 +512,25 @@ public class ConfigController : ControllerBase
     {
         var p = await _db.PrintConfigs.FirstAsync(x => !x.IsDeleted);
         if (src.PrinterType is not ("DotMatrix" or "A4")) return BadRequest(new { message = "PrinterType must be DotMatrix or A4." });
-        var old = new { p.PrinterType, p.PrinterName, p.DotMatrixPrinterName, p.A4PrinterName, p.AutoPrint, p.PrintImages, p.GrossCopies, p.TareCopies };
+        if (src.DotMatrixPageLines is < 80 or > 180 || src.DotMatrixPageLines % 2 != 0)
+            return BadRequest(new { message = "Dot Matrix Page Lines must be an even value between 80 and 180." });
+        var halfPageLines = src.DotMatrixPageLines / 2;
+        if (src.DotMatrixHeaderReservedLines < 4 || src.DotMatrixHeaderReservedLines > halfPageLines - 34)
+            return BadRequest(new { message = $"Header Reserved Lines must be between 4 and {halfPageLines - 34} for this page height." });
+        var old = new
+        {
+            p.PrinterType,
+            p.PrinterName,
+            p.DotMatrixPrinterName,
+            p.A4PrinterName,
+            p.AutoPrint,
+            p.PrintImages,
+            p.GrossCopies,
+            p.TareCopies,
+            p.DotMatrixPrintHeader,
+            p.DotMatrixPageLines,
+            p.DotMatrixHeaderReservedLines
+        };
         p.PrinterType = src.PrinterType;
         p.DotMatrixPrinterName = src.DotMatrixPrinterName?.Trim() ?? "";
         p.A4PrinterName = src.A4PrinterName?.Trim() ?? "";
@@ -527,6 +545,9 @@ public class ConfigController : ControllerBase
         p.LoanCopies = Math.Clamp(src.LoanCopies, 0, 5);
         p.SalePurchaseCopies = Math.Clamp(src.SalePurchaseCopies, 0, 5);
         p.Language = src.Language;
+        p.DotMatrixPrintHeader = src.DotMatrixPrintHeader;
+        p.DotMatrixPageLines = src.DotMatrixPageLines;
+        p.DotMatrixHeaderReservedLines = src.DotMatrixHeaderReservedLines;
         p.UpdatedAt = DateTime.UtcNow;
         p.UpdatedBy = _current.UserId;
         await _db.SaveChangesAsync();

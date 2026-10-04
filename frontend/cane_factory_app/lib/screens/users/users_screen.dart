@@ -111,8 +111,9 @@ class _UsersScreenState extends State<UsersScreen> {
                     child: Text('Roles:',
                         style: Theme.of(ctx).textTheme.labelLarge)),
                 Wrap(spacing: 6, children: [
-                  for (final r in _roles
-                      .where((r) => r['name']?.toString() != 'Developer'))
+                  for (final r in _roles.where((r) =>
+                      r['name']?.toString() != 'Developer' &&
+                      r['name']?.toString() != 'Farmer'))
                     FilterChip(
                       label: Text(r['name']),
                       selected: selectedRoles.contains(r['id']),
@@ -227,6 +228,7 @@ class _UsersScreenState extends State<UsersScreen> {
                                   : Colors.grey,
                               visualDensity: VisualDensity.compact),
                           if (auth.can('User.Edit') &&
+                              u['growerId'] == null &&
                               !(u['roles'] as List).contains('Developer'))
                             IconButton(
                                 icon: const Icon(Icons.edit_outlined, size: 18),

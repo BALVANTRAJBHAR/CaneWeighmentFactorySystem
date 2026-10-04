@@ -41,7 +41,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   int? _varietyTypeId;
   int? _varietyId;
   final _cutting = TextEditingController(text: '0.00');
-  final _tax = TextEditingController(text: '0.00');
+  final _otherDeduction = TextEditingController(text: '0.00');
 
   // TARE state
   final _purchaseIdCtl = TextEditingController();
@@ -79,7 +79,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     _growerId.dispose();
     _vehicleNumber.dispose();
     _cutting.dispose();
-    _tax.dispose();
+    _otherDeduction.dispose();
     _purchaseIdCtl.dispose();
     _sound.dispose();
     super.dispose();
@@ -120,8 +120,9 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           final values = Map<String, dynamic>.from(rules.data);
           _cutting.text = ((values['defaultCuttingPercent'] as num?) ?? 0)
               .toStringAsFixed(2);
-          _tax.text =
-              ((values['defaultTaxPercent'] as num?) ?? 0).toStringAsFixed(2);
+          _otherDeduction.text =
+              ((values['defaultOtherDeductionPercent'] as num?) ?? 0)
+                  .toStringAsFixed(2);
         }
       });
     } catch (_) {}
@@ -291,7 +292,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         'varietyTypeId': _varietyTypeId,
         'varietyId': _varietyId,
         'cuttingPercent': double.tryParse(_cutting.text) ?? 0,
-        'taxPercent': double.tryParse(_tax.text) ?? 0,
+        'otherDeductionPercent': double.tryParse(_otherDeduction.text) ?? 0,
         'scaleReadingKg': live.weightKg,
         'idempotencyKey':
             'gross-${_grower!['growerId']}-${DateTime.now().microsecondsSinceEpoch}',
@@ -700,7 +701,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 child: Row(children: [
                   Expanded(
                     child: TextField(
-                      controller: _tax,
+                      controller: _otherDeduction,
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
                       inputFormatters: [
@@ -708,7 +709,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                             RegExp(r'^\d*\.?\d{0,2}'))
                       ],
                       decoration: const InputDecoration(
-                          labelText: 'Tax %', hintText: '0.00'),
+                          labelText: 'अन्य कटौती %', hintText: '0.00'),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -819,7 +820,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                   _ro('Gross Operator', '${p['grossByUserName']}'),
                   _ro('Cutting %',
                       (p['cuttingPercent'] as num).toStringAsFixed(2)),
-                  _ro('Tax %', (p['taxPercent'] as num).toStringAsFixed(2)),
+                  _ro('अन्य कटौती %',
+                      (p['otherDeductionPercent'] as num).toStringAsFixed(2)),
                 ]),
               ),
               const SizedBox(height: 12),

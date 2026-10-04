@@ -64,11 +64,11 @@ class _LoginScreenState extends State<LoginScreen> {
                             controller: _username,
                             autofocus: true,
                             decoration: const InputDecoration(
-                                labelText: 'Username',
-                                hintText: 'Example: User1',
+                                labelText: 'Username / Farmer Mobile Number',
+                                hintText: 'User1 or 9876543210',
                                 prefixIcon: Icon(Icons.person_outline)),
                             validator: (v) => (v == null || v.trim().isEmpty)
-                                ? 'Username is required'
+                                ? 'Username or farmer mobile number is required'
                                 : null,
                             onFieldSubmitted: (_) => _login(),
                           ),

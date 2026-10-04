@@ -15,6 +15,9 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
   bool _loading = true;
   String? _error;
   Map<String, dynamic>? _data;
+  List<dynamic> _purchases = const [];
+  List<dynamic> _payments = const [];
+  List<dynamic> _loans = const [];
 
   @override
   void initState() {
@@ -28,16 +31,45 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
       _error = null;
     });
     try {
-      final res = await ApiClient.instance.dio.get('/api/farmer/dashboard');
-      if (res.statusCode == 200 && mounted) {
-        setState(() => _data = Map<String, dynamic>.from(res.data));
+      final results = await Future.wait([
+        ApiClient.instance.dio.get('/api/farmer/dashboard'),
+        _fetchAll('/api/farmer/purchases'),
+        _fetchAll('/api/farmer/payments'),
+        _fetchAll('/api/farmer/loans'),
+      ]);
+      final dashboard = results[0] as Response;
+      if (dashboard.statusCode == 200 && mounted) {
+        setState(() {
+          _data = Map<String, dynamic>.from(dashboard.data);
+          _purchases = results[1] as List<dynamic>;
+          _payments = results[2] as List<dynamic>;
+          _loans = results[3] as List<dynamic>;
+        });
       } else if (mounted) {
-        setState(() => _error = ApiClient.errorMessage(res));
+        setState(() => _error = ApiClient.errorMessage(dashboard));
       }
     } catch (e) {
       if (mounted) setState(() => _error = 'Could not load your dashboard: $e');
     }
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<List<dynamic>> _fetchAll(String path) async {
+    final all = <dynamic>[];
+    var page = 1;
+    while (true) {
+      final response =
+          await ApiClient.instance.dio.get('$path?page=$page&pageSize=100');
+      if (response.statusCode != 200) {
+        throw StateError(ApiClient.errorMessage(response));
+      }
+      final batch = List<dynamic>.from(response.data['items'] ?? const []);
+      all.addAll(batch);
+      final total =
+          (response.data['totalCount'] as num?)?.toInt() ?? all.length;
+      if (all.length >= total || batch.isEmpty) return all;
+      page++;
+    }
   }
 
   Widget _statCard(String label, String value, IconData icon, Color color) =>
@@ -97,7 +129,9 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
               Text(
                   'Grower ID: ${profile['growerId'] ?? '-'}  •  Village: ${profile['villageName'] ?? '-'}'),
               Text(
-                  'Father: ${profile['fatherName'] ?? '-'}  •  Mobile: ${profile['mobile'] ?? '-'}'),
+                  'Father: ${profile['fatherName'] ?? '-'}  •  Mobile: ${profile['mobileMasked'] ?? '-'}'),
+              if (profile['emailMasked'] != null)
+                Text('Email: ${profile['emailMasked']}'),
               if (profile['bankName'] != null)
                 Text(
                     'Bank: ${profile['bankName']} (${profile['accountMasked'] ?? '-'})'),
@@ -207,7 +241,71 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
                   ],
                 ),
         ),
+        const SizedBox(height: 16),
+        _recordsCard(
+          context,
+          'All Purchases (${_purchases.length})',
+          Icons.receipt_long_outlined,
+          _purchases,
+          (p) => ListTile(
+            leading: const Icon(Icons.local_shipping_outlined),
+            title: Text(
+                'Purchase ${p['purchaseId']} • Vehicle ${p['vehicleNumber']}'),
+            subtitle: Text(
+                '${p['finalWeightQuintal'] ?? '-'} Qtl • ${currency.format(p['purchaseAmount'] ?? 0)} • ${p['grossDateTime']}'),
+            trailing: Chip(
+                label: Text('${p['paymentStatus'] ?? '-'}'),
+                visualDensity: VisualDensity.compact),
+          ),
+        ),
+        _recordsCard(
+          context,
+          'All Payments (${_payments.length})',
+          Icons.payments_outlined,
+          _payments,
+          (p) => ListTile(
+            leading: const Icon(Icons.payments_outlined),
+            title: Text(
+                'Advice ${p['adviceNumber']} • ${currency.format(p['netPayableAmount'] ?? 0)}'),
+            subtitle:
+                Text('${p['paymentMode'] ?? '-'} • ${p['paymentDate'] ?? '-'}'),
+            trailing: Chip(
+                label: Text('${p['paymentStatus'] ?? '-'}'),
+                visualDensity: VisualDensity.compact),
+          ),
+        ),
+        _recordsCard(
+          context,
+          'All Loans (${_loans.length})',
+          Icons.savings_outlined,
+          _loans,
+          (l) => ListTile(
+            leading: const Icon(Icons.savings_outlined),
+            title: Text(
+                '${l['loanType'] ?? 'Loan'} • Outstanding ${currency.format(l['outstandingAmount'] ?? 0)}'),
+            subtitle: Text(
+                'Issued ${currency.format(l['loanAmount'] ?? 0)} • ${l['issueDate'] ?? '-'}'),
+            trailing: Chip(
+                label: Text('${l['loanStatus'] ?? '-'}'),
+                visualDensity: VisualDensity.compact),
+          ),
+        ),
       ]),
+    );
+  }
+
+  Widget _recordsCard(BuildContext context, String title, IconData icon,
+      List<dynamic> records, Widget Function(dynamic) rowBuilder) {
+    return Card(
+      child: ExpansionTile(
+        leading: Icon(icon),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        children: records.isEmpty
+            ? const [
+                Padding(padding: EdgeInsets.all(16), child: Text('No records.'))
+              ]
+            : records.map(rowBuilder).toList(),
+      ),
     );
   }
 }

@@ -684,58 +684,75 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
           child: Card(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : SingleChildScrollView(
-                    scrollDirection: Axis.vertical,
-                    controller: _verticalController,
-                    child: Scrollbar(
-                      controller: _horizontalController,
+                : LayoutBuilder(
+                    builder: (context, constraints) => Scrollbar(
+                      controller: _verticalController,
                       thumbVisibility: true,
-                      notificationPredicate: (_) => false,
+                      trackVisibility: true,
+                      interactive: true,
                       child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        controller: _horizontalController,
-                        child: DataTable(columns: const [
-                          DataColumn(label: Text('Purchase ID')),
-                          DataColumn(label: Text('Grower')),
-                          DataColumn(label: Text('Village')),
-                          DataColumn(label: Text('Vehicle')),
-                          DataColumn(label: Text('Purchase Date')),
-                          DataColumn(label: Text('Gross Qtl')),
-                          DataColumn(label: Text('Tare Qtl')),
-                          DataColumn(label: Text('Final Qtl')),
-                          DataColumn(label: Text('Rate')),
-                          DataColumn(label: Text('Amount')),
-                          DataColumn(label: Text('Status')),
-                          DataColumn(label: Text('Payment')),
-                        ], rows: [
-                          for (final p in _items)
-                            DataRow(cells: [
-                              DataCell(Text('${p['purchaseId']}')),
-                              DataCell(
-                                  Text('${p['growerId']} ${p['growerName']}')),
-                              DataCell(Text('${p['villageName']}')),
-                              DataCell(Text('${p['vehicleNumber']}')),
-                              DataCell(Text(_formatDate(p['purchaseDate']))),
-                              DataCell(Text((p['grossWeightQuintal'] as num)
-                                  .toStringAsFixed(2))),
-                              DataCell(Text(p['tareWeightQuintal'] == null
-                                  ? '-'
-                                  : (p['tareWeightQuintal'] as num)
-                                      .toStringAsFixed(2))),
-                              DataCell(Text(p['finalWeightQuintal'] == null
-                                  ? '-'
-                                  : (p['finalWeightQuintal'] as num)
-                                      .toStringAsFixed(2))),
-                              DataCell(
-                                  Text((p['rate'] as num).toStringAsFixed(2))),
-                              DataCell(Text(p['purchaseAmount'] == null
-                                  ? '-'
-                                  : (p['purchaseAmount'] as num)
-                                      .toStringAsFixed(2))),
-                              DataCell(_statusChip(p['grossTareStatus'])),
-                              DataCell(_statusChip(p['paymentStatus'])),
-                            ]),
-                        ]),
+                        scrollDirection: Axis.vertical,
+                        controller: _verticalController,
+                        child: Scrollbar(
+                          controller: _horizontalController,
+                          thumbVisibility: true,
+                          trackVisibility: true,
+                          interactive: true,
+                          scrollbarOrientation: ScrollbarOrientation.bottom,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            controller: _horizontalController,
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                  minWidth: constraints.maxWidth),
+                              child: DataTable(columns: const [
+                                DataColumn(label: Text('Purchase ID')),
+                                DataColumn(label: Text('Grower')),
+                                DataColumn(label: Text('Village')),
+                                DataColumn(label: Text('Vehicle')),
+                                DataColumn(label: Text('Purchase Date')),
+                                DataColumn(label: Text('Gross Qtl')),
+                                DataColumn(label: Text('Tare Qtl')),
+                                DataColumn(label: Text('Final Qtl')),
+                                DataColumn(label: Text('Rate')),
+                                DataColumn(label: Text('Amount')),
+                                DataColumn(label: Text('Status')),
+                                DataColumn(label: Text('Payment')),
+                              ], rows: [
+                                for (final p in _items)
+                                  DataRow(cells: [
+                                    DataCell(Text('${p['purchaseId']}')),
+                                    DataCell(Text(
+                                        '${p['growerId']} ${p['growerName']}')),
+                                    DataCell(Text('${p['villageName']}')),
+                                    DataCell(Text('${p['vehicleNumber']}')),
+                                    DataCell(
+                                        Text(_formatDate(p['purchaseDate']))),
+                                    DataCell(Text(
+                                        (p['grossWeightQuintal'] as num)
+                                            .toStringAsFixed(2))),
+                                    DataCell(Text(p['tareWeightQuintal'] == null
+                                        ? '-'
+                                        : (p['tareWeightQuintal'] as num)
+                                            .toStringAsFixed(2))),
+                                    DataCell(Text(
+                                        p['finalWeightQuintal'] == null
+                                            ? '-'
+                                            : (p['finalWeightQuintal'] as num)
+                                                .toStringAsFixed(2))),
+                                    DataCell(Text(
+                                        (p['rate'] as num).toStringAsFixed(2))),
+                                    DataCell(Text(p['purchaseAmount'] == null
+                                        ? '-'
+                                        : (p['purchaseAmount'] as num)
+                                            .toStringAsFixed(2))),
+                                    DataCell(_statusChip(p['grossTareStatus'])),
+                                    DataCell(_statusChip(p['paymentStatus'])),
+                                  ]),
+                              ]),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ),

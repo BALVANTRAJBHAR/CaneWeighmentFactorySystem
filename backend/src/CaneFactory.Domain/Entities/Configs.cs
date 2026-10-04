@@ -39,6 +39,14 @@ public class PrintConfig : BaseEntity
     public int LoanCopies { get; set; } = 1;
     public int SalePurchaseCopies { get; set; } = 2;
     public string Language { get; set; } = "hi";
+    /// <summary>Dot-matrix only. When false, the physical pre-printed header area is
+    /// left blank while transaction rows keep the same vertical starting position.</summary>
+    public bool DotMatrixPrintHeader { get; set; } = true;
+    /// <summary>Total ESC/P feed bands on one continuous stationery page. Must be even;
+    /// each cane/sale weighment slip consumes exactly half.</summary>
+    public int DotMatrixPageLines { get; set; } = 108;
+    /// <summary>Header height in ESC/P feed bands (20/180 inch each by default).</summary>
+    public int DotMatrixHeaderReservedLines { get; set; } = 9;
 }
 
 public class SmsConfig : BaseEntity

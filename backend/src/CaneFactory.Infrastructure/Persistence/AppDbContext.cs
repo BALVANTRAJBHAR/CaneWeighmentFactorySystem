@@ -73,11 +73,15 @@ public class AppDbContext : DbContext
         b.Entity<User>(e =>
         {
             e.HasIndex(x => x.Username).IsUnique();
+            e.HasIndex(x => x.GrowerId).IsUnique().HasFilter("[GrowerId] IS NOT NULL");
             e.Property(x => x.Username).HasMaxLength(50);
             e.Property(x => x.FullName).HasMaxLength(100);
             e.Property(x => x.FullNameHi).HasMaxLength(100);
             e.Property(x => x.Mobile).HasMaxLength(10);
             e.Property(x => x.Email).HasMaxLength(100);
+            e.Property(x => x.TokenVersion).HasDefaultValue(1);
+            e.HasOne(x => x.Grower).WithOne().HasForeignKey<User>(x => x.GrowerId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
         b.Entity<Role>().HasIndex(x => x.Name).IsUnique();
         b.Entity<Permission>().HasIndex(x => x.Code).IsUnique();
@@ -211,7 +215,7 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.VehicleNumber).HasDatabaseName("UX_Purchases_ActiveVehicle")
                 .IsUnique().HasFilter("[IsDeleted] = 0 AND [GrossTareStatus] = 'GROSS_DONE'");
             foreach (var p in new[] { "ScaleReadingGrossKg", "GrossWeightQuintal", "ScaleReadingTareKg", "TareWeightQuintal",
-                "NetWeightQuintal", "CuttingPercent", "CuttingWeightQuintal", "TaxPercent", "TaxWeightQuintal",
+                "NetWeightQuintal", "CuttingPercent", "CuttingWeightQuintal", "OtherDeductionPercent", "OtherDeductionWeightQuintal",
                 "FinalWeightQuintal", "Rate" })
                 e.Property(p).HasPrecision(12, 2);
             e.Property(x => x.PurchaseAmount).HasPrecision(14, 2);
@@ -361,7 +365,7 @@ public class AppDbContext : DbContext
         {
             e.Property(x => x.MinimumWeightQuintal).HasPrecision(12, 2);
             e.Property(x => x.DefaultCuttingPercent).HasPrecision(5, 2);
-            e.Property(x => x.DefaultTaxPercent).HasPrecision(5, 2);
+            e.Property(x => x.DefaultOtherDeductionPercent).HasPrecision(5, 2);
             e.Property(x => x.VehicleReweighCooldownMinutes).HasDefaultValue(30);
         });
         b.Entity<SoundConfig>().Property(x => x.SpeechRate).HasPrecision(4, 2);

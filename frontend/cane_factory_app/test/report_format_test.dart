@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:cane_factory_app/core/report_format.dart';
-import 'package:cane_factory_app/core/hindi_transliteration.dart';
+import 'package:affllp/core/report_format.dart';
+import 'package:affllp/core/hindi_transliteration.dart';
 
 void main() {
   test('all report dates use day-month-year without raw ISO timestamps', () {

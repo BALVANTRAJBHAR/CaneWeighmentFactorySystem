@@ -10,12 +10,12 @@ Cancel, Reverse, Pay, Export, Print, Configure, ViewCamera, ViewSensitiveData (5
 | Grower management | ✅ | ✅ | ✅ | View | View | — | — |
 | Rate Master + unpaid recalculation (Approve) | ✅ | View/Create/Edit | View | — | View | — | — |
 | Weighment Gross/Tare | ✅ | ✅ | View | — | ✅ Create/Edit/Print | — | — |
-| Purchase view/lock/unlock/cancel | ✅ | ✅ | View | View | View/Create/Edit | View (own only) | — |
-| Payment / Pay / Cancel / Reverse (Phase 9) | ✅ | View/Export/Print | — | ✅ full | — | View (own) | — |
-| Loan / Recovery (Phase 8) | ✅ | View/Export/Print | — | ✅ full incl. Cancel/Reverse | — | View (own) | — |
+| Purchase view/lock/unlock/cancel | ✅ | ✅ | View | View | View/Create/Edit | Own read-only portal | — |
+| Payment / Pay / Cancel / Reverse (Phase 9) | ✅ | View/Export/Print | — | ✅ full | — | Own read-only portal | — |
+| Loan / Recovery (Phase 8) | ✅ | View/Export/Print | — | ✅ full incl. Cancel/Reverse | — | Own read-only portal | — |
 | Cash evidence capture | ✅ | View | — | ✅ View/Create | — | — | — |
 | SalePurchase module | ✅ | ✅ View/Create/Edit/Cancel/Print/Export | — | — | — | — | ✅ View/Create/Edit/Print/Export |
-| Reports / Export / Print | ✅ | ✅ | View/Export/Print | ✅ | View/Print | View (own) | View/Print |
+| Reports / Export / Print | ✅ | ✅ | View/Export/Print | ✅ | View/Print | Own statement PDF/Excel | View/Print |
 | Camera live view | ✅ | ✅ | ✅ | — | ✅ | — (never factory-wide) | ✅ |
 | Users management | ✅ | ✅ View/Create/Edit/Delete | — | — | — | — | — |
 | Roles/Permissions edit | ✅ | View | — | — | — | — | — |
@@ -27,9 +27,8 @@ Cancel, Reverse, Pay, Export, Print, Configure, ViewCamera, ViewSensitiveData (5
 Notes:
 - SalePurchase role explicitly has **no access** to developer configuration, user management,
   cane payment, loans, backup or security configuration.
-- Farmer role additionally has its own `/api/farmer/dashboard` and `/api/farmer/statement`
-  (Phase 12) which are scoped server-side to that user's own Grower record — no permission
-  gate needed there since the endpoint itself never returns another farmer's data.
+- Farmer role is restricted to `/api/farmer/*` self-service endpoints. Ownership is resolved only
+  from the authenticated User's immutable `GrowerId`; mobile/query/path values never select an owner.
 - Every action is enforced **server-side**; menu/button hiding in Flutter is cosmetic only.
 - Custom roles can be created and granted any permission subset at runtime (Role.Create/Edit).
 - Developer role permissions cannot be reduced; initial `developer` account cannot be deleted.

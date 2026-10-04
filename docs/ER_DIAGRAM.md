@@ -14,6 +14,7 @@ ZONE (Id seq:1) ─────< VILLAGE (Id seq:101) ─────< GROWER (p
 
 USER ──< USER_ROLE >── ROLE ──< ROLE_PERMISSION >── PERMISSION (Module.Action)
 USER ──< REFRESH_TOKEN (rotation/revocation)     USER ──< USER_OTP
+FARMER USER (optional unique GrowerId) >──────── GROWER (immutable self-service ownership link)
 AUDIT_LOG (every critical action, old/new values, incl. every 401/403 via SecurityAuditMiddleware)
 
 Config: WEIGHING_DEVICE >── STRING_PROFILE, DEVICE_CONFIG_HISTORY, WEIGHT_RULE_CONFIG,
@@ -23,7 +24,7 @@ Config: WEIGHING_DEVICE >── STRING_PROFILE, DEVICE_CONFIG_HISTORY, WEIGHT_RU
 ```
 
 ## Key Indexes (SQL Server 2019 Express, Standard-compatible)
-- Users.Username (unique), Permissions.Code (unique), RefreshTokens.TokenHash + UserId
+- Users.Username (unique), Users.GrowerId (unique filtered), Permissions.Code (unique), RefreshTokens.TokenHash + UserId
 - Zones.ZoneName (unique), Villages(ZoneId,VillageName) (unique)
 - Growers: GrowerCode (unique), (VillageId,GrowerSequence) (unique), AadhaarHash (unique), Mobile
 - Banks: (BankName,BranchName) unique, IFSC
@@ -36,5 +37,5 @@ Config: WEIGHING_DEVICE >── STRING_PROFILE, DEVICE_CONFIG_HISTORY, WEIGHT_RU
 
 ## Weight columns (decimal 12,2 — Quintal business unit; raw KG preserved)
 `ScaleReadingGrossKg, GrossWeightQuintal, ScaleReadingTareKg, TareWeightQuintal, NetWeightQuintal,
-CuttingPercent, CuttingWeightQuintal, TaxPercent, TaxWeightQuintal, FinalWeightQuintal, Rate,
+CuttingPercent, CuttingWeightQuintal, OtherDeductionPercent, OtherDeductionWeightQuintal, FinalWeightQuintal, Rate,
 PurchaseAmount (14,2)`

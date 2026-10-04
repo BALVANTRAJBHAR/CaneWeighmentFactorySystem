@@ -71,3 +71,25 @@ public class DailyCollectionRow
     public decimal PurchaseAmount { get; set; }
 }
 
+/// <summary>Immutable audit view of a rate reduction approved during Cane Tare or Sale Gross.</summary>
+public class RateOverrideReportRow
+{
+    public int OverrideId { get; set; }
+    public DateTime OverrideDateTime { get; set; }
+    public string TransactionType { get; set; } = string.Empty;
+    public int TransactionId { get; set; }
+    public string TransactionDescription { get; set; } = string.Empty;
+    public string VehicleNumber { get; set; } = string.Empty;
+    public DateTime? TransactionDate { get; set; }
+    public decimal MasterRate { get; set; }
+    public decimal ApprovedRate { get; set; }
+    public decimal RateDifference { get; set; }
+    public string ApprovedByUserName { get; set; } = string.Empty;
+    public string RateReasonText { get; set; } = string.Empty;
+    public string? Remark { get; set; }
+    public string RecordedByUserName { get; set; } = string.Empty;
+    public string EvidenceSource { get; set; } = string.Empty;
+    public string EvidenceImageName { get; set; } = string.Empty;
+    public bool HasAttachment { get; set; }
+}
+

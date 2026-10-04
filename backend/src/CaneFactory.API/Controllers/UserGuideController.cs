@@ -55,9 +55,9 @@ public class UserGuideController : ControllerBase
                 "Cameras 1-6: vendor (Hikvision/CP Plus/Dahua/Uniview/ONVIF/RTSP), IP, port, credentials (stored encrypted), capture & live-view switches.",
                 "Global switches: CameraSystemEnabled and ImageCaptureEnabled control all transaction captures.",
                 "SMS: generic HTTP provider - API URL, key/secret (encrypted), sender ID, DLT templates. Test before enabling.",
-                "Reports: Purchase/Payment/Loan/Daily Collection - filter by date/village/grower, view totals, Print (PDF) or Export (Excel).",
+                "Reports: Purchase/Payment/Loan/Daily Collection and Rate Change Approval - filter records, view totals, Print (PDF) or Export (Excel). The Rate Change Approval report shows Cane/Sale master rate, approved rate, approver, reason, remark and secure attachment preview.",
                 "Farmer Portal: farmers get a read-only My Dashboard + Statement, always scoped to their own account only.",
-                "Print: printer type (Dot Matrix/A4), copies per document, Auto Print switch.",
+                "Print: printer type (Dot Matrix/A4), copies per document, Auto Print switch. Dot Matrix cane/sale slips use two fixed half-page sections; turn Print Header OFF for pre-printed stationery and tune Header Reserved Height/Page Lines for the installed paper.",
                 "Backup: Frequency/Time/Retention/Folder policy - generates the SQL backup script and Task Scheduler XML for you.",
                 "Storage root default D:\\CanePaymentData - configurable in System Settings. Backup guide is in docs/BACKUP_GUIDE.md." }),
             new Section("6. Security & Users", new[]{
@@ -129,7 +129,7 @@ public class UserGuideController : ControllerBase
                 "6. The row disappears from the pending grid automatically." }),
             new Section("4. Validation Rules", new[]{
                 "Below-minimum weight blocks saving and plays the configured announcement.",
-                "Cutting % / Tax % accept 0-100 with 2 decimals (Example: 2.00).",
+                "Cutting % / Other Deduction % accept 0-100 with 2 decimals (Example: 2.00).",
                 "Duplicate save/double-click is blocked by the server." }),
             new Section("5. Common Failures", CommonFailures)
         },
@@ -138,11 +138,17 @@ public class UserGuideController : ControllerBase
             new Section("1. Overview", new[]{
                 "You can see only YOUR OWN data: purchases, weights, rate, amounts, payment and loan status.",
                 "You cannot edit any official transaction." }),
-            new Section("2. Using the App", new[]{
+            new Section("2. First Login", new[]{
+                "Login with your registered 10-digit mobile number.",
+                "Initial password is the first 4 characters of your name in UPPERCASE followed by your registered mobile number.",
+                "You must create a new private password before the dashboard opens. The initial password stops working immediately." }),
+            new Section("3. Using the App", new[]{
                 "Dashboard shows your recent weighments with Gross/Tare/Final weight in Quintal (2 decimals).",
+                "Expand All Purchases, All Payments or All Loans to see your complete read-only history.",
                 "Payment status: PENDING means tare is done and payment is queued; PAID shows the advice number.",
                 "If a value looks wrong, contact the factory office - records are corrected only through the official audited process." }),
-            new Section("3. When something fails", new[]{
+            new Section("4. When something fails", new[]{
+                "Farmer login outside the server computer requires an HTTPS API address.",
                 "No internet: the app cannot load remote data; factory operations continue and your data appears when you are back online." })
         },
         ["SalePurchase"] = new object[]

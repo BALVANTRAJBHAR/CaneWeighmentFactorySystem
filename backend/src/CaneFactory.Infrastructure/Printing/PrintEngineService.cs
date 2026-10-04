@@ -26,6 +26,7 @@ public class PrintEngineService : IPrintEngineService
         var doc = await BaseDocAsync(p.Season?.SeasonName, generatedByUserName);
         doc.TitleHindi = "गन्ना क्रय पर्ची - सकल तौल";
         doc.TitleEnglish = "Cane Purchase Slip - Gross";
+        doc.UseHalfPageDotMatrixLayout = true;
         doc.QrValue = p.Id;
         doc.Rows = GrossRows(p, doc.Language);
         doc.Images = doc.PrintImages ? await LoadPurchaseImagesForPrintAsync(p.Id, "GROSS") : new();
@@ -38,6 +39,7 @@ public class PrintEngineService : IPrintEngineService
         var doc = await BaseDocAsync(p.Season?.SeasonName, generatedByUserName);
         doc.TitleHindi = "गन्ना क्रय पर्ची - अंतिम तौल";
         doc.TitleEnglish = "Cane Purchase Slip - Final";
+        doc.UseHalfPageDotMatrixLayout = true;
         doc.QrValue = p.Id;
         doc.Rows = GrossRows(p, doc.Language).Concat(TareRows(p)).ToList();
         doc.Images = doc.PrintImages ? await LoadPurchaseImagesForPrintAsync(p.Id, "GROSS", "TARE") : new();
@@ -148,6 +150,7 @@ public class PrintEngineService : IPrintEngineService
         var doc = await BaseDocAsync(null, generatedByUserName);
         doc.TitleHindi = stage == "TARE" ? "बिक्री/खरीद तौल पर्ची - टेयर" : "बिक्री/खरीद तौल पर्ची - अंतिम";
         doc.TitleEnglish = stage == "TARE" ? "Sale/Purchase Weighment Slip - Tare" : "Sale/Purchase Weighment Slip - Final";
+        doc.UseHalfPageDotMatrixLayout = true;
         doc.QrValue = p.Id;
         doc.Rows = SalePurchaseRows(p, stage, doc.Language);
         if (stage == "TARE")
@@ -167,18 +170,15 @@ public class PrintEngineService : IPrintEngineService
         return doc;
     }
 
-    public PrintDocument BuildTestDocument(string language, string generatedByUserName) => new()
+    public async Task<PrintDocument> BuildTestDocumentAsync(string language, string generatedByUserName)
     {
-        Language = language,
-        TitleHindi = "प्रिंटर परीक्षण पृष्ठ",
-        TitleEnglish = "Printer Test Page",
-        CompanyName = "Demo Cane Factory Pvt Ltd",
-        Address = "Industrial Area, Muzaffarnagar, Uttar Pradesh",
-        SeasonName = "2026-27",
-        QrValue = 999999,
-        GeneratedByUserName = generatedByUserName,
-        PrintDateTime = DateTime.Now,
-        Rows = new()
+        var doc = await BaseDocAsync("2026-27", generatedByUserName);
+        doc.Language = language;
+        doc.TitleHindi = "प्रिंटर परीक्षण पृष्ठ";
+        doc.TitleEnglish = "Printer Test Page";
+        doc.QrValue = 999999;
+        doc.UseHalfPageDotMatrixLayout = true;
+        doc.Rows = new()
         {
             new("किसान का नाम", "Grower Name", language == "hi" ? "श्री रमेश कुमार शर्मा (लंबा नाम परीक्षण)" : "Mr. Ramesh Kumar Sharma (Long Name Test)"),
             new("वाहन क्रमांक", "Vehicle Number", "UP32AB1234"),
@@ -186,8 +186,9 @@ public class PrintEngineService : IPrintEngineService
             new("दर (प्रति क्विंटल)", "Rate (per Qtl)", "0.00"),
             new("शून्य दशमलव", "Zero Decimal Test", "1"),
             new("वैकल्पिक फ़ील्ड", "Optional Field (blank)", "-"),
-        }
-    };
+        };
+        return doc;
+    }
 
     public (byte[] bytes, string contentType, string fileExtension) Render(PrintDocument doc, string target, bool preview)
     {
@@ -246,7 +247,10 @@ public class PrintEngineService : IPrintEngineService
             SeasonName = seasonName,
             GeneratedByUserName = generatedByUserName,
             PrintDateTime = DateTime.Now,
-            PrintImages = cfg.PrintImages
+            PrintImages = cfg.PrintImages,
+            DotMatrixPrintHeader = cfg.DotMatrixPrintHeader,
+            DotMatrixPageLines = cfg.DotMatrixPageLines,
+            DotMatrixHeaderReservedLines = cfg.DotMatrixHeaderReservedLines
         };
     }
 
@@ -330,8 +334,8 @@ public class PrintEngineService : IPrintEngineService
         new("नेट वजन (क्विंटल)", "Net Weight (Qtl)", p.NetWeightQuintal?.ToString("F2") ?? "-"),
         new("कटान %", "Cutting %", p.CuttingPercent.ToString("F2")),
         new("कटान वजन (क्विंटल)", "Cutting Weight (Qtl)", p.CuttingWeightQuintal?.ToString("F2") ?? "-"),
-        new("टैक्स %", "Tax %", p.TaxPercent.ToString("F2")),
-        new("टैक्स वजन (क्विंटल)", "Tax Weight (Qtl)", p.TaxWeightQuintal?.ToString("F2") ?? "-"),
+        new("अन्य कटौती %", "Other Deduction %", p.OtherDeductionPercent.ToString("F2")),
+        new("अन्य कटौती वजन (क्विंटल)", "Other Deduction Weight (Qtl)", p.OtherDeductionWeightQuintal?.ToString("F2") ?? "-"),
         new("अंतिम वजन (क्विंटल)", "Final Weight (Qtl)", p.FinalWeightQuintal?.ToString("F2") ?? "-"),
         new("कुल राशि (₹)", "Purchase Amount (Rs)", p.PurchaseAmount?.ToString("F2") ?? "-"),
     };

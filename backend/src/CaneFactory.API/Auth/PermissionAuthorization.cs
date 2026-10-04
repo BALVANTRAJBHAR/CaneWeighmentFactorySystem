@@ -47,8 +47,9 @@ public class PermissionAuthorizationHandler : AuthorizationHandler<PermissionReq
     {
         var sub = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub");
         if (sub == null || !int.TryParse(sub, out var userId)) return;
+        if (!int.TryParse(context.User.FindFirstValue("ver"), out var tokenVersion)) return;
         if (!context.User.HasClaim("perm", requirement.Permission)) return;
-        if (!await _userState.IsActiveAsync(userId)) return;
+        if (!await _userState.IsActiveAsync(userId, tokenVersion)) return;
         context.Succeed(requirement);
     }
 }
@@ -59,17 +60,23 @@ public class UserStateService
     private readonly IMemoryCache _cache;
     public UserStateService(AppDbContext db, IMemoryCache cache) { _db = db; _cache = cache; }
 
-    public async Task<bool> IsActiveAsync(int userId)
+    public async Task<bool> IsActiveAsync(int userId, int? tokenVersion = null, bool requirePasswordChanged = true)
     {
-        return await _cache.GetOrCreateAsync($"user-active:{userId}", async e =>
+        var state = await _cache.GetOrCreateAsync($"user-active:{userId}", async e =>
         {
             e.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60);
-            // MustChangePassword blocks all permission-protected endpoints until the temporary password is changed.
-            return await _db.Users.AnyAsync(u => u.Id == userId && u.Status && !u.IsDeleted && !u.MustChangePassword);
+            return await _db.Users.Where(u => u.Id == userId)
+                .Select(u => new UserSecurityState(u.Status, u.IsDeleted, u.MustChangePassword, u.TokenVersion))
+                .FirstOrDefaultAsync();
         });
+        if (state == null || !state.Status || state.IsDeleted) return false;
+        if (requirePasswordChanged && state.MustChangePassword) return false;
+        return !tokenVersion.HasValue || state.TokenVersion == tokenVersion.Value;
     }
 
     public void Invalidate(int userId) => _cache.Remove($"user-active:{userId}");
+
+    private sealed record UserSecurityState(bool Status, bool IsDeleted, bool MustChangePassword, int TokenVersion);
 }
 
 public class CurrentUserService : ICurrentUser

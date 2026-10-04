@@ -74,7 +74,7 @@ public class PurchasesController : ControllerBase
                 p.TareWeightQuintal, p.TareDateTime, p.TareByUserName,
                 PurchaseDate = p.TareDateTime ?? p.GrossDateTime,
                 p.NetWeightQuintal, p.CuttingPercent, p.CuttingWeightQuintal,
-                p.TaxPercent, p.TaxWeightQuintal, p.FinalWeightQuintal,
+                p.OtherDeductionPercent, p.OtherDeductionWeightQuintal, p.FinalWeightQuintal,
                 p.Rate, p.PurchaseAmount, p.GrossTareStatus, p.PaymentStatus, p.LockStatus, p.AdviceNumber,
                 p.GrossPrintCount, p.TarePrintCount
             }).ToListAsync();
@@ -94,7 +94,7 @@ public class PurchasesController : ControllerBase
             p.ScaleReadingGrossKg, p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName,
             p.ScaleReadingTareKg, p.TareWeightQuintal, p.TareDateTime, p.TareByUserName,
             p.NetWeightQuintal, p.CuttingPercent, p.CuttingWeightQuintal,
-            p.TaxPercent, p.TaxWeightQuintal, p.FinalWeightQuintal,
+            p.OtherDeductionPercent, p.OtherDeductionWeightQuintal, p.FinalWeightQuintal,
             p.Rate, p.PurchaseAmount, p.GrossTareStatus, p.PaymentStatus, p.LockStatus,
             p.AdviceNumber, SeasonName = p.Season.SeasonName, p.GrossPrintCount, p.TarePrintCount
         }).FirstOrDefaultAsync();

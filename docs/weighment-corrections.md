@@ -6,7 +6,7 @@ Open **Weighment Corrections** from the sidebar, choose Cane Purchase or Sale / 
 
 - Editable: vehicle type, vehicle number, variety type and variety. The variety must belong to the selected type and the selected masters must be active.
 - Changing variety type uses the active Rate Master effective on the **original gross date**, matching the original rate-snapshot rule. It does not use a future rate. If no applicable rate exists, configure Rate Master first; the update is rejected.
-- Amount = existing final weight in quintals × the newly selected type's rate, rounded to two decimals. Gross/tare/final weights, cutting and tax deductions are not modified.
+- Amount = existing final weight in quintals × the newly selected type's rate, rounded to two decimals. Gross/tare/final weights, cutting and other deductions are not modified.
 - A vehicle-only or same-variety-type edit preserves the saved rate and amount. A pending gross may be corrected but has no final amount until tare is completed.
 - Paid purchases are rejected at lookup, preview and update. The server checks PaymentFlag, PaymentStatus and completed PaymentPurchase links, not just the screen. Cancelled/inactive/locked purchases cannot be corrected.
 - Vehicle numbers are normalized, and a pending record cannot be changed to a vehicle that already has another pending record in the same module.

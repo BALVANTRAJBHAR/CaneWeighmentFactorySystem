@@ -1,6 +1,7 @@
 # .NET
 bin/
 obj/
+.test-output/
 *.user
 appsettings.Production.json
 

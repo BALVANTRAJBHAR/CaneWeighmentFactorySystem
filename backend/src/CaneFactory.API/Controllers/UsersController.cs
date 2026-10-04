@@ -63,13 +63,13 @@ public class UsersController : ControllerBase
         var pageRows = await q.OrderBy(u => u.Username).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(u => new
             {
-                u.Id, u.Username, u.FullName, u.FullNameHi, u.Mobile, u.Email, u.Status, u.MustChangePassword,
+                u.Id, u.GrowerId, u.Username, u.FullName, u.FullNameHi, u.Mobile, u.Email, u.Status, u.MustChangePassword,
                 u.LastLoginAt,
                 RoleAssignments = u.UserRoles.Select(r => new { r.RoleId, RoleName = r.Role.Name }).ToList()
             }).ToListAsync();
         var items = pageRows.Select(u => new
         {
-            u.Id, u.Username, u.FullName, u.FullNameHi, u.Mobile, u.Email, u.Status, u.MustChangePassword, u.LastLoginAt,
+            u.Id, u.GrowerId, u.Username, u.FullName, u.FullNameHi, u.Mobile, u.Email, u.Status, u.MustChangePassword, u.LastLoginAt,
             Roles = u.RoleAssignments.Select(r => r.RoleName).ToList(),
             RoleIds = u.RoleAssignments.Select(r => r.RoleId).ToList()
         });
@@ -91,6 +91,8 @@ public class UsersController : ControllerBase
         if (validRoles.Count != req.RoleIds.Count) return BadRequest(new { message = "One or more roles do not exist." });
         if (validRoles.Any(r => r.Name == "Developer"))
             return BadRequest(new { message = "Developer role is reserved for the system developer and cannot be assigned from User Management." });
+        if (validRoles.Any(r => r.Name == "Farmer"))
+            return BadRequest(new { message = "Farmer accounts are created automatically from the Grower master and cannot be created manually." });
 
         var user = new User
         {
@@ -116,6 +118,8 @@ public class UsersController : ControllerBase
     {
         var user = await _db.Users.Include(u => u.UserRoles).FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
         if (user == null) return NotFound(new { message = "User not found." });
+        if (user.GrowerId.HasValue)
+            return BadRequest(new { message = "This Farmer account is managed through its linked Grower master." });
         if (!Validators.IsMobile(req.Mobile)) return BadRequest(new { message = "Mobile must be exactly 10 digits." });
         if (!Validators.IsEmail(req.Email)) return BadRequest(new { message = "Email format is invalid." });
 
@@ -124,6 +128,8 @@ public class UsersController : ControllerBase
         var targetIsDeveloper = await _db.UserRoles.AnyAsync(ur => ur.UserId == id && ur.Role.Name == "Developer");
         if (targetIsDeveloper || validRoles.Any(r => r.Name == "Developer"))
             return BadRequest(new { message = "Developer accounts and the Developer role cannot be managed from User Management." });
+        if (validRoles.Any(r => r.Name == "Farmer"))
+            return BadRequest(new { message = "Farmer role is assigned only by automatic Grower account provisioning." });
 
         var old = new { user.FullName, user.Mobile, user.Email, user.Status, Roles = user.UserRoles.Select(r => r.RoleId).ToList() };
         user.FullName = Validators.Norm(req.FullName);
@@ -139,6 +145,7 @@ public class UsersController : ControllerBase
 
         if (deactivated)
         {
+            user.TokenVersion++;
             var tokens = await _db.RefreshTokens.Where(t => t.UserId == id && t.RevokedAt == null).ToListAsync();
             foreach (var t in tokens) t.RevokedAt = DateTime.UtcNow;
             _userState.Invalidate(id);
@@ -161,9 +168,11 @@ public class UsersController : ControllerBase
         if (temp.Length < 8) return BadRequest(new { message = "Temporary password must be at least 8 characters." });
         user.PasswordHash = Hasher.HashPassword(user, temp);
         user.MustChangePassword = true;
+        user.TokenVersion++;
         var tokens = await _db.RefreshTokens.Where(t => t.UserId == id && t.RevokedAt == null).ToListAsync();
         foreach (var t in tokens) t.RevokedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        _userState.Invalidate(id);
         await _audit.LogAsync("PasswordReset", "User", "User", id.ToString(), newValue: new { By = "Admin" });
         return Ok(new { message = $"Temporary password set for '{user.Username}'. User must change it on next login." });
     }
@@ -174,12 +183,15 @@ public class UsersController : ControllerBase
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == id && !u.IsDeleted);
         if (user == null) return NotFound(new { message = "User not found." });
+        if (user.GrowerId.HasValue)
+            return BadRequest(new { message = "Farmer accounts must be deactivated or deleted through the linked Grower master." });
         if (user.Username == "developer") return BadRequest(new { message = "The initial developer account cannot be deleted." });
         if (!IsDeveloper && await IsDeveloperUserAsync(id))
             return await RejectDeveloperRoleAttemptAsync("Delete", id.ToString(), Array.Empty<int>());
         user.IsDeleted = true;
         user.DeletedAt = DateTime.UtcNow;
         user.Status = false;
+        user.TokenVersion++;
         var tokens = await _db.RefreshTokens.Where(t => t.UserId == id && t.RevokedAt == null).ToListAsync();
         foreach (var t in tokens) t.RevokedAt = DateTime.UtcNow;
         _userState.Invalidate(id);

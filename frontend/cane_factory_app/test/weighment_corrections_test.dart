@@ -1,5 +1,5 @@
-import 'package:cane_factory_app/providers/auth_provider.dart';
-import 'package:cane_factory_app/screens/weighment/weighment_corrections_screen.dart';
+import 'package:affllp/providers/auth_provider.dart';
+import 'package:affllp/screens/weighment/weighment_corrections_screen.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

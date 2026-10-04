@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../core/api_client.dart';
@@ -17,6 +20,7 @@ class ReportsScreen extends StatefulWidget {
 class _ReportsScreenState extends State<ReportsScreen> {
   static const _reportTypes = {
     'purchases': 'Purchase / Weighment Report',
+    'rate-overrides': 'Rate Change Approval Report',
     'payments': 'Payment Report',
     'sale-purchases': 'SalePurchase Weighment Report',
     'loans': 'Loan Report',
@@ -34,6 +38,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
   String? _error;
   List<dynamic> _items = [];
   Map<String, dynamic>? _totals;
+  final ScrollController _reportVerticalController = ScrollController();
+  final ScrollController _reportHorizontalController = ScrollController();
 
   Future<void> _pickDate({required bool from}) async {
     final picked = await showDatePicker(
@@ -55,6 +61,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
     };
     if (_reportType == 'profit-loss' || _reportType == 'cash-book') {
       // Profit/loss and Cash Book use only the date-range filters.
+    } else if (_reportType == 'rate-overrides') {
+      if (_growerId.text.trim().isNotEmpty) {
+        final id = int.tryParse(_growerId.text.trim());
+        if (id != null) q['transactionId'] = id;
+      }
+      if (_statusCtrl.text.trim().isNotEmpty) {
+        q['transactionType'] = _statusCtrl.text.trim().toUpperCase();
+      }
     } else if (_reportType == 'sale-purchases') {
       if (_growerId.text.trim().isNotEmpty)
         q['vehicleNumber'] = _growerId.text.trim();
@@ -103,6 +117,58 @@ class _ReportsScreenState extends State<ReportsScreen> {
         queryParameters: _query(format: format));
   }
 
+  Future<void> _openRateEvidence(dynamic item) async {
+    final id = item['overrideId'];
+    if (id == null) return;
+    try {
+      final response = await ApiClient.instance.dio.get(
+        '/api/reports/rate-overrides/$id/evidence',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      if (response.statusCode != 200) {
+        throw Exception(ApiClient.errorMessage(response));
+      }
+      final data = response.data;
+      final bytes = data is Uint8List
+          ? data
+          : Uint8List.fromList(List<int>.from(data as List));
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => Dialog(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 960, maxHeight: 760),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              ListTile(
+                title: Text('Rate Change Attachment #$id'),
+                subtitle: Text(item['evidenceImageName']?.toString() ?? ''),
+                trailing: IconButton(
+                  tooltip: 'Close',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(dialogContext),
+                ),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: InteractiveViewer(
+                  minScale: 0.5,
+                  maxScale: 5,
+                  child: Image.memory(bytes, fit: BoxFit.contain),
+                ),
+              ),
+            ]),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ApiClient.exceptionMessage(
+            error, 'Could not open the rate-change attachment.')),
+      ));
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -113,6 +179,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
   void dispose() {
     _growerId.dispose();
     _statusCtrl.dispose();
+    _reportVerticalController.dispose();
+    _reportHorizontalController.dispose();
     super.dispose();
   }
 
@@ -137,6 +205,25 @@ class _ReportsScreenState extends State<ReportsScreen> {
           'outstandingAmount',
           'issueDate',
           'loanStatus'
+        ];
+      case 'rate-overrides':
+        return [
+          'overrideId',
+          'overrideDateTime',
+          'transactionType',
+          'transactionId',
+          'transactionDescription',
+          'vehicleNumber',
+          'transactionDate',
+          'masterRate',
+          'approvedRate',
+          'rateDifference',
+          'approvedByUserName',
+          'rateReasonText',
+          'remark',
+          'recordedByUserName',
+          'evidenceSource',
+          'attachment'
         ];
       case 'sale-purchases':
         return [
@@ -252,10 +339,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           decoration: InputDecoration(
                               labelText: _reportType == 'sale-purchases'
                                   ? 'Vehicle Number'
-                                  : 'Grower ID',
+                                  : _reportType == 'rate-overrides'
+                                      ? 'Transaction ID'
+                                      : 'Grower ID',
                               hintText: _reportType == 'sale-purchases'
                                   ? 'UP32AB1234'
-                                  : '100001'))),
+                                  : _reportType == 'rate-overrides'
+                                      ? 'Purchase / Sale ID'
+                                      : '100001'))),
                 if (_reportType != 'daily-collection' &&
                     _reportType != 'profit-loss' &&
                     _reportType != 'cash-book')
@@ -266,8 +357,12 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           decoration: InputDecoration(
                               labelText: _reportType == 'purchases'
                                   ? 'Payment/Lock Status'
-                                  : 'Status',
-                              hintText: 'e.g. PENDING'))),
+                                  : _reportType == 'rate-overrides'
+                                      ? 'Transaction Type'
+                                      : 'Status',
+                              hintText: _reportType == 'rate-overrides'
+                                  ? 'CANE or SALE'
+                                  : 'e.g. PENDING'))),
                 FilledButton.icon(
                     onPressed: _search,
                     icon: const Icon(Icons.search),
@@ -306,23 +401,65 @@ class _ReportsScreenState extends State<ReportsScreen> {
                       ? const Center(
                           child: Text(
                               'No records found for the selected filters.'))
-                      : SingleChildScrollView(
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: DataTable(
-                              columns: [
-                                for (final c in _columns)
-                                  DataColumn(label: Text(c))
-                              ],
-                              rows: [
-                                for (final item in _items)
-                                  DataRow(cells: [
-                                    for (final c in _columns)
-                                      DataCell(Text(
-                                          formatReportCell(c, item[c]),
-                                          overflow: TextOverflow.ellipsis)),
-                                  ]),
-                              ],
+                      : LayoutBuilder(
+                          builder: (context, constraints) => Scrollbar(
+                            controller: _reportVerticalController,
+                            thumbVisibility: true,
+                            trackVisibility: true,
+                            interactive: true,
+                            child: SingleChildScrollView(
+                              controller: _reportVerticalController,
+                              scrollDirection: Axis.vertical,
+                              child: Scrollbar(
+                                controller: _reportHorizontalController,
+                                thumbVisibility: true,
+                                trackVisibility: true,
+                                interactive: true,
+                                scrollbarOrientation:
+                                    ScrollbarOrientation.bottom,
+                                child: SingleChildScrollView(
+                                  controller: _reportHorizontalController,
+                                  scrollDirection: Axis.horizontal,
+                                  child: ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                        minWidth: constraints.maxWidth),
+                                    child: DataTable(
+                                      columns: [
+                                        for (final c in _columns)
+                                          DataColumn(label: Text(c))
+                                      ],
+                                      rows: [
+                                        for (final item in _items)
+                                          DataRow(cells: [
+                                            for (final c in _columns)
+                                              DataCell(c == 'attachment'
+                                                  ? TextButton.icon(
+                                                      onPressed: item[
+                                                                  'hasAttachment'] ==
+                                                              true
+                                                          ? () =>
+                                                              _openRateEvidence(
+                                                                  item)
+                                                          : null,
+                                                      icon: const Icon(
+                                                          Icons.image_outlined,
+                                                          size: 18),
+                                                      label: const Text('View'),
+                                                    )
+                                                  : Tooltip(
+                                                      message: formatReportCell(
+                                                          c, item[c]),
+                                                      child: Text(
+                                                          formatReportCell(
+                                                              c, item[c]),
+                                                          overflow: TextOverflow
+                                                              .ellipsis))),
+                                          ]),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),

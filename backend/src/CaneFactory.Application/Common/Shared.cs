@@ -19,15 +19,15 @@ public static class WeightCalculator
     public static decimal KgToQuintal(decimal kg) => Math.Round(kg / 100m, 2, MidpointRounding.AwayFromZero);
     public static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 
-    public static (decimal net, decimal cutting, decimal tax, decimal final, decimal amount) Calculate(
-        decimal grossQuintal, decimal tareQuintal, decimal cuttingPercent, decimal taxPercent, decimal rate)
+    public static (decimal net, decimal cutting, decimal otherDeduction, decimal final, decimal amount) Calculate(
+        decimal grossQuintal, decimal tareQuintal, decimal cuttingPercent, decimal otherDeductionPercent, decimal rate)
     {
         var net = R2(grossQuintal - tareQuintal);
         var cutting = R2(net * cuttingPercent / 100m);
-        var tax = R2(net * taxPercent / 100m);
-        var final = R2(net - cutting - tax);
+        var otherDeduction = R2(net * otherDeductionPercent / 100m);
+        var final = R2(net - cutting - otherDeduction);
         var amount = R2(final * rate);
-        return (net, cutting, tax, final, amount);
+        return (net, cutting, otherDeduction, final, amount);
     }
 }
 

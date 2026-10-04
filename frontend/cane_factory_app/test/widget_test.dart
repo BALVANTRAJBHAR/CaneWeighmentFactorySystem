@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
-import 'package:cane_factory_app/main.dart';
-import 'package:cane_factory_app/providers/auth_provider.dart';
-import 'package:cane_factory_app/providers/live_weight_provider.dart';
-import 'package:cane_factory_app/providers/theme_provider.dart';
+import 'package:affllp/main.dart';
+import 'package:affllp/providers/auth_provider.dart';
+import 'package:affllp/providers/live_weight_provider.dart';
+import 'package:affllp/providers/theme_provider.dart';
 
 void main() {
   testWidgets('App boots and shows the splash screen on first frame', (WidgetTester tester) async {

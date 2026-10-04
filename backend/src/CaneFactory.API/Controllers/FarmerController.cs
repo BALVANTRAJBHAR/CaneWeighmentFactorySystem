@@ -8,13 +8,13 @@ namespace CaneFactory.API.Controllers;
 
 /// <summary>
 /// Phase 12: Farmer self-service portal. Every endpoint here resolves the caller's OWN Grower
-/// record strictly via the logged-in User's Mobile number (JWT-authenticated identity, never a
+/// record strictly via the logged-in User's immutable GrowerId link (JWT-authenticated identity, never a
 /// client-supplied growerId/growerCode) - a farmer can never view another farmer's data through
 /// this controller, and an account with no matching Grower record gets a clear 404, not someone
 /// else's data. Read-only by design: no POST/PUT/DELETE anywhere in this controller.
 /// </summary>
 [ApiController]
-[Authorize]
+[Authorize(Roles = "Farmer")]
 [Route("api/farmer")]
 public class FarmerController : ControllerBase
 {
@@ -29,10 +29,19 @@ public class FarmerController : ControllerBase
 
     private async Task<Domain.Entities.Grower?> MyGrowerAsync()
     {
-        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == _current.UserId);
-        if (user == null) return null;
-        return await _db.Growers.Include(g => g.Village).Include(g => g.Bank)
-            .FirstOrDefaultAsync(g => g.Mobile == user.Mobile && !g.IsDeleted);
+        var growerId = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == _current.UserId && u.Status && !u.IsDeleted)
+            .Select(u => u.GrowerId).SingleOrDefaultAsync();
+        if (!growerId.HasValue) return null;
+        return await _db.Growers.AsNoTracking().Include(g => g.Village).Include(g => g.Bank)
+            .SingleOrDefaultAsync(g => g.Id == growerId.Value && g.Status && !g.IsDeleted);
+    }
+
+    [HttpGet("profile")]
+    public async Task<IActionResult> Profile()
+    {
+        var grower = await MyGrowerAsync();
+        return grower == null ? FarmerNotLinked() : Ok(ProfileDto(grower));
     }
 
     /// <summary>Single-call dashboard: profile + purchase/payment/loan summary + last 5 of each.</summary>
@@ -41,7 +50,7 @@ public class FarmerController : ControllerBase
     {
         var grower = await MyGrowerAsync();
         if (grower == null)
-            return NotFound(new { message = "No Grower profile is linked to this account. Contact the factory office to link your mobile number." });
+            return FarmerNotLinked();
 
         var purchases = _db.Purchases.Where(p => p.GrowerId == grower.Id && !p.IsDeleted);
         var payments = _db.Payments.Where(p => p.GrowerId == grower.Id && !p.IsDeleted);
@@ -67,11 +76,7 @@ public class FarmerController : ControllerBase
 
         return Ok(new
         {
-            profile = new
-            {
-                growerId = grower.Id, grower.GrowerCode, grower.GrowerName, grower.FatherName, VillageName = grower.Village.VillageName,
-                grower.Mobile, grower.Email, BankName = grower.Bank?.BankName, AccountMasked = MaskAccount(grower.BankAccountNumber)
-            },
+            profile = ProfileDto(grower),
             summary = new
             {
                 totalVehicles, pendingPayment, totalFinalWeight, totalPurchaseAmount, totalPaidAmount,
@@ -79,6 +84,88 @@ public class FarmerController : ControllerBase
             },
             recentPurchases, recentPayments, recentLoans
         });
+    }
+
+    [HttpGet("purchases")]
+    public async Task<IActionResult> Purchases([FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    {
+        var grower = await MyGrowerAsync();
+        if (grower == null) return FarmerNotLinked();
+        NormalizePage(ref page, ref pageSize);
+        var query = _db.Purchases.AsNoTracking()
+            .Where(p => p.GrowerId == grower.Id && !p.IsDeleted);
+        var totalCount = await query.CountAsync();
+        var items = await query.OrderByDescending(p => p.Id)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(p => new
+            {
+                purchaseId = p.Id,
+                p.VehicleNumber,
+                vehicleType = p.VehicleType.VehicleTypeName,
+                variety = p.Variety.VarietyName,
+                p.GrossWeightQuintal,
+                p.TareWeightQuintal,
+                p.NetWeightQuintal,
+                p.FinalWeightQuintal,
+                p.Rate,
+                p.PurchaseAmount,
+                p.GrossDateTime,
+                p.TareDateTime,
+                p.GrossTareStatus,
+                p.PaymentStatus
+            }).ToListAsync();
+        return Ok(new { items, totalCount, page, pageSize });
+    }
+
+    [HttpGet("payments")]
+    public async Task<IActionResult> Payments([FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    {
+        var grower = await MyGrowerAsync();
+        if (grower == null) return FarmerNotLinked();
+        NormalizePage(ref page, ref pageSize);
+        var query = _db.Payments.AsNoTracking()
+            .Where(p => p.GrowerId == grower.Id && !p.IsDeleted);
+        var totalCount = await query.CountAsync();
+        var items = await query.OrderByDescending(p => p.PaymentDate)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(p => new
+            {
+                paymentId = p.Id,
+                p.AdviceNumber,
+                p.TotalPurchaseAmount,
+                p.LoanDeductedAmount,
+                p.NetPayableAmount,
+                paymentMode = p.PaymentMode.ModeName,
+                p.TransactionRefNumber,
+                p.PaymentDate,
+                p.PaymentStatus
+            }).ToListAsync();
+        return Ok(new { items, totalCount, page, pageSize });
+    }
+
+    [HttpGet("loans")]
+    public async Task<IActionResult> Loans([FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    {
+        var grower = await MyGrowerAsync();
+        if (grower == null) return FarmerNotLinked();
+        NormalizePage(ref page, ref pageSize);
+        var query = _db.Loans.AsNoTracking()
+            .Where(l => l.GrowerId == grower.Id && !l.IsDeleted);
+        var totalCount = await query.CountAsync();
+        var items = await query.OrderByDescending(l => l.IssueDate)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(l => new
+            {
+                loanId = l.Id,
+                loanType = l.LoanType.LoanTypeName,
+                l.LoanAmount,
+                l.RecoveredAmount,
+                l.OutstandingAmount,
+                l.IssueDate,
+                l.LoanStatus,
+                l.Remarks
+            }).ToListAsync();
+        return Ok(new { items, totalCount, page, pageSize });
     }
 
     /// <summary>Combined Purchase + Payment + Loan ledger for a date range - the farmer's
@@ -90,10 +177,13 @@ public class FarmerController : ControllerBase
         if (format is not ("json" or "pdf" or "excel")) return BadRequest(new { message = "format must be json, pdf or excel." });
         var grower = await MyGrowerAsync();
         if (grower == null)
-            return NotFound(new { message = "No Grower profile is linked to this account. Contact the factory office to link your mobile number." });
+            return FarmerNotLinked();
 
         var from = fromDate ?? DateTime.UtcNow.AddMonths(-3);
         var to = toDate ?? DateTime.UtcNow;
+        if (from > to) return BadRequest(new { message = "fromDate cannot be later than toDate." });
+        if (to - from > TimeSpan.FromDays(366 * 5))
+            return BadRequest(new { message = "Statement date range cannot exceed five years." });
 
         var entries = new List<(DateTime Date, string Type, string Reference, string Details, decimal Amount)>();
 
@@ -154,4 +244,37 @@ public class FarmerController : ControllerBase
 
     private static string? MaskAccount(string? acc) =>
         string.IsNullOrEmpty(acc) ? null : (acc.Length <= 4 ? acc : new string('X', acc.Length - 4) + acc[^4..]);
+
+    private static string MaskMobile(string mobile) =>
+        mobile.Length < 4 ? "****" : $"XXXXXX{mobile[^4..]}";
+
+    private static string? MaskEmail(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email)) return null;
+        var at = email.IndexOf('@');
+        if (at <= 0) return "***";
+        return $"{email[0]}***{email[at..]}";
+    }
+
+    private static object ProfileDto(Domain.Entities.Grower grower) => new
+    {
+        growerId = grower.Id,
+        grower.GrowerCode,
+        grower.GrowerName,
+        grower.FatherName,
+        VillageName = grower.Village.VillageName,
+        MobileMasked = MaskMobile(grower.Mobile),
+        EmailMasked = MaskEmail(grower.Email),
+        BankName = grower.Bank?.BankName,
+        AccountMasked = MaskAccount(grower.BankAccountNumber)
+    };
+
+    private IActionResult FarmerNotLinked() =>
+        NotFound(new { message = "No active Grower profile is linked to this Farmer account. Contact the factory office." });
+
+    private static void NormalizePage(ref int page, ref int pageSize)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+    }
 }

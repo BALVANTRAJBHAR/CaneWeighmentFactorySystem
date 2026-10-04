@@ -1,4 +1,5 @@
 using CaneFactory.API.Auth;
+using CaneFactory.API.Services;
 using CaneFactory.Application.Common;
 using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Interfaces;
@@ -37,12 +38,15 @@ public class GrowersController : ControllerBase
     private readonly ICurrentUser _current;
     private readonly ISequenceGenerator _seq;
     private readonly ISecretProtector _protector;
+    private readonly FarmerAccountService _farmerAccounts;
     private readonly ILogger<GrowersController> _log;
 
     public GrowersController(AppDbContext db, IAuditService audit, ICurrentUser current,
-        ISequenceGenerator seq, ISecretProtector protector, ILogger<GrowersController> log)
+        ISequenceGenerator seq, ISecretProtector protector, FarmerAccountService farmerAccounts,
+        ILogger<GrowersController> log)
     {
-        _db = db; _audit = audit; _current = current; _seq = seq; _protector = protector; _log = log;
+        _db = db; _audit = audit; _current = current; _seq = seq; _protector = protector;
+        _farmerAccounts = farmerAccounts; _log = log;
     }
 
     private IActionResult? Deny(string action) =>
@@ -174,6 +178,7 @@ public class GrowersController : ControllerBase
                 ApplyAadhaar(g, req.AadhaarNumber);
                 _db.Growers.Add(g);
                 await _db.SaveChangesAsync();
+                await _farmerAccounts.EnsureForGrowerAsync(g, identityChanged: true);
             });
         }
         catch (DbUpdateException ex)
@@ -196,7 +201,14 @@ public class GrowersController : ControllerBase
         var createdGrower = g!;
         await _audit.LogAsync("Create", "Grower", "Grower", createdGrower.Id.ToString(),
             newValue: new { createdGrower.GrowerCode, createdGrower.GrowerName, createdGrower.VillageId });
-        return Ok(new { message = $"Grower '{createdGrower.GrowerName}' created successfully. Grower ID: {createdGrower.Id}", id = createdGrower.Id, growerId = createdGrower.Id, growerCode = createdGrower.GrowerCode });
+        return Ok(new
+        {
+            message = $"Grower '{createdGrower.GrowerName}' created successfully. Grower ID: {createdGrower.Id}. Farmer login is the registered mobile number; the initial password is the first 4 name characters in uppercase followed by that mobile number.",
+            id = createdGrower.Id,
+            growerId = createdGrower.Id,
+            growerCode = createdGrower.GrowerCode,
+            farmerLoginEnabled = true
+        });
     }
 
     [HttpPut("{id:int}")]
@@ -208,6 +220,8 @@ public class GrowersController : ControllerBase
         var error = await ValidateAsync(req, id);
         if (error != null) return Conflict(new { message = error });
 
+        var oldName = g.GrowerName;
+        var oldMobile = g.Mobile;
         var old = new { g.GrowerName, g.FatherName, g.Mobile, g.BankId, g.Status };
         g.GrowerName = Validators.Norm(req.GrowerName);
         g.GrowerNameHi = string.IsNullOrWhiteSpace(req.GrowerNameHi) ? null : req.GrowerNameHi.Trim();
@@ -223,7 +237,12 @@ public class GrowersController : ControllerBase
             ApplyAadhaar(g, req.AadhaarNumber);
         g.UpdatedAt = DateTime.UtcNow;
         g.UpdatedBy = _current.UserId;
-        await _db.SaveChangesAsync();
+        await _db.ExecuteInTransactionAsync(async () =>
+        {
+            await _db.SaveChangesAsync();
+            await _farmerAccounts.EnsureForGrowerAsync(g,
+                identityChanged: oldName != g.GrowerName || oldMobile != g.Mobile);
+        });
         await _audit.LogAsync("Edit", "Grower", "Grower", id.ToString(), oldValue: old,
             newValue: new { g.GrowerName, g.FatherName, g.Mobile, g.BankId, g.Status });
         return Ok(new { message = $"Grower '{g.GrowerName}' (ID {g.Id}) updated successfully." });
@@ -238,7 +257,11 @@ public class GrowersController : ControllerBase
         if (await _db.Purchases.AnyAsync(p => p.GrowerId == id))
             return Conflict(new { message = "This Grower has Purchase transactions. Deactivate instead of deleting." });
         g.IsDeleted = true; g.DeletedAt = DateTime.UtcNow; g.DeletedBy = _current.UserId; g.Status = false;
-        await _db.SaveChangesAsync();
+        await _db.ExecuteInTransactionAsync(async () =>
+        {
+            await _db.SaveChangesAsync();
+            await _farmerAccounts.EnsureForGrowerAsync(g);
+        });
         await _audit.LogAsync("Delete", "Grower", "Grower", id.ToString(), oldValue: new { g.GrowerCode, g.GrowerName });
         return Ok(new { message = $"Grower '{g.GrowerName}' (ID {g.Id}) deleted (soft delete)." });
     }
@@ -268,6 +291,8 @@ public class GrowersController : ControllerBase
         if (!await _db.Villages.AnyAsync(v => v.Id == req.VillageId && !v.IsDeleted && v.Status))
             return "Selected Village does not exist or is inactive.";
         if (!Validators.IsMobile(req.Mobile)) return "Mobile must be exactly 10 numeric digits. Example: 9876543210";
+        if (await _db.Growers.AnyAsync(g => !g.IsDeleted && g.Id != id && g.Mobile == req.Mobile))
+            return "DUPLICATE BLOCKED: This mobile number is already registered to another grower.";
         if (!Validators.IsEmail(req.Email)) return "Email format is invalid. Example: farmer@gmail.com";
         if (req.BankId.HasValue && !await _db.Banks.AnyAsync(b => b.Id == req.BankId && !b.IsDeleted && b.Status))
             return "Selected Bank does not exist or is inactive.";
@@ -284,8 +309,6 @@ public class GrowersController : ControllerBase
     private async Task<List<string>> SoftWarningsAsync(GrowerRequest req, int? id)
     {
         var warnings = new List<string>();
-        if (await _db.Growers.AnyAsync(g => !g.IsDeleted && g.Id != id && g.Mobile == req.Mobile))
-            warnings.Add($"Mobile '{req.Mobile}' is already registered to another grower.");
         var name = Validators.Norm(req.GrowerName).ToLower();
         var father = Validators.Norm(req.FatherName).ToLower();
         if (await _db.Growers.AnyAsync(g => !g.IsDeleted && g.Id != id && g.VillageId == req.VillageId

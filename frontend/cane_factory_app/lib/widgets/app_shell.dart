@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -151,9 +151,11 @@ class _AppShellState extends State<AppShell> {
     final theme = context.watch<ThemeProvider>();
     final items = _allItems
         .where((i) =>
+            (!auth.hasRole('Farmer') || i.roleOnly == 'Farmer') &&
             (auth.can(i.permission) || i.anyPermissions.any(auth.can)) &&
             (i.roleOnly == null || auth.hasRole(i.roleOnly!)) &&
-            (!i.androidOnly || Platform.isAndroid) &&
+            (!i.androidOnly ||
+                (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)) &&
             (i.anyRoles.isEmpty || i.anyRoles.any(auth.hasRole)))
         .toList();
     if (items.isEmpty) {

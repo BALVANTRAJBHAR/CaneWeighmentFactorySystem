@@ -19,7 +19,7 @@ class PaymentScreen extends StatefulWidget {
 }
 
 class _PaymentScreenState extends State<PaymentScreen> {
-  String _mode = 'FARMER';
+  String _mode = 'SINGLE';
   final _growerId = TextEditingController();
   final _purchaseId = TextEditingController();
   DateTime? _fromDate;
@@ -35,6 +35,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
   bool _loading = true;
   Timer? _searchTimer;
   int _previewGeneration = 0;
+  final ScrollController _paymentVerticalController = ScrollController();
+  final ScrollController _paymentHorizontalController = ScrollController();
 
   void _invalidatePreview() {
     _searchTimer?.cancel();
@@ -50,6 +52,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
     _growerId.dispose();
     _purchaseId.dispose();
     _txnRef.dispose();
+    _paymentVerticalController.dispose();
+    _paymentHorizontalController.dispose();
     super.dispose();
   }
 
@@ -237,44 +241,70 @@ class _PaymentScreenState extends State<PaymentScreen> {
   }
 
   Future<void> _cancelPayment(int paymentId) async {
-    final reasonCtl = TextEditingController();
+    var reason = '';
+    String? reasonError;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Cancel Payment $paymentId?'),
-        content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                  'Purchases become payable again and any auto-deducted loan recovery is reversed.'),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: reasonCtl,
-                  decoration: const InputDecoration(
-                      labelText: 'Cancellation Reason (min 5 characters)')),
-            ]),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Back')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Cancel Payment')),
-        ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('Cancel Payment $paymentId?'),
+          content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                    'Are you sure? Purchases become payable again and any auto-deducted loan recovery is reversed.'),
+                const SizedBox(height: 10),
+                TextField(
+                    autofocus: true,
+                    onChanged: (value) {
+                      reason = value;
+                      if (reasonError != null) {
+                        setDialogState(() => reasonError = null);
+                      }
+                    },
+                    decoration: InputDecoration(
+                        labelText: 'Cancellation Reason (min 5 characters)',
+                        errorText: reasonError)),
+              ]),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('No')),
+            FilledButton(
+                onPressed: () {
+                  if (reason.trim().length < 5) {
+                    setDialogState(() => reasonError =
+                        'Enter at least 5 characters before confirming.');
+                    return;
+                  }
+                  Navigator.pop(ctx, true);
+                },
+                child: const Text('Yes')),
+          ],
+        ),
       ),
     );
-    if (ok != true) return;
-    final res = await ApiClient.instance.dio.post(
-        '/api/payments/$paymentId/cancel',
-        data: {'reason': reasonCtl.text.trim()});
-    if (!mounted) return;
-    _toast(
-        res.statusCode == 200
-            ? res.data['message']
-            : ApiClient.errorMessage(res),
-        error: res.statusCode != 200);
-    _load();
+    if (ok != true || !mounted) return;
+    try {
+      final res = await ApiClient.instance.dio.post(
+          '/api/payments/$paymentId/cancel',
+          data: {'reason': reason.trim()});
+      if (!mounted) return;
+      _toast(
+          res.statusCode == 200
+              ? res.data['message']
+              : ApiClient.errorMessage(res),
+          error: res.statusCode != 200);
+      if (res.statusCode == 200) _load();
+    } catch (error) {
+      if (mounted) {
+        _toast(
+            ApiClient.exceptionMessage(
+                error, 'Payment could not be cancelled.'),
+            error: true);
+      }
+    }
   }
 
   Future<void> _openPaymentEvidence(int paymentId) async {
@@ -643,79 +673,107 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
   Widget _buildTable(
       bool canCancel, bool canCaptureEvidence, bool canViewEvidence) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.vertical,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: DataTable(columns: [
-          const DataColumn(label: Text('Payment ID')),
-          const DataColumn(label: Text('Advice #')),
-          const DataColumn(label: Text('Grower')),
-          const DataColumn(label: Text('Total')),
-          const DataColumn(label: Text('Loan Deducted')),
-          const DataColumn(label: Text('Net Payable')),
-          const DataColumn(label: Text('Mode')),
-          const DataColumn(label: Text('Status')),
-          if (canCaptureEvidence || canViewEvidence)
-            const DataColumn(label: Text('Cash Evidence')),
-          if (canCancel) const DataColumn(label: Text('Actions')),
-        ], rows: [
-          for (final p in _items)
-            DataRow(cells: [
-              DataCell(Text('${p['paymentId']}',
-                  style: const TextStyle(fontWeight: FontWeight.w700))),
-              DataCell(Text('${p['adviceNumber']}')),
-              DataCell(Text('${p['growerId']} ${p['growerName']}')),
-              DataCell(
-                  Text((p['totalPurchaseAmount'] as num).toStringAsFixed(2))),
-              DataCell(
-                  Text((p['loanDeductedAmount'] as num).toStringAsFixed(2))),
-              DataCell(Text((p['netPayableAmount'] as num).toStringAsFixed(2))),
-              DataCell(Text('${p['paymentModeName']}')),
-              DataCell(Chip(
-                  label: Text(p['paymentStatus'] ?? '-',
-                      style:
-                          const TextStyle(fontSize: 10, color: Colors.white)),
-                  backgroundColor: p['paymentStatus'] == 'COMPLETED'
-                      ? const Color(0xFF2E7D32)
-                      : Colors.red,
-                  visualDensity: VisualDensity.compact)),
-              if (canCaptureEvidence || canViewEvidence)
-                DataCell(p['paymentModeName']?.toString().toUpperCase() ==
-                        'CASH'
-                    ? Row(mainAxisSize: MainAxisSize.min, children: [
-                        if (canCaptureEvidence) ...[
-                          IconButton(
-                              tooltip: 'Open live camera / Capture or Retake',
-                              icon: const Icon(Icons.camera_alt_outlined,
-                                  size: 18),
-                              onPressed: () =>
-                                  _openPaymentEvidence(p['paymentId'] as int)),
-                          IconButton(
-                              tooltip: 'Upload evidence image',
-                              icon: const Icon(Icons.upload_file_outlined,
-                                  size: 18),
-                              onPressed: () =>
-                                  _uploadEvidence(p['paymentId'] as int)),
-                        ],
-                        if (canViewEvidence)
-                          IconButton(
-                              tooltip: 'View saved evidence',
-                              icon: const Icon(Icons.photo_library_outlined,
-                                  size: 18),
-                              onPressed: () =>
-                                  _viewEvidence(p['paymentId'] as int)),
-                      ])
-                    : const Text('-')),
-              if (canCancel)
-                DataCell(p['paymentStatus'] == 'COMPLETED'
-                    ? IconButton(
-                        tooltip: 'Cancel Payment',
-                        icon: const Icon(Icons.cancel_outlined, size: 18),
-                        onPressed: () => _cancelPayment(p['paymentId']))
-                    : const SizedBox.shrink()),
-            ]),
-        ]),
+    return LayoutBuilder(
+      builder: (context, constraints) => Scrollbar(
+        controller: _paymentVerticalController,
+        thumbVisibility: true,
+        trackVisibility: true,
+        interactive: true,
+        child: SingleChildScrollView(
+          controller: _paymentVerticalController,
+          scrollDirection: Axis.vertical,
+          child: Scrollbar(
+            controller: _paymentHorizontalController,
+            thumbVisibility: true,
+            trackVisibility: true,
+            interactive: true,
+            scrollbarOrientation: ScrollbarOrientation.bottom,
+            child: SingleChildScrollView(
+              controller: _paymentHorizontalController,
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                child: DataTable(columns: [
+                  const DataColumn(label: Text('Payment ID')),
+                  const DataColumn(label: Text('Advice #')),
+                  const DataColumn(label: Text('Grower')),
+                  const DataColumn(label: Text('Total')),
+                  const DataColumn(label: Text('Loan Deducted')),
+                  const DataColumn(label: Text('Net Payable')),
+                  const DataColumn(label: Text('Mode')),
+                  const DataColumn(label: Text('Status')),
+                  if (canCaptureEvidence || canViewEvidence)
+                    const DataColumn(label: Text('Cash Evidence')),
+                  if (canCancel) const DataColumn(label: Text('Actions')),
+                ], rows: [
+                  for (final p in _items)
+                    DataRow(cells: [
+                      DataCell(Text('${p['paymentId']}',
+                          style: const TextStyle(fontWeight: FontWeight.w700))),
+                      DataCell(Text('${p['adviceNumber']}')),
+                      DataCell(Text('${p['growerId']} ${p['growerName']}')),
+                      DataCell(Text((p['totalPurchaseAmount'] as num)
+                          .toStringAsFixed(2))),
+                      DataCell(Text(
+                          (p['loanDeductedAmount'] as num).toStringAsFixed(2))),
+                      DataCell(Text(
+                          (p['netPayableAmount'] as num).toStringAsFixed(2))),
+                      DataCell(Text('${p['paymentModeName']}')),
+                      DataCell(Chip(
+                          label: Text(p['paymentStatus'] ?? '-',
+                              style: const TextStyle(
+                                  fontSize: 10, color: Colors.white)),
+                          backgroundColor: p['paymentStatus'] == 'COMPLETED'
+                              ? const Color(0xFF2E7D32)
+                              : Colors.red,
+                          visualDensity: VisualDensity.compact)),
+                      if (canCaptureEvidence || canViewEvidence)
+                        DataCell(p['paymentModeName']
+                                    ?.toString()
+                                    .toUpperCase() ==
+                                'CASH'
+                            ? Row(mainAxisSize: MainAxisSize.min, children: [
+                                if (canCaptureEvidence) ...[
+                                  IconButton(
+                                      tooltip:
+                                          'Open live camera / Capture or Retake',
+                                      icon: const Icon(
+                                          Icons.camera_alt_outlined,
+                                          size: 18),
+                                      onPressed: () => _openPaymentEvidence(
+                                          p['paymentId'] as int)),
+                                  IconButton(
+                                      tooltip: 'Upload evidence image',
+                                      icon: const Icon(
+                                          Icons.upload_file_outlined,
+                                          size: 18),
+                                      onPressed: () => _uploadEvidence(
+                                          p['paymentId'] as int)),
+                                ],
+                                if (canViewEvidence)
+                                  IconButton(
+                                      tooltip: 'View saved evidence',
+                                      icon: const Icon(
+                                          Icons.photo_library_outlined,
+                                          size: 18),
+                                      onPressed: () =>
+                                          _viewEvidence(p['paymentId'] as int)),
+                              ])
+                            : const Text('-')),
+                      if (canCancel)
+                        DataCell(p['paymentStatus'] == 'COMPLETED'
+                            ? IconButton(
+                                tooltip: 'Cancel Payment',
+                                icon:
+                                    const Icon(Icons.cancel_outlined, size: 18),
+                                onPressed: () => _cancelPayment(p['paymentId']))
+                            : const SizedBox.shrink()),
+                    ]),
+                ]),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

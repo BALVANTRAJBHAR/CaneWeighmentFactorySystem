@@ -22,13 +22,15 @@ public class AuthController : ControllerBase
     private readonly IConfiguration _config;
     private readonly UserStateService _userState;
     private readonly ILogger<AuthController> _log;
+    private readonly IHostEnvironment _environment;
     private static readonly PasswordHasher<User> Hasher = new();
 
     public AuthController(AppDbContext db, ITokenService tokens, ISecretProtector protector,
-        IAuditService audit, IConfiguration config, UserStateService userState, ILogger<AuthController> log)
+        IAuditService audit, IConfiguration config, UserStateService userState, ILogger<AuthController> log,
+        IHostEnvironment environment)
     {
         _db = db; _tokens = tokens; _protector = protector; _audit = audit;
-        _config = config; _userState = userState; _log = log;
+        _config = config; _userState = userState; _log = log; _environment = environment;
     }
 
     private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -38,16 +40,36 @@ public class AuthController : ControllerBase
     [EnableRateLimiting("auth")]
     public async Task<IActionResult> Login(LoginRequest req)
     {
-        var username = (req.Username ?? string.Empty).Trim().ToLowerInvariant();
-        var user = await _db.Users.Include(u => u.UserRoles).ThenInclude(ur => ur.Role)
-            .FirstOrDefaultAsync(u => u.Username.ToLower() == username && !u.IsDeleted);
+        var identifier = (req.Username ?? string.Empty).Trim();
+        var normalizedIdentifier = identifier.ToLowerInvariant();
+        var isMobileIdentifier = identifier.Length == 10 && identifier.All(char.IsDigit);
+        if (isMobileIdentifier && !Request.IsHttps && !IsLoopbackRequest())
+            return StatusCode(StatusCodes.Status426UpgradeRequired,
+                new { message = "Farmer mobile-number login requires HTTPS. Configure an https:// API URL." });
+
+        var users = _db.Users.Include(u => u.UserRoles).ThenInclude(ur => ur.Role)
+            .Where(u => !u.IsDeleted);
+        User? user;
+        if (isMobileIdentifier)
+        {
+            var farmerMatches = await users.Where(u => u.Mobile == identifier && u.GrowerId != null &&
+                    u.UserRoles.Any(ur => ur.Role.Name == "Farmer" && ur.Role.Status && !ur.Role.IsDeleted))
+                .Take(2).ToListAsync();
+            user = farmerMatches.Count == 1 ? farmerMatches[0] : null;
+        }
+        else
+        {
+            user = await users.FirstOrDefaultAsync(u => u.Username.ToLower() == normalizedIdentifier
+                && !u.UserRoles.Any(ur => ur.Role.Name == "Farmer"));
+        }
 
         var maxFailed = await IntSetting("Security.MaxFailedLogins", 5);
         var lockoutMinutes = await IntSetting("Security.LockoutMinutes", 15);
 
         if (user == null || !user.Status)
         {
-            await _audit.LogAsync("FailedLogin", "Auth", "User", username, success: false,
+            await _audit.LogAsync("FailedLogin", "Auth", "User",
+                isMobileIdentifier ? MaskMobile(identifier) : normalizedIdentifier, success: false,
                 failureReason: user == null ? "Unknown user" : "Account inactive");
             return Unauthorized(new { message = "Invalid username or password." });
         }
@@ -83,11 +105,12 @@ public class AuthController : ControllerBase
     private async Task<LoginResponse> IssueTokensAsync(User user, string? deviceInfo)
     {
         var roles = user.UserRoles.Select(ur => ur.Role.Name).ToList();
+        var isFarmer = roles.Contains("Farmer", StringComparer.OrdinalIgnoreCase);
         var perms = await _db.RolePermissions
             .Where(rp => user.UserRoles.Select(ur => ur.RoleId).Contains(rp.RoleId))
             .Select(rp => rp.Permission.Code).Distinct().ToListAsync();
 
-        var (access, expiresAt) = _tokens.CreateAccessToken(user.Id, user.Username, roles, perms);
+        var (access, expiresAt) = _tokens.CreateAccessToken(user.Id, user.Username, user.TokenVersion, roles, perms);
         var refreshValue = _tokens.CreateRefreshTokenValue();
         var refreshDays = int.TryParse(_config["Jwt:RefreshTokenDays"], out var d) ? d : 7;
         _db.RefreshTokens.Add(new RefreshToken
@@ -104,8 +127,8 @@ public class AuthController : ControllerBase
             Id = user.Id,
             Username = user.Username,
             FullName = user.FullName, FullNameHi = user.FullNameHi,
-            Mobile = user.Mobile,
-            Email = user.Email,
+            Mobile = isFarmer ? MaskMobile(user.Mobile) : user.Mobile,
+            Email = isFarmer ? MaskEmail(user.Email) : user.Email,
             Roles = roles,
             Permissions = perms,
             MustChangePassword = user.MustChangePassword,
@@ -202,11 +225,14 @@ public class AuthController : ControllerBase
         var perms = await _db.RolePermissions
             .Where(rp => user.UserRoles.Select(ur => ur.RoleId).Contains(rp.RoleId))
             .Select(rp => rp.Permission.Code).Distinct().ToListAsync();
+        var roles = user.UserRoles.Select(ur => ur.Role.Name).ToList();
+        var isFarmer = roles.Contains("Farmer", StringComparer.OrdinalIgnoreCase);
         return Ok(new UserInfo
         {
             Id = user.Id, Username = user.Username, FullName = user.FullName, FullNameHi = user.FullNameHi,
-            Mobile = user.Mobile, Email = user.Email,
-            Roles = user.UserRoles.Select(ur => ur.Role.Name).ToList(),
+            Mobile = isFarmer ? MaskMobile(user.Mobile) : user.Mobile,
+            Email = isFarmer ? MaskEmail(user.Email) : user.Email,
+            Roles = roles,
             Permissions = perms, MustChangePassword = user.MustChangePassword,
             PreferredLanguage = user.PreferredLanguage, ThemeMode = user.ThemeMode, ThemeColor = user.ThemeColor
         });
@@ -223,7 +249,8 @@ public class AuthController : ControllerBase
         if (strength != null) return BadRequest(new { message = strength });
 
         var userId = int.Parse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)!.Value);
-        var user = await _db.Users.FirstAsync(u => u.Id == userId);
+        var user = await _db.Users.Include(u => u.UserRoles).ThenInclude(ur => ur.Role)
+            .FirstAsync(u => u.Id == userId && !u.IsDeleted && u.Status);
         if (Hasher.VerifyHashedPassword(user, user.PasswordHash, req.CurrentPassword) == PasswordVerificationResult.Failed)
         {
             await _audit.LogAsync("PasswordChange", "Auth", "User", user.Id.ToString(), success: false, failureReason: "Wrong current password");
@@ -231,14 +258,25 @@ public class AuthController : ControllerBase
         }
         user.PasswordHash = Hasher.HashPassword(user, req.NewPassword);
         user.MustChangePassword = false;
+        user.TokenVersion++;
         user.UpdatedAt = DateTime.UtcNow;
-        // revoke all other sessions after password change
+        // Revoke every token minted with the old password/security stamp, then issue one fresh
+        // rotated session for this device. Old access tokens fail their TokenVersion check.
         var tokens = await _db.RefreshTokens.Where(t => t.UserId == userId && t.RevokedAt == null).ToListAsync();
         foreach (var t in tokens) { t.RevokedAt = DateTime.UtcNow; t.RevokedByIp = Ip; }
+        var response = await IssueTokensAsync(user, Request.Headers.UserAgent.ToString());
         await _db.SaveChangesAsync();
         _userState.Invalidate(userId);
         await _audit.LogAsync("PasswordChange", "Auth", "User", user.Id.ToString());
-        return Ok(new { message = "Password changed successfully. Other sessions were logged out." });
+        return Ok(new
+        {
+            message = "Password changed successfully. Other sessions were logged out.",
+            response.AccessToken,
+            response.RefreshToken,
+            response.AccessTokenExpiresAt,
+            response.MustChangePassword,
+            response.User
+        });
     }
 
     // ------------------------------------------------- FORGOT PASSWORD (Mobile -> OTP -> Reset)
@@ -246,7 +284,10 @@ public class AuthController : ControllerBase
     [EnableRateLimiting("auth")]
     public async Task<IActionResult> ForgotStart(ForgotPasswordStartRequest req)
     {
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Mobile == req.Mobile && !u.IsDeleted && u.Status);
+        var matches = await _db.Users.Include(u => u.UserRoles).ThenInclude(ur => ur.Role)
+            .Where(u => u.Mobile == req.Mobile && !u.IsDeleted && u.Status).Take(3).ToListAsync();
+        // A shared mobile is ambiguous: never guess which account should be reset.
+        var user = matches.Count == 1 ? matches[0] : null;
         // do not reveal whether the mobile exists
         if (user != null)
         {
@@ -257,8 +298,11 @@ public class AuthController : ControllerBase
                 Purpose = "PASSWORD_RESET", ExpiresAt = DateTime.UtcNow.AddMinutes(5)
             });
             await _db.SaveChangesAsync();
-            // SMS gateway sends the OTP in production; in Development it is written to the server log only.
-            _log.LogInformation("PASSWORD RESET OTP for {Mobile}: {Otp}", req.Mobile, otp);
+            // Never place OTP or the full mobile number in production logs. Development logging
+            // remains available for local testing until an SMS provider is configured.
+            if (_environment.IsDevelopment())
+                _log.LogInformation("DEV password-reset OTP for mobile ending {Suffix}: {Otp}",
+                    req.Mobile.Length >= 4 ? req.Mobile[^4..] : "****", otp);
             await _audit.LogAsync("PasswordResetOtpSent", "Auth", "User", user.Id.ToString());
         }
         return Ok(new { message = "If the mobile number is registered, an OTP has been sent." });
@@ -290,6 +334,7 @@ public class AuthController : ControllerBase
         var user = await _db.Users.FirstAsync(u => u.Id == otp.UserId);
         user.PasswordHash = Hasher.HashPassword(user, req.NewPassword);
         user.MustChangePassword = false;
+        user.TokenVersion++;
         otp.ConsumedAt = DateTime.UtcNow;
         var tokens = await _db.RefreshTokens.Where(t => t.UserId == user.Id && t.RevokedAt == null).ToListAsync();
         foreach (var t in tokens) { t.RevokedAt = DateTime.UtcNow; t.RevokedByIp = Ip; }
@@ -317,5 +362,21 @@ public class AuthController : ControllerBase
     {
         var s = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(x => x.Key == key);
         return s != null && int.TryParse(s.Value, out var v) ? v : fallback;
+    }
+
+    private bool IsLoopbackRequest()
+    {
+        var remote = HttpContext.Connection.RemoteIpAddress;
+        return remote != null && System.Net.IPAddress.IsLoopback(remote);
+    }
+
+    private static string MaskMobile(string mobile) =>
+        mobile.Length < 4 ? "****" : $"XXXXXX{mobile[^4..]}";
+
+    private static string? MaskEmail(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email)) return null;
+        var at = email.IndexOf('@');
+        return at <= 0 ? "***" : $"{email[0]}***{email[at..]}";
     }
 }

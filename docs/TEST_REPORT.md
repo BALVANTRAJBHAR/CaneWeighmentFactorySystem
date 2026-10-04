@@ -54,7 +54,7 @@ generated migration script `database/scripts/02_schema_migration.sql`).
 | Gross 25050 KG → "Gross weighment completed successfully. Purchase ID: 1. Gross Weight: 250.50 Quintal." + rate snapshot 375.50 + autoPrint payload | ✅ |
 | Duplicate gross (same idempotency key) → blocked | ✅ |
 | Pending-tare grid returns the gross transaction | ✅ |
-| Tare 8341 KG → Net 167.09 = 250.50−83.41; Cutting 2% = 3.34; Tax 1% = 1.67; **Final 162.08**; Amount **60,861.04** (all Quintal 2dp, server-side) | ✅ |
+| Tare 8341 KG → Net 167.09 = 250.50−83.41; Cutting 2% = 3.34; Other Deduction 1% = 1.67; **Final 162.08**; Amount **60,861.04** (all Quintal 2dp, server-side) | ✅ |
 | Tare ≥ gross rejected; second tare on same purchase rejected; cancelled/locked purchase rejected | ✅ |
 
 ## Known Issues / Notes

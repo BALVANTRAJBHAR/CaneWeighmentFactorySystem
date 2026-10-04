@@ -12,19 +12,23 @@
 - [x] Forgot password: Mobile → OTP (hashed, 5-min expiry, 5 attempts) → reset → all sessions revoked
 - [x] No public registration/sign-up anywhere
 - [x] Deactivated users: tokens revoked, API blocked ≤60s, history preserved
+- [x] JWT token-version security stamp: password/status changes invalidate old access tokens immediately
+- [x] Farmer first login: registered mobile + hashed deterministic initial password + mandatory password change
 
 ## Authorization (server-side boundary)
 - [x] RBAC: Users / Roles / Permissions / UserRoles / RolePermissions (570 granular permissions)
 - [x] Every protected endpoint enforces permissions server-side (`[HasPermission]` policy or imperative check)
 - [x] Copied URL / manipulated object ID never bypasses authorization → 401 unauthenticated, 403 unauthorized
 - [x] Account-active re-verified server-side per request (60s cache)
-- [x] Farmer object-ownership scoping on purchases (404 for out-of-scope IDs — no record-existence leak)
+- [x] Farmer object ownership uses immutable authenticated `User.GrowerId`; no mobile/ID request parameter controls ownership
+- [x] Farmer JWTs are restricted to the read-only self-service API allowlist; generic CRUD/report endpoints return 403
 - [x] Frontend hides unauthorized buttons/menus, but is explicitly NOT the security boundary
 
 ## Data Protection
 - [x] AES-256-GCM encryption for stored secrets: SMS keys, camera passwords, Aadhaar
 - [x] Aadhaar: encrypted at rest, unique via SHA-256 hash, only masked (XXXX-XXXX-1234) ever returned, never in reports
 - [x] Bank account numbers masked in all list/lookup responses
+- [x] Farmer mobile/email/profile values are masked in auth and self-service responses
 - [x] Secrets from environment variables only; `.env.example` has placeholders; no secrets in Git
 - [x] Config endpoints return `hasPassword/hasApiKey` flags — never the secret value
 

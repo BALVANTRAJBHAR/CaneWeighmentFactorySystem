@@ -80,7 +80,7 @@ public class WeightRuleConfig : BaseEntity
     public bool ApplyToGross { get; set; } = true;
     public bool ApplyToTare { get; set; } = true;
     public decimal DefaultCuttingPercent { get; set; }
-    public decimal DefaultTaxPercent { get; set; }
+    public decimal DefaultOtherDeductionPercent { get; set; }
     /// <summary>Minimum time after a completed transaction before the same normalized vehicle
     /// can begin another cane gross or sale/purchase tare. 0 disables only this cooldown;
     /// active/pending transaction and platform-clear protection remain mandatory.</summary>

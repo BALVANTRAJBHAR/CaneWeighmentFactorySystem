@@ -13,7 +13,7 @@ public class TokenService : ITokenService
     private readonly IConfiguration _config;
     public TokenService(IConfiguration config) => _config = config;
 
-    public (string token, DateTime expiresAt) CreateAccessToken(int userId, string username,
+    public (string token, DateTime expiresAt) CreateAccessToken(int userId, string username, int tokenVersion,
         IEnumerable<string> roles, IEnumerable<string> permissions)
     {
         var secret = _config["Jwt:Secret"]
@@ -25,6 +25,7 @@ public class TokenService : ITokenService
         {
             new(JwtRegisteredClaimNames.Sub, userId.ToString()),
             new(JwtRegisteredClaimNames.UniqueName, username),
+            new("ver", tokenVersion.ToString()),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));

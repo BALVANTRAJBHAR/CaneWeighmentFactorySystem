@@ -7,14 +7,14 @@ All list endpoints support `?search=&includeInactive=&sortBy=id|name&desc=&page=
 ## Auth (`/api/auth`) — anonymous unless noted, rate-limited 10/min/IP
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| POST | /login | `{username,password,deviceInfo?}` | Returns access+refresh tokens, user info incl. permissions, `mustChangePassword` |
+| POST | /login | `{username,password,deviceInfo?}` | Staff: username. Farmer: registered 10-digit mobile over HTTPS. Returns access+refresh tokens and `mustChangePassword` |
 | POST | /refresh | `{refreshToken}` | Rotation; reuse of a revoked token revokes all sessions |
 | POST | /logout 🔒 | `{refreshToken}` | Revokes that session |
 | POST | /logout-all 🔒 | — | Revokes all sessions |
 | GET | /sessions 🔒 | — | Device/session list |
 | GET | /me 🔒 | — | Current user + permissions |
 | POST | /change-password 🔒 | `{currentPassword,newPassword,confirmPassword}` | Revokes other sessions; clears forced-change flag |
-| POST | /forgot-password/start | `{mobile}` | Sends OTP (logged server-side until SMS phase) |
+| POST | /forgot-password/start | `{mobile}` | Sends OTP; production logs never contain OTP/full mobile |
 | POST | /forgot-password/verify | `{mobile,otp}` | |
 | POST | /forgot-password/reset | `{mobile,otp,newPassword}` | Revokes all old sessions |
 
@@ -49,7 +49,7 @@ All list endpoints support `?search=&includeInactive=&sortBy=id|name&desc=&page=
 |---|---|---|
 | GET | / | `?search=&searchBy=name|father|village|code|mobile` |
 | GET | /by-code?code=101/1 | Weighment lookup (read-only grower panel) |
-| GET/POST/PUT/DELETE | standard | POST: Aadhaar unique (blocked), mobile & name+father duplicates return 422 `requiresConfirmation` until `acceptDuplicateWarning=true`; code auto-generated `VillageId/Seq` |
+| GET/POST/PUT/DELETE | standard | POST: Aadhaar and mobile are unique/blocked; name+father duplicate requires confirmation; six-digit ID is generated; Farmer login is provisioned automatically |
 
 ## Rates (`/api/rates`) — Rate.*
 | Method | Path | Notes |
@@ -67,11 +67,11 @@ All list endpoints support `?search=&includeInactive=&sortBy=id|name&desc=&page=
 | GET | /pending-tare | Weighment.View | Pending gross grid |
 | GET | /purchase/{id}/for-tare | Weighment.View | Validates exists/gross-done/tare-pending/not-cancelled/not-locked |
 | POST | /gross | Weighment.Create | Full server validation, min-weight rule, rate snapshot, sequence PurchaseId, idempotencyKey; returns success message + `autoPrint` + `soundEvent` |
-| POST | /tare | Weighment.Edit | Server-side Net/Cutting/Tax/Final/Amount (Quintal, 2dp); marks Payment PENDING |
+| POST | /tare | Weighment.Edit | Server-side Net/Cutting/Other Deduction/Final/Amount (Quintal, 2dp); marks Payment PENDING |
 | GET | /rules | Weighment.View | Min-weight + sound config + messages for the client |
 
 ## Purchases (`/api/purchases`) — Purchase.*
-GET list/detail (Farmer sees own only), POST /{id}/lock, /{id}/unlock, /{id}/cancel (reason required, paid blocked).
+GET list/detail for authorized staff; POST /{id}/lock, /{id}/unlock, /{id}/cancel (reason required, paid blocked). Farmers cannot call this generic controller.
 
 ## Devices & Profiles (Developer)
 | Path | Permission |
@@ -115,19 +115,28 @@ settings (GET) + settings/{key} (PUT). Secrets always stored encrypted, never re
 | Method | Path | Covers | Filters |
 |---|---|---|---|
 | GET | /api/reports/purchases | Daily Weighment, Gross/Tare/Net, Village-wise, Grower-wise, Date-range, Rate-wise, Variety-wise, Vehicle-wise, Pending Payment, Lock report | fromDate,toDate,villageId,growerCode,varietyTypeId,varietyId,vehicleTypeId,rateMin,rateMax,paymentStatus,lockStatus,grossTareStatus,sortBy,desc |
+| GET | /api/reports/rate-overrides | Cane/Sale rate-change approval audit with master/approved rate, approver, reason, remark and evidence metadata | fromDate,toDate,transactionType,transactionId,approvedByUserId,rateReasonId |
+| GET | /api/reports/rate-overrides/{overrideId}/evidence | Integrity-checked JPG evidence for an authorised report row | — |
 | GET | /api/reports/payments | Payment report + Cancel report | fromDate,toDate,villageId,growerCode,paymentModeId,status |
 | GET | /api/reports/loans | Loan report + Cancel report | fromDate,toDate,villageId,growerCode,loanTypeId,status |
 | GET | /api/reports/daily-collection | Daily Collection report (date-grouped totals) | fromDate,toDate,villageId |
 
 `format=json` requires `Report.View`; `format=pdf` requires `Report.Print`; `format=excel` requires
-`Report.Export`. Farmer role is automatically scoped to its own Grower's rows on every report.
+`Report.Export`. Farmer identities cannot call generic report APIs; their own statement is under `/api/farmer`.
 The pre-existing `GET /api/audit` (Audit.View) also accepts these filters and satisfies the Audit report.
 
-## Farmer Portal (Phase 12) — no extra permission; scoped server-side to caller's own Grower
+## Farmer Portal — read-only; scoped server-side to authenticated `User.GrowerId`
 | Method | Path | Notes |
 |---|---|---|
-| GET | /api/farmer/dashboard | Profile + purchase/payment/loan summary + last 5 of each; 404 if the account's mobile has no matching Grower |
+| GET | /api/farmer/profile | Masked profile for the authenticated Farmer |
+| GET | /api/farmer/dashboard | Profile + purchase/payment/loan summary + last 5 of each |
+| GET | /api/farmer/purchases?page=&pageSize= | Own purchase/weighment history only |
+| GET | /api/farmer/payments?page=&pageSize= | Own payment history only |
+| GET | /api/farmer/loans?page=&pageSize= | Own loan history only |
 | GET | /api/farmer/statement?fromDate=&toDate=&format=json\|pdf\|excel | Combined Purchase+Payment+Loan ledger ("passbook") |
+
+No farmer endpoint accepts mobile/grower ID as an ownership selector. Farmer JWTs are server-side allowlisted to
+`/api/farmer`, `/api/auth`, and the minimal header/health routes. Changing a URL/object ID cannot cross accounts.
 
 ## Security, Backup & Health (Phase 13)
 | Method | Path | Permission | Notes |

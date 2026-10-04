@@ -395,13 +395,13 @@ public class PrintController : ControllerBase
     /// alignment before relying on Auto Print in production.</summary>
     [HasPermission("Print.Configure")]
     [HttpGet("test")]
-    public IActionResult Test([FromQuery] string? target, [FromQuery] string? language, [FromQuery] string format = "final")
+    public async Task<IActionResult> Test([FromQuery] string? target, [FromQuery] string? language, [FromQuery] string format = "final")
     {
         if (target is not (null or "A4" or "DotMatrix")) return BadRequest(new { message = "target must be A4 or DotMatrix." });
         if (language is not (null or "hi" or "en")) return BadRequest(new { message = "language must be hi or en." });
         if (format is not ("final" or "preview")) return BadRequest(new { message = "format must be final or preview." });
 
-        var doc = _engine.BuildTestDocument(language ?? "hi", _current.Username ?? "Developer");
+        var doc = await _engine.BuildTestDocumentAsync(language ?? "hi", _current.Username ?? "Developer");
         var (bytes, contentType, ext) = _engine.Render(doc, target ?? "DotMatrix", format == "preview");
         return File(bytes, contentType, $"PrintTest.{ext}");
     }

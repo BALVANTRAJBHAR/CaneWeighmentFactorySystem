@@ -37,6 +37,13 @@ public class PrintDocument
     public List<PrintImage> Images { get; set; } = new();
     public bool PrintImages { get; set; } = true;
 
+    /// <summary>Only cane gross/final and sale tare/final use fixed half-page dot-matrix
+    /// stationery. Other documents keep their existing renderer behavior.</summary>
+    public bool UseHalfPageDotMatrixLayout { get; set; }
+    public bool DotMatrixPrintHeader { get; set; } = true;
+    public int DotMatrixPageLines { get; set; } = 108;
+    public int DotMatrixHeaderReservedLines { get; set; } = 9;
+
     /// <summary>Optional row-wise detail sections, used by a multi-purchase payment advice.
     /// A4 renders these as tables; dot-matrix expands them into readable field rows.</summary>
     public List<PrintTable> Tables { get; set; } = new();

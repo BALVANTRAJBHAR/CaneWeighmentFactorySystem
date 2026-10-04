@@ -15,7 +15,7 @@ namespace CaneFactory.API.Controllers;
 
 /// <summary>
 /// Unified Cane Weighment API - GROSS and TARE for the single weighment main form.
-/// All business calculation (Quintal, 2 decimals, cutting/tax, rate snapshot) is server-side.
+/// All business calculation (Quintal, 2 decimals, cutting/other deduction, rate snapshot) is server-side.
 /// </summary>
 [ApiController]
 [Authorize]
@@ -97,7 +97,7 @@ public class WeighmentController : ControllerBase
             purchaseId = p.Id, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName, FatherName = p.Grower.FatherName,
             VillageName = p.Grower.Village.VillageName, p.VehicleNumber, VehicleTypeName = p.VehicleType.VehicleTypeName,
             VarietyName = p.Variety.VarietyName, p.Rate, p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName,
-            p.CuttingPercent, p.TaxPercent
+            p.CuttingPercent, p.OtherDeductionPercent
         });
     }
 
@@ -123,7 +123,7 @@ public class WeighmentController : ControllerBase
         if (variety.VarietyTypeId != req.VarietyTypeId)
             return BadRequest(new { message = "Selected Variety does not belong to the selected Variety Type." });
         if (req.CuttingPercent is < 0 or > 100) return BadRequest(new { message = "Cutting % must be between 0 and 100. Example: 2.00" });
-        if (req.TaxPercent is < 0 or > 100) return BadRequest(new { message = "Tax % must be between 0 and 100." });
+        if (req.OtherDeductionPercent is < 0 or > 100) return BadRequest(new { message = "Other Deduction % must be between 0 and 100." });
         if (!_weighing.TryGetUsableWeight(out var liveKg, out var liveWeightError))
             return Conflict(new { message = liveWeightError });
 
@@ -170,7 +170,7 @@ public class WeighmentController : ControllerBase
             GrossByUserId = _current.UserId!.Value,
             GrossByUserName = _current.Username ?? "",
             CuttingPercent = WeightCalculator.R2(req.CuttingPercent),
-            TaxPercent = WeightCalculator.R2(req.TaxPercent),
+            OtherDeductionPercent = WeightCalculator.R2(req.OtherDeductionPercent),
             Rate = rate.Rate,
             SeasonId = season.Id,
             GrossTareStatus = "GROSS_DONE",
@@ -234,8 +234,8 @@ public class WeighmentController : ControllerBase
             return BadRequest(new { message = ex.Message });
         }
 
-        var (net, cutting, tax, final, amount) = WeightCalculator.Calculate(
-            p.GrossWeightQuintal, tareQuintal, p.CuttingPercent, p.TaxPercent, effectiveRate);
+        var (net, cutting, otherDeduction, final, amount) = WeightCalculator.Calculate(
+            p.GrossWeightQuintal, tareQuintal, p.CuttingPercent, p.OtherDeductionPercent, effectiveRate);
 
         p.ScaleReadingTareKg = WeightCalculator.R2(liveKg);
         p.TareWeightQuintal = tareQuintal;
@@ -244,7 +244,7 @@ public class WeighmentController : ControllerBase
         p.TareByUserName = _current.Username;
         p.NetWeightQuintal = net;
         p.CuttingWeightQuintal = cutting;
-        p.TaxWeightQuintal = tax;
+        p.OtherDeductionWeightQuintal = otherDeduction;
         p.FinalWeightQuintal = final;
         p.Rate = effectiveRate;
         p.PurchaseAmount = amount;
@@ -292,7 +292,7 @@ public class WeighmentController : ControllerBase
             tareWeightQuintal = tareQuintal,
             netWeightQuintal = net,
             cuttingWeightQuintal = cutting,
-            taxWeightQuintal = tax,
+            otherDeductionWeightQuintal = otherDeduction,
             finalWeightQuintal = final,
             purchaseAmount = amount,
             soundEvent = "WEIGHMENT_COMPLETED",

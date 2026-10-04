@@ -90,8 +90,7 @@ public static class DbSeeder
 
         var farmer = new List<string>
         {
-            "Purchase.View", "Payment.View", "Loan.View", "LoanRecovery.View",
-            "Report.View", "Dashboard.View", "UserGuide.View"
+            "Dashboard.View", "UserGuide.View"
         };
 
         var salePurchase = new List<string>
@@ -131,6 +130,12 @@ public static class DbSeeder
                 ? allPerms
                 : allPerms.Where(p => codes.Contains(p.Code)).ToList();
             var have = role.RolePermissions.Select(rp => rp.PermissionId).ToHashSet();
+            if (roleName == "Farmer")
+            {
+                var targetIds = target.Select(p => p.Id).ToHashSet();
+                db.RolePermissions.RemoveRange(role.RolePermissions
+                    .Where(rp => !targetIds.Contains(rp.PermissionId)));
+            }
             foreach (var p in target.Where(p => !have.Contains(p.Id)))
                 db.RolePermissions.Add(new RolePermission { RoleId = role.Id, PermissionId = p.Id });
         }
