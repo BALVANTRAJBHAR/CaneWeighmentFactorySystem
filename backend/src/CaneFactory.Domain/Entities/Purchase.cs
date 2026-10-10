@@ -14,6 +14,8 @@ public class Purchase : BaseEntity
     public int VarietyTypeId { get; set; }
     public int VarietyId { get; set; }
     public Variety Variety { get; set; } = null!;
+    public int? CropId { get; set; }
+    public Crop? Crop { get; set; }
 
     public decimal ScaleReadingGrossKg { get; set; }
     public decimal GrossWeightQuintal { get; set; }

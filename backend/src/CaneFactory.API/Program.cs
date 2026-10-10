@@ -35,8 +35,10 @@ MapEnv("CANE_CAMERA_SIMULATOR", "Camera:SimulatorMode");
 
 // ---- Database (SQL Server 2019 Express in production; SQLite fallback for dev containers) ----
 var provider = builder.Configuration["Database:Provider"] ?? "SqlServer";
-var connString = builder.Configuration.GetConnectionString("Default")
-    ?? throw new InvalidOperationException("ConnectionStrings:Default (env CANE_CONNECTION_STRING) is not configured.");
+var connString = builder.Configuration.GetConnectionString("Default");
+if (string.IsNullOrWhiteSpace(connString))
+    throw new InvalidOperationException(
+        "ConnectionStrings:Default is empty. Restore the server-only appsettings.Production.json/appsettings.json or set CANE_CONNECTION_STRING before starting IIS.");
 builder.Services.AddDbContext<AppDbContext>(o =>
 {
     if (provider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase)) o.UseSqlite(connString);
@@ -98,8 +100,10 @@ QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneLatin", File.OpenRe
 QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneLatin", File.OpenRead(PrintFonts.PathFor("Tinos-Bold.ttf")));
 
 // ---- AuthN: JWT bearer, short-lived access tokens ----
-var jwtSecret = builder.Configuration["Jwt:Secret"]
-    ?? throw new InvalidOperationException("Jwt:Secret (env CANE_JWT_SECRET) is not configured.");
+var jwtSecret = builder.Configuration["Jwt:Secret"];
+if (string.IsNullOrWhiteSpace(jwtSecret))
+    throw new InvalidOperationException(
+        "Jwt:Secret is empty. Restore the server-only configuration or set CANE_JWT_SECRET before starting IIS.");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {

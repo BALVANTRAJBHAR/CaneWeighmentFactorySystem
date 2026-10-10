@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
 import '../../core/hindi_transliteration.dart';
 import '../../providers/auth_provider.dart';
+import '../../widgets/pinned_table_scroll.dart';
 
 /// Grower Master: six-digit Grower ID, Aadhaar (masked, encrypted server-side),
 /// bank linkage and duplicate warnings with explicit confirmation.
@@ -91,91 +92,62 @@ class _GrowerScreenState extends State<GrowerScreen> {
           child: Card(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : Scrollbar(
-                    controller: _verticalController,
-                    thumbVisibility: true,
-                    trackVisibility: true,
-                    interactive: true,
-                    child: SingleChildScrollView(
-                      controller: _verticalController,
-                      scrollDirection: Axis.vertical,
-                      child: Scrollbar(
-                        controller: _horizontalController,
-                        thumbVisibility: true,
-                        trackVisibility: true,
-                        interactive: true,
-                        scrollbarOrientation: ScrollbarOrientation.bottom,
-                        child: SingleChildScrollView(
-                          controller: _horizontalController,
-                          scrollDirection: Axis.horizontal,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(minWidth: 1900),
-                            child: DataTable(columns: const [
-                              DataColumn(label: Text('Grower ID')),
-                              DataColumn(label: Text('Name')),
-                              DataColumn(label: Text('Father Name')),
-                              DataColumn(label: Text('Village')),
-                              DataColumn(label: Text('Mobile')),
-                              DataColumn(label: Text('Created Date')),
-                              DataColumn(label: Text('Bank')),
-                              DataColumn(label: Text('Account')),
-                              DataColumn(label: Text('Aadhaar')),
-                              DataColumn(label: Text('Status')),
-                              DataColumn(label: Text('Actions')),
-                            ], rows: [
-                              for (final g in _items)
-                                DataRow(cells: [
-                                  DataCell(Text('${g['id']}',
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w700))),
-                                  DataCell(Text('${g['growerName']}',
-                                      overflow: TextOverflow.ellipsis)),
-                                  DataCell(Text('${g['fatherName']}')),
-                                  DataCell(Text('${g['villageName']}')),
-                                  DataCell(Text('${g['mobile']}')),
-                                  DataCell(Text(g['createdAt'] == null
-                                      ? '-'
-                                      : DateFormat('dd-MM-yyyy').format(
-                                          DateTime.parse(
-                                                  g['createdAt'].toString())
-                                              .toLocal()))),
-                                  DataCell(Text('${g['bankName'] ?? '-'}')),
-                                  DataCell(
-                                      Text('${g['accountMasked'] ?? '-'}')),
-                                  DataCell(
-                                      Text('${g['aadhaarMasked'] ?? '-'}')),
-                                  DataCell(Chip(
-                                      label: Text(
-                                          g['status'] == true
-                                              ? 'Active'
-                                              : 'Inactive',
-                                          style: const TextStyle(
-                                              fontSize: 10,
-                                              color: Colors.white)),
-                                      backgroundColor: g['status'] == true
-                                          ? const Color(0xFF2E7D32)
-                                          : Colors.grey,
-                                      visualDensity: VisualDensity.compact)),
-                                  DataCell(Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        if (canEdit)
-                                          TextButton.icon(
-                                              icon: const Icon(
-                                                  Icons.edit_outlined,
-                                                  size: 18),
-                                              label: const Text('Edit'),
-                                              onPressed: () => _openForm(
-                                                  existing:
-                                                      Map<String, dynamic>.from(
-                                                          g))),
-                                      ])),
-                                ]),
-                            ]),
-                          ),
-                        ),
-                      ),
-                    ),
+                : PinnedTableScroll(
+                    verticalController: _verticalController,
+                    horizontalController: _horizontalController,
+                    minTableWidth: 1900,
+                    child: DataTable(columns: const [
+                      DataColumn(label: Text('Grower ID')),
+                      DataColumn(label: Text('Name')),
+                      DataColumn(label: Text('Father Name')),
+                      DataColumn(label: Text('Village')),
+                      DataColumn(label: Text('Mobile')),
+                      DataColumn(label: Text('Created Date')),
+                      DataColumn(label: Text('Bank')),
+                      DataColumn(label: Text('Account')),
+                      DataColumn(label: Text('Aadhaar')),
+                      DataColumn(label: Text('Status')),
+                      DataColumn(label: Text('Actions')),
+                    ], rows: [
+                      for (final g in _items)
+                        DataRow(cells: [
+                          DataCell(Text('${g['id']}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w700))),
+                          DataCell(Text('${g['growerName']}',
+                              overflow: TextOverflow.ellipsis)),
+                          DataCell(Text('${g['fatherName']}')),
+                          DataCell(Text('${g['villageName']}')),
+                          DataCell(Text('${g['mobile']}')),
+                          DataCell(Text(g['createdAt'] == null
+                              ? '-'
+                              : DateFormat('dd-MM-yyyy').format(
+                                  DateTime.parse(g['createdAt'].toString())
+                                      .toLocal()))),
+                          DataCell(Text('${g['bankName'] ?? '-'}')),
+                          DataCell(Text('${g['accountMasked'] ?? '-'}')),
+                          DataCell(Text('${g['aadhaarMasked'] ?? '-'}')),
+                          DataCell(Chip(
+                              label: Text(
+                                  g['status'] == true ? 'Active' : 'Inactive',
+                                  style: const TextStyle(
+                                      fontSize: 10, color: Colors.white)),
+                              backgroundColor: g['status'] == true
+                                  ? const Color(0xFF2E7D32)
+                                  : Colors.grey,
+                              visualDensity: VisualDensity.compact)),
+                          DataCell(
+                              Row(mainAxisSize: MainAxisSize.min, children: [
+                            if (canEdit)
+                              TextButton.icon(
+                                  icon:
+                                      const Icon(Icons.edit_outlined, size: 18),
+                                  label: const Text('Edit'),
+                                  onPressed: () => _openForm(
+                                      existing: Map<String, dynamic>.from(g))),
+                          ])),
+                        ]),
+                    ]),
                   ),
           ),
         ),

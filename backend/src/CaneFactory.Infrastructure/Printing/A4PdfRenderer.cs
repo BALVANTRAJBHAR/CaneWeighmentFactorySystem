@@ -34,7 +34,8 @@ public class A4PdfRenderer : IPrintRenderer
                 page.Header().Column(col =>
                 {
                     col.Item().Element(e => CompanyPrintHeader.Compose(e, doc.CompanyName, doc.Address, logo, qr));
-                    col.Item().PaddingTop(6).LineHorizontal(1).LineColor(Colors.Blue.Darken2);
+                    if (!doc.SuppressHeaderSeparator)
+                        col.Item().PaddingTop(6).LineHorizontal(1).LineColor(Colors.Blue.Darken2);
                     col.Item().PaddingTop(4).Row(row =>
                     {
                         row.RelativeItem().Text(hindi ? doc.TitleHindi : doc.TitleEnglish)

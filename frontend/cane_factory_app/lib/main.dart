@@ -108,19 +108,52 @@ class _RootGateState extends State<RootGate> {
     }
     setState(() => _status = 'Checking server connection...');
     try {
-      final res = await ApiClient.instance.dio.get('/api/health',
+      final ping = await ApiClient.instance.dio.get('/api/ping',
           options: Options(
               sendTimeout: const Duration(seconds: 8),
               receiveTimeout: const Duration(seconds: 8)));
-      if (res.statusCode != 200)
-        throw Exception('Server responded with ${res.statusCode}');
+      if (ping.statusCode != 200) {
+        throw Exception('Server responded with ${ping.statusCode}');
+      }
+    } catch (error) {
+      await _ensureMinimumSplashTime(startedAt);
+      if (!mounted) return;
+      final statusCode =
+          error is DioException ? error.response?.statusCode : null;
+      setState(() {
+        _apiError = true;
+        _status = statusCode != null && statusCode >= 500
+            ? 'IIS is reachable at ${ApiClient.baseUrl}, but the API failed to start (HTTP $statusCode). Restore the server configuration and check the IIS application log.'
+            : 'Cannot reach ${ApiClient.baseUrl}. Check the IIS binding/port, server firewall, and the API application pool.';
+      });
+      return;
+    }
+
+    setState(() => _status = 'Checking database connection...');
+    try {
+      final health = await ApiClient.instance.dio.get('/api/health',
+          options: Options(
+              sendTimeout: const Duration(seconds: 8),
+              receiveTimeout: const Duration(seconds: 8)));
+      if (health.statusCode != 200) {
+        final database =
+            health.data is Map ? health.data['database']?.toString() : null;
+        await _ensureMinimumSplashTime(startedAt);
+        if (!mounted) return;
+        setState(() {
+          _apiError = true;
+          _status =
+              'Server is reachable at ${ApiClient.baseUrl}, but its database is ${database ?? 'unavailable'} (HTTP ${health.statusCode}). Check the server connection string and SQL Server.';
+        });
+        return;
+      }
     } catch (_) {
       await _ensureMinimumSplashTime(startedAt);
       if (!mounted) return;
       setState(() {
         _apiError = true;
         _status =
-            'Cannot reach the server. Check your network connection and try again.';
+            'Server is reachable at ${ApiClient.baseUrl}, but the database health check failed.';
       });
       return;
     }

@@ -52,6 +52,8 @@ public class PrintEngineService : IPrintEngineService
         var doc = await BaseDocAsync(l.Season?.SeasonName, generatedByUserName);
         doc.TitleHindi = "ऋण पर्ची";
         doc.TitleEnglish = "Loan Issue Slip";
+        doc.UseHalfPageDotMatrixLayout = true;
+        doc.SuppressHeaderSeparator = true;
         doc.QrValue = l.Id;
         doc.Rows = LoanRows(l, doc.Language);
         return doc;
@@ -63,6 +65,8 @@ public class PrintEngineService : IPrintEngineService
         var doc = await BaseDocAsync(r.Loan.Season?.SeasonName, generatedByUserName);
         doc.TitleHindi = "ऋण वसूली पर्ची";
         doc.TitleEnglish = "Loan Recovery Slip";
+        doc.UseHalfPageDotMatrixLayout = true;
+        doc.SuppressHeaderSeparator = true;
         doc.QrValue = r.Id;
         doc.Rows = LoanRecoveryRows(r, doc.Language);
         return doc;
@@ -83,6 +87,8 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleHindi = "भुगतान पर्ची";
         doc.TitleEnglish = "Payment Slip";
         doc.IsPaymentDocument = true;
+        doc.UseHalfPageDotMatrixLayout = true;
+        doc.SuppressHeaderSeparator = true;
         doc.QrValue = p.Id;
         doc.Rows = PaymentRows(p, purchases, doc.Language);
         if (purchases.Count > 1)
@@ -126,6 +132,7 @@ public class PrintEngineService : IPrintEngineService
         doc.TitleHindi = "दिनांक-सीमा भुगतान विवरण";
         doc.TitleEnglish = "Date-Range Payment Details";
         doc.IsLandscape = true;
+        doc.SuppressHeaderSeparator = true;
         doc.Rows = new()
         {
             new("भुगतान संख्या", "Payment Count", payments.Count.ToString()),
@@ -190,6 +197,19 @@ public class PrintEngineService : IPrintEngineService
         return doc;
     }
 
+    public async Task<PrintDocument> BuildDotMatrixCalibrationDocumentAsync(string generatedByUserName)
+    {
+        var doc = await BaseDocAsync(null, generatedByUserName);
+        doc.Language = "en";
+        doc.TitleHindi = "डॉट मैट्रिक्स कैलिब्रेशन";
+        doc.TitleEnglish = "DOT MATRIX CONTINUOUS FORM CALIBRATION";
+        doc.UseHalfPageDotMatrixLayout = true;
+        doc.IsDotMatrixCalibrationSheet = true;
+        doc.DotMatrixPrintHeader = false;
+        doc.DotMatrixFastPrint = false;
+        return doc;
+    }
+
     public (byte[] bytes, string contentType, string fileExtension) Render(PrintDocument doc, string target, bool preview)
     {
         var renderer = _renderers.FirstOrDefault(r => r.TargetType == target)
@@ -200,7 +220,7 @@ public class PrintEngineService : IPrintEngineService
     private async Task<Purchase> LoadPurchaseAsync(int purchaseId)
     {
         var p = await _db.Purchases.Include(x => x.Grower).ThenInclude(g => g.Village)
-            .Include(x => x.VehicleType).Include(x => x.Variety).Include(x => x.Season)
+            .Include(x => x.VehicleType).Include(x => x.Variety).Include(x => x.Crop).Include(x => x.Season)
             .AsNoTracking().FirstOrDefaultAsync(x => x.Id == purchaseId);
         if (p == null) throw new KeyNotFoundException($"Purchase {purchaseId} not found.");
         return p;
@@ -250,7 +270,14 @@ public class PrintEngineService : IPrintEngineService
             PrintImages = cfg.PrintImages,
             DotMatrixPrintHeader = cfg.DotMatrixPrintHeader,
             DotMatrixPageLines = cfg.DotMatrixPageLines,
-            DotMatrixHeaderReservedLines = cfg.DotMatrixHeaderReservedLines
+            DotMatrixHalfPageLines = cfg.DotMatrixHalfPageLines,
+            DotMatrixHeaderReservedLines = cfg.DotMatrixHeaderReservedLines,
+            DotMatrixContentStartOffsetLines = cfg.DotMatrixContentStartOffsetLines,
+            DotMatrixTearLinePosition = cfg.DotMatrixTearLinePosition,
+            DotMatrixPostSlipFeedLines = cfg.DotMatrixPostSlipFeedLines,
+            DotMatrixNextFormTofLines = cfg.DotMatrixNextFormTofLines,
+            DotMatrixLineSpacingUnits = cfg.DotMatrixLineSpacingUnits,
+            DotMatrixFastPrint = cfg.DotMatrixFastPrint
         };
     }
 
@@ -310,19 +337,19 @@ public class PrintEngineService : IPrintEngineService
     private static string Text(string? english, string? hindi, string language) =>
         language == "hi" && !string.IsNullOrWhiteSpace(hindi) ? hindi! : english ?? "-";
 
+    /// <summary>
+    /// Compact cane-slip rows. Pairing stable reference values on one line leaves enough vertical
+    /// room inside the calibrated half-page without shrinking the impact-printer font.
+    /// </summary>
     private static List<PrintRow> GrossRows(Purchase p, string language) => new()
     {
         new("क्रय क्रमांक", "Purchase ID", p.Id.ToString()),
-        new("किसान आईडी", "Grower ID", p.GrowerId.ToString()),
-        new("किसान का नाम", "Grower Name", Text(p.Grower.GrowerName, p.Grower.GrowerNameHi, language)),
+        new("किसान", "Grower", $"{Text(p.Grower.GrowerName, p.Grower.GrowerNameHi, language)} / {p.GrowerId}"),
         new("पिता का नाम", "Father's Name", Text(p.Grower.FatherName, p.Grower.FatherNameHi, language)),
         new("गाँव", "Village", Text(p.Grower.Village.VillageName, p.Grower.Village.VillageNameHi, language)),
-        new("वाहन क्रमांक", "Vehicle Number", p.VehicleNumber),
-        new("वाहन प्रकार", "Vehicle Type", Text(p.VehicleType.VehicleTypeName, p.VehicleType.VehicleTypeNameHi, language)),
-        new("प्रजाति", "Variety", p.Variety.VarietyName),
+        new("वाहन", "Vehicle", $"{Text(p.VehicleType.VehicleTypeName, p.VehicleType.VehicleTypeNameHi, language)} / {p.VehicleNumber}"),
+        new("प्रजाति", "Variety", $"{Text(p.Crop?.CropName, p.Crop?.CropNameHi, language)} / {p.Variety.VarietyName}"),
         new("सकल वजन (क्विंटल)", "Gross Weight (Qtl)", p.GrossWeightQuintal.ToString("F2")),
-        new("सकल तिथि/समय", "Gross Date/Time", p.GrossDateTime.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
-        new("तौल कर्ता", "Weighed By", p.GrossByUserName),
         new("दर (प्रति क्विंटल)", "Rate (per Qtl)", p.Rate.ToString("F2")),
     };
 
@@ -332,10 +359,10 @@ public class PrintEngineService : IPrintEngineService
         new("टेयर तिथि/समय", "Tare Date/Time", p.TareDateTime?.ToLocalTime().ToString("dd-MM-yyyy HH:mm") ?? "-"),
         new("टेयर कर्ता", "Tare By", p.TareByUserName ?? "-"),
         new("नेट वजन (क्विंटल)", "Net Weight (Qtl)", p.NetWeightQuintal?.ToString("F2") ?? "-"),
-        new("कटान %", "Cutting %", p.CuttingPercent.ToString("F2")),
-        new("कटान वजन (क्विंटल)", "Cutting Weight (Qtl)", p.CuttingWeightQuintal?.ToString("F2") ?? "-"),
-        new("अन्य कटौती %", "Other Deduction %", p.OtherDeductionPercent.ToString("F2")),
-        new("अन्य कटौती वजन (क्विंटल)", "Other Deduction Weight (Qtl)", p.OtherDeductionWeightQuintal?.ToString("F2") ?? "-"),
+        new("कटान", "Cutting",
+            $"{p.CuttingPercent:0.##}% / {p.CuttingWeightQuintal?.ToString("0.##") ?? "-"}"),
+        new("अन्य कटौती", "Other Deduction",
+            $"{p.OtherDeductionPercent:0.##}% / {p.OtherDeductionWeightQuintal?.ToString("0.##") ?? "-"}"),
         new("अंतिम वजन (क्विंटल)", "Final Weight (Qtl)", p.FinalWeightQuintal?.ToString("F2") ?? "-"),
         new("कुल राशि (₹)", "Purchase Amount (Rs)", p.PurchaseAmount?.ToString("F2") ?? "-"),
     };

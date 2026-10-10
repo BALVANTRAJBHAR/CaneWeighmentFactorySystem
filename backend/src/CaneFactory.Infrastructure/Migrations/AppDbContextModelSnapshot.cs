@@ -1199,10 +1199,28 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<int>("DotMatrixContentStartOffsetLines")
+                        .HasColumnType("int");
+
                     b.Property<int>("DotMatrixHeaderReservedLines")
                         .HasColumnType("int");
 
+                    b.Property<bool>("DotMatrixFastPrint")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("DotMatrixHalfPageLines")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DotMatrixLineSpacingUnits")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DotMatrixNextFormTofLines")
+                        .HasColumnType("int");
+
                     b.Property<int>("DotMatrixPageLines")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DotMatrixPostSlipFeedLines")
                         .HasColumnType("int");
 
                     b.Property<bool>("DotMatrixPrintHeader")
@@ -1211,6 +1229,15 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<string>("DotMatrixPrinterName")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("DotMatrixTearLinePosition")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("DotMatrixTearOffFeedLines")
+                        .HasColumnType("decimal(5,1)");
+
+                    b.Property<bool>("DotMatrixTearOffParkingEnabled")
+                        .HasColumnType("bit");
 
                     b.Property<int?>("DeletedBy")
                         .HasColumnType("int");

@@ -97,6 +97,7 @@ public interface IPrintEngineService
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildPaymentBatchSlipAsync(IReadOnlyCollection<int> paymentIds, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildSalePurchaseSlipAsync(int salePurchaseId, string stage, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildTestDocumentAsync(string language, string generatedByUserName);
+    Task<CaneFactory.Application.DTOs.PrintDocument> BuildDotMatrixCalibrationDocumentAsync(string generatedByUserName);
     (byte[] bytes, string contentType, string fileExtension) Render(CaneFactory.Application.DTOs.PrintDocument doc, string target, bool preview);
 }
 

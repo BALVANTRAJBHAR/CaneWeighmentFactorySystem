@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
+import '../../providers/auth_provider.dart';
 import '../../widgets/master_crud.dart';
+import '../../widgets/pinned_table_scroll.dart';
 import '../loans/loan_screens.dart';
 
 /// Hub with tabs for all master forms (each tab is the generic permission-aware CRUD screen).
@@ -168,6 +171,18 @@ class MastersHubScreen extends StatelessWidget {
               hint: 'Example: Sugar', maxLength: 50, hindiKey: 'itemNameHi')
         ],
         columns: [ColumnSpec('id', 'ID'), ColumnSpec('itemName', 'Item')],
+      ),
+      'Crops': const MasterCrudScreen(
+        title: 'Crop',
+        module: 'Crop',
+        endpoint: '/api/crops',
+        fields: [
+          FieldSpec('cropName', 'Crop Name',
+              hint: 'Example: Plant or Ratoon 1',
+              maxLength: 50,
+              hindiKey: 'cropNameHi')
+        ],
+        columns: [ColumnSpec('id', 'ID'), ColumnSpec('cropName', 'Crop')],
       ),
       'Parties': const MasterCrudScreen(
         title: 'Party',
@@ -394,45 +409,48 @@ class _SaleItemRateScreenState extends State<SaleItemRateScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.all(12),
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Row(children: [
-            Text('Sale Rate Master (item-wise)',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w700)),
-            const Spacer(),
+  Widget build(BuildContext context) {
+    final canCreate = context.watch<AuthProvider>().can('Rate.Create');
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Text('Sale Rate Master (item-wise)',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w700)),
+          const Spacer(),
+          if (canCreate)
             FilledButton.icon(
                 onPressed: _newRate,
                 icon: const Icon(Icons.add),
                 label: const Text('New Sale Rate Period')),
-          ]),
-          const SizedBox(height: 10),
-          Expanded(
-            child: Card(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(columns: const [
-                        DataColumn(label: Text('ID')),
-                        DataColumn(label: Text('Item')),
-                        DataColumn(label: Text('Rate')),
-                        DataColumn(label: Text('Effective From')),
-                        DataColumn(label: Text('Effective To')),
-                        DataColumn(label: Text('Action')),
-                      ], rows: [
-                        for (final rate in _rates)
-                          DataRow(cells: [
-                            DataCell(Text('${rate['id']}')),
-                            DataCell(Text('${rate['itemName']}')),
-                            DataCell(
-                                Text((rate['rate'] as num).toStringAsFixed(2))),
-                            DataCell(Text(_date(rate['effectiveFrom']))),
-                            DataCell(Text(_date(rate['effectiveTo']))),
+        ]),
+        const SizedBox(height: 10),
+        Expanded(
+          child: Card(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: DataTable(columns: [
+                      const DataColumn(label: Text('ID')),
+                      const DataColumn(label: Text('Item')),
+                      const DataColumn(label: Text('Rate')),
+                      const DataColumn(label: Text('Effective From')),
+                      const DataColumn(label: Text('Effective To')),
+                      if (canCreate) const DataColumn(label: Text('Action')),
+                    ], rows: [
+                      for (final rate in _rates)
+                        DataRow(cells: [
+                          DataCell(Text('${rate['id']}')),
+                          DataCell(Text('${rate['itemName']}')),
+                          DataCell(
+                              Text((rate['rate'] as num).toStringAsFixed(2))),
+                          DataCell(Text(_date(rate['effectiveFrom']))),
+                          DataCell(Text(_date(rate['effectiveTo']))),
+                          if (canCreate)
                             DataCell(TextButton.icon(
                                 onPressed: () => _newRate(
                                     revisionOf:
@@ -440,13 +458,14 @@ class _SaleItemRateScreenState extends State<SaleItemRateScreen> {
                                 icon: const Icon(Icons.edit_calendar_outlined,
                                     size: 16),
                                 label: const Text('Revise'))),
-                          ]),
-                      ]),
-                    ),
-            ),
+                        ]),
+                    ]),
+                  ),
           ),
-        ]),
-      );
+        ),
+      ]),
+    );
+  }
 }
 
 class _RateScreenState extends State<RateScreen> {
@@ -559,6 +578,7 @@ class _RateScreenState extends State<RateScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final canCreate = context.watch<AuthProvider>().can('Rate.Create');
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -569,10 +589,11 @@ class _RateScreenState extends State<RateScreen> {
                   .titleLarge
                   ?.copyWith(fontWeight: FontWeight.w700)),
           const Spacer(),
-          FilledButton.icon(
-              onPressed: _newRate,
-              icon: const Icon(Icons.add),
-              label: const Text('New Rate Period')),
+          if (canCreate)
+            FilledButton.icon(
+                onPressed: _newRate,
+                icon: const Icon(Icons.add),
+                label: const Text('New Rate Period')),
         ]),
         const SizedBox(height: 10),
         Expanded(
@@ -582,13 +603,13 @@ class _RateScreenState extends State<RateScreen> {
                 : SingleChildScrollView(
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
-                      child: DataTable(columns: const [
-                        DataColumn(label: Text('ID')),
-                        DataColumn(label: Text('Variety Type')),
-                        DataColumn(label: Text('Rate')),
-                        DataColumn(label: Text('Effective From')),
-                        DataColumn(label: Text('Effective To')),
-                        DataColumn(label: Text('Action')),
+                      child: DataTable(columns: [
+                        const DataColumn(label: Text('ID')),
+                        const DataColumn(label: Text('Variety Type')),
+                        const DataColumn(label: Text('Rate')),
+                        const DataColumn(label: Text('Effective From')),
+                        const DataColumn(label: Text('Effective To')),
+                        if (canCreate) const DataColumn(label: Text('Action')),
                       ], rows: [
                         for (final r in _items)
                           DataRow(cells: [
@@ -598,13 +619,14 @@ class _RateScreenState extends State<RateScreen> {
                                 Text((r['rate'] as num).toStringAsFixed(2))),
                             DataCell(Text(_date(r['effectiveFrom']))),
                             DataCell(Text(_date(r['effectiveTo']))),
-                            DataCell(TextButton.icon(
-                              onPressed: () => _newRate(
-                                  revisionOf: Map<String, dynamic>.from(r)),
-                              icon: const Icon(Icons.edit_calendar_outlined,
-                                  size: 16),
-                              label: const Text('Revise'),
-                            )),
+                            if (canCreate)
+                              DataCell(TextButton.icon(
+                                onPressed: () => _newRate(
+                                    revisionOf: Map<String, dynamic>.from(r)),
+                                icon: const Icon(Icons.edit_calendar_outlined,
+                                    size: 16),
+                                label: const Text('Revise'),
+                              )),
                           ]),
                       ]),
                     ),
@@ -684,77 +706,50 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
           child: Card(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : LayoutBuilder(
-                    builder: (context, constraints) => Scrollbar(
-                      controller: _verticalController,
-                      thumbVisibility: true,
-                      trackVisibility: true,
-                      interactive: true,
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.vertical,
-                        controller: _verticalController,
-                        child: Scrollbar(
-                          controller: _horizontalController,
-                          thumbVisibility: true,
-                          trackVisibility: true,
-                          interactive: true,
-                          scrollbarOrientation: ScrollbarOrientation.bottom,
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            controller: _horizontalController,
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                  minWidth: constraints.maxWidth),
-                              child: DataTable(columns: const [
-                                DataColumn(label: Text('Purchase ID')),
-                                DataColumn(label: Text('Grower')),
-                                DataColumn(label: Text('Village')),
-                                DataColumn(label: Text('Vehicle')),
-                                DataColumn(label: Text('Purchase Date')),
-                                DataColumn(label: Text('Gross Qtl')),
-                                DataColumn(label: Text('Tare Qtl')),
-                                DataColumn(label: Text('Final Qtl')),
-                                DataColumn(label: Text('Rate')),
-                                DataColumn(label: Text('Amount')),
-                                DataColumn(label: Text('Status')),
-                                DataColumn(label: Text('Payment')),
-                              ], rows: [
-                                for (final p in _items)
-                                  DataRow(cells: [
-                                    DataCell(Text('${p['purchaseId']}')),
-                                    DataCell(Text(
-                                        '${p['growerId']} ${p['growerName']}')),
-                                    DataCell(Text('${p['villageName']}')),
-                                    DataCell(Text('${p['vehicleNumber']}')),
-                                    DataCell(
-                                        Text(_formatDate(p['purchaseDate']))),
-                                    DataCell(Text(
-                                        (p['grossWeightQuintal'] as num)
-                                            .toStringAsFixed(2))),
-                                    DataCell(Text(p['tareWeightQuintal'] == null
-                                        ? '-'
-                                        : (p['tareWeightQuintal'] as num)
-                                            .toStringAsFixed(2))),
-                                    DataCell(Text(
-                                        p['finalWeightQuintal'] == null
-                                            ? '-'
-                                            : (p['finalWeightQuintal'] as num)
-                                                .toStringAsFixed(2))),
-                                    DataCell(Text(
-                                        (p['rate'] as num).toStringAsFixed(2))),
-                                    DataCell(Text(p['purchaseAmount'] == null
-                                        ? '-'
-                                        : (p['purchaseAmount'] as num)
-                                            .toStringAsFixed(2))),
-                                    DataCell(_statusChip(p['grossTareStatus'])),
-                                    DataCell(_statusChip(p['paymentStatus'])),
-                                  ]),
-                              ]),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+                : PinnedTableScroll(
+                    verticalController: _verticalController,
+                    horizontalController: _horizontalController,
+                    minTableWidth: 1700,
+                    child: DataTable(columns: const [
+                      DataColumn(label: Text('Purchase ID')),
+                      DataColumn(label: Text('Grower')),
+                      DataColumn(label: Text('Village')),
+                      DataColumn(label: Text('Vehicle')),
+                      DataColumn(label: Text('Purchase Date')),
+                      DataColumn(label: Text('Gross Qtl')),
+                      DataColumn(label: Text('Tare Qtl')),
+                      DataColumn(label: Text('Final Qtl')),
+                      DataColumn(label: Text('Rate')),
+                      DataColumn(label: Text('Amount')),
+                      DataColumn(label: Text('Status')),
+                      DataColumn(label: Text('Payment')),
+                    ], rows: [
+                      for (final p in _items)
+                        DataRow(cells: [
+                          DataCell(Text('${p['purchaseId']}')),
+                          DataCell(Text('${p['growerId']} ${p['growerName']}')),
+                          DataCell(Text('${p['villageName']}')),
+                          DataCell(Text('${p['vehicleNumber']}')),
+                          DataCell(Text(_formatDate(p['purchaseDate']))),
+                          DataCell(Text((p['grossWeightQuintal'] as num)
+                              .toStringAsFixed(2))),
+                          DataCell(Text(p['tareWeightQuintal'] == null
+                              ? '-'
+                              : (p['tareWeightQuintal'] as num)
+                                  .toStringAsFixed(2))),
+                          DataCell(Text(p['finalWeightQuintal'] == null
+                              ? '-'
+                              : (p['finalWeightQuintal'] as num)
+                                  .toStringAsFixed(2))),
+                          DataCell(Text((p['rate'] as num).toStringAsFixed(2))),
+                          DataCell(Text(p['purchaseAmount'] == null
+                              ? '-'
+                              : (p['purchaseAmount'] as num)
+                                  .toStringAsFixed(2))),
+                          DataCell(_statusChip(p['grossTareStatus'])),
+                          DataCell(_statusChip(p['paymentStatus'])),
+                        ]),
+                    ]),
                   ),
           ),
         ),

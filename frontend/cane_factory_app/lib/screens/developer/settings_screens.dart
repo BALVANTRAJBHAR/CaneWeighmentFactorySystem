@@ -1044,6 +1044,14 @@ class _PrintTabState extends State<_PrintTab> {
   String _testTarget = 'DotMatrix';
   String _testLanguage = 'hi';
 
+  int _printInt(String key, int fallback) =>
+      (v?[key] as num?)?.toInt() ?? fallback;
+
+  String _physicalHeight(int lines) {
+    final spacing = _printInt('dotMatrixLineSpacingUnits', 20);
+    return (lines * spacing / 180).toStringAsFixed(2);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1060,7 +1068,16 @@ class _PrintTabState extends State<_PrintTab> {
         }
         config['dotMatrixPrintHeader'] ??= true;
         config['dotMatrixPageLines'] ??= 108;
+        config['dotMatrixHalfPageLines'] ??= 54;
         config['dotMatrixHeaderReservedLines'] ??= 9;
+        config['dotMatrixContentStartOffsetLines'] ??= 0;
+        config['dotMatrixTearLinePosition'] ??= 54;
+        config['dotMatrixPostSlipFeedLines'] ??= 0;
+        config['dotMatrixNextFormTofLines'] ??= 108;
+        config['dotMatrixLineSpacingUnits'] ??= 20;
+        config['dotMatrixTearOffParkingEnabled'] ??= true;
+        config['dotMatrixTearOffFeedLines'] ??= 12.0;
+        config['dotMatrixFastPrint'] ??= true;
         setState(() {
           v = config;
           _printers = PrintService.installedPrinterNames();
@@ -1153,6 +1170,16 @@ class _PrintTabState extends State<_PrintTab> {
                         TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
+                  title: const Text('Fast Weighment Print (Clear 120 DPI)'),
+                  subtitle: Text(v!['dotMatrixFastPrint'] != false
+                      ? 'ON — skips blank rows/columns but keeps all Hindi/English text at clean double-density 120 DPI.'
+                      : 'OFF — prints the full 120-DPI raster width. Text quality is the same, but printing is slower.'),
+                  value: v!['dotMatrixFastPrint'] != false,
+                  onChanged: (x) =>
+                      setState(() => v!['dotMatrixFastPrint'] = x),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
                   title: const Text('Print Header'),
                   subtitle: Text(v!['dotMatrixPrintHeader'] == true
                       ? 'ON — logo, company name, address and QR are printed in every half-page header.'
@@ -1161,15 +1188,26 @@ class _PrintTabState extends State<_PrintTab> {
                   onChanged: (x) =>
                       setState(() => v!['dotMatrixPrintHeader'] = x),
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Tear-Off Parking + TOF Reset'),
+                  subtitle: Text(v!['dotMatrixTearOffParkingEnabled'] == true
+                      ? 'ON — all configured copies print continuously, then the final tear line moves outside the cover; confirmation reverses paper to the next TOF.'
+                      : 'OFF — no temporary forward/reverse movement. Use the printer hardware Auto Tear-Off mode if available.'),
+                  value: v!['dotMatrixTearOffParkingEnabled'] == true,
+                  onChanged: (x) =>
+                      setState(() => v!['dotMatrixTearOffParkingEnabled'] = x),
+                ),
                 Wrap(spacing: 14, runSpacing: 14, children: [
                   SizedBox(
                     width: 210,
                     child: TextFormField(
                       initialValue: '${v!['dotMatrixHeaderReservedLines']}',
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Header Reserved Height',
-                        suffixText: 'lines',
-                        helperText: 'Default 9 ≈ 1 inch',
+                        suffixText: 'bands',
+                        helperText:
+                            '${_physicalHeight(_printInt('dotMatrixHeaderReservedLines', 9))} inch blank/digital header area',
                       ),
                       keyboardType: TextInputType.number,
                       onChanged: (text) => setState(() =>
@@ -1181,10 +1219,11 @@ class _PrintTabState extends State<_PrintTab> {
                     width: 210,
                     child: TextFormField(
                       initialValue: '${v!['dotMatrixPageLines']}',
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Physical Page Height',
-                        suffixText: 'lines',
-                        helperText: 'Even value; default 108',
+                        suffixText: 'bands',
+                        helperText:
+                            '${_physicalHeight(_printInt('dotMatrixPageLines', 108))} inch; keep 108 for this 12-inch form',
                       ),
                       keyboardType: TextInputType.number,
                       onChanged: (text) => setState(() =>
@@ -1193,12 +1232,174 @@ class _PrintTabState extends State<_PrintTab> {
                   ),
                   SizedBox(
                     width: 210,
-                    child: InputDecorator(
-                      decoration:
-                          const InputDecoration(labelText: 'Page Layout'),
-                      child: Text(
-                          '2 Slips Per Page • ${(v!['dotMatrixPageLines'] as num? ?? 108).toInt() ~/ 2} lines each'),
+                    child: TextFormField(
+                      initialValue: '${v!['dotMatrixHalfPageLines']}',
+                      decoration: InputDecoration(
+                        labelText: 'Half-Page Height',
+                        suffixText: 'bands',
+                        helperText:
+                            '${_physicalHeight(_printInt('dotMatrixHalfPageLines', 54))} inch; must be page ÷ 2',
+                      ),
+                      keyboardType: TextInputType.number,
+                      onChanged: (text) => setState(() =>
+                          v!['dotMatrixHalfPageLines'] =
+                              int.tryParse(text) ?? 54),
                     ),
+                  ),
+                  SizedBox(
+                    width: 210,
+                    child: TextFormField(
+                      initialValue: '${v!['dotMatrixContentStartOffsetLines']}',
+                      decoration: InputDecoration(
+                        labelText: 'Content Start Offset',
+                        suffixText: 'bands',
+                        helperText:
+                            '${_physicalHeight(_printInt('dotMatrixContentStartOffsetLines', 0))} inch extra blank space after header',
+                      ),
+                      keyboardType: TextInputType.number,
+                      onChanged: (text) => setState(() =>
+                          v!['dotMatrixContentStartOffsetLines'] =
+                              int.tryParse(text) ?? 0),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 210,
+                    child: TextFormField(
+                      initialValue: '${v!['dotMatrixTearLinePosition']}',
+                      decoration: InputDecoration(
+                        labelText: 'Tear Line Position',
+                        suffixText: 'band',
+                        helperText:
+                            '${_physicalHeight(_printInt('dotMatrixTearLinePosition', 54))} inch from each half-page TOF',
+                      ),
+                      keyboardType: TextInputType.number,
+                      onChanged: (text) => setState(() =>
+                          v!['dotMatrixTearLinePosition'] =
+                              int.tryParse(text) ?? 54),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 210,
+                    child: TextFormField(
+                      initialValue: '${v!['dotMatrixPostSlipFeedLines']}',
+                      decoration: InputDecoration(
+                        labelText: 'Post-Slip Feed',
+                        suffixText: 'bands',
+                        helperText:
+                            '${_physicalHeight(_printInt('dotMatrixPostSlipFeedLines', 0))} inch blank after tear; Tear + Feed = Half',
+                      ),
+                      keyboardType: TextInputType.number,
+                      onChanged: (text) => setState(() =>
+                          v!['dotMatrixPostSlipFeedLines'] =
+                              int.tryParse(text) ?? 0),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 210,
+                    child: TextFormField(
+                      initialValue: '${v!['dotMatrixNextFormTofLines']}',
+                      decoration: InputDecoration(
+                        labelText: 'Next Form / TOF Position',
+                        suffixText: 'bands',
+                        helperText:
+                            '${_physicalHeight(_printInt('dotMatrixNextFormTofLines', 108))} inch; must equal full page',
+                      ),
+                      keyboardType: TextInputType.number,
+                      onChanged: (text) => setState(() =>
+                          v!['dotMatrixNextFormTofLines'] =
+                              int.tryParse(text) ?? 108),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 210,
+                    child: TextFormField(
+                      initialValue: '${v!['dotMatrixLineSpacingUnits']}',
+                      decoration: const InputDecoration(
+                        labelText: 'ESC/P Line Spacing',
+                        suffixText: '/180 inch',
+                        helperText:
+                            'Physical band pitch. Keep 20 (1/9 inch); MSP 270 receives 24/216 internally.',
+                      ),
+                      keyboardType: TextInputType.number,
+                      onChanged: (text) => setState(() =>
+                          v!['dotMatrixLineSpacingUnits'] =
+                              int.tryParse(text) ?? 20),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 210,
+                    child: TextFormField(
+                      initialValue: '${v!['dotMatrixTearOffFeedLines']}',
+                      decoration: const InputDecoration(
+                        labelText: 'Tear-Off Parking Feed',
+                        suffixText: 'bands',
+                        helperText:
+                            'Temporary cover clearance only; does not change 6-inch half height.',
+                      ),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (text) => setState(() =>
+                          v!['dotMatrixTearOffFeedLines'] =
+                              double.tryParse(text) ?? 12.0),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 260,
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                          labelText: 'Production Positioning Rule'),
+                      child: Text(
+                          '2 × ${_physicalHeight(_printInt('dotMatrixHalfPageLines', 54))}" = ${_physicalHeight(_printInt('dotMatrixPageLines', 108))}" form'),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+                Card(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  child: const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('TVS MSP 270 — recommended 12-inch setup',
+                              style: TextStyle(fontWeight: FontWeight.w800)),
+                          SizedBox(height: 6),
+                          Text(
+                              'Page 108, Half 54, Header 9, Content Offset 0, Tear 54, Post-Slip 0, Next TOF 108, Line Spacing 20/180.'),
+                          SizedBox(height: 4),
+                          Text(
+                              'Result: each dotted line advances exactly 6.00 inches; two slips advance exactly 12.00 inches. The next transaction starts after the reserved 1-inch header area below the previous dotted line.'),
+                          SizedBox(height: 4),
+                          Text(
+                              'Tear-Off Parking Feed (for example 14.0 or 14.5) only moves the finished dotted line outside the plastic cover. After Paper Torn — Reset TOF, the same distance reverses and restores the next logical TOF.'),
+                          SizedBox(height: 4),
+                          Text(
+                              'Before the first job, align the tractor paper manually at the pre-printed form TOF and tap Mark Current Position as TOF. Do not turn the paper knob or pull paper between jobs. After the tear dialog, tear only at the dotted line and confirm reset before the next print.'),
+                          SizedBox(height: 4),
+                          Text(
+                              'If the measured dotted-line distance is not 6 inches, keep Page 108 and Half 54 unchanged. Correct only Line Spacing: new value = current value × 6 ÷ measured inches. Example: 20 with an actual 5-inch half becomes 24; print the calibration sheet again and re-measure.'),
+                          SizedBox(height: 4),
+                          Text(
+                              'Font: Hindi cannot use the printer’s English-only resident Draft/NLQ font. It is rendered as normal-weight, monochrome 120-DPI double-density graphics for clean matras and conjuncts.'),
+                        ]),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Calibrate the printer mechanical Top-of-Form once. Software then advances exactly one configured half-page per slip; it never sends a form-feed after the first slip.',
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+                const SizedBox(height: 10),
+                Wrap(spacing: 10, runSpacing: 10, children: [
+                  OutlinedButton.icon(
+                    onPressed: _recoverParkedPaper,
+                    icon: const Icon(Icons.keyboard_double_arrow_up),
+                    label: const Text('Recover Parked Paper to TOF'),
+                  ),
+                  TextButton.icon(
+                    onPressed: _markCurrentPaperAtTof,
+                    icon: const Icon(Icons.vertical_align_top),
+                    label: const Text('Mark Current Position as TOF'),
                   ),
                 ]),
               ],
@@ -1273,6 +1474,14 @@ class _PrintTabState extends State<_PrintTab> {
             onPressed: _printTest,
             icon: const Icon(Icons.print),
             label: const Text('Print Test Page')),
+        OutlinedButton.icon(
+            onPressed: _previewCalibration,
+            icon: const Icon(Icons.straighten),
+            label: const Text('Preview Calibration Sheet')),
+        FilledButton.tonalIcon(
+            onPressed: _printCalibration,
+            icon: const Icon(Icons.print_outlined),
+            label: const Text('Print Calibration Sheet')),
       ]),
     ]);
   }
@@ -1339,6 +1548,100 @@ class _PrintTabState extends State<_PrintTab> {
           content: Text(outcome.message),
           backgroundColor: outcome.success ? Colors.green : Colors.red));
     }
+  }
+
+  Future<void> _previewCalibration() async {
+    showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()));
+    try {
+      final res = await ApiClient.instance.dio.get(
+          '/api/print/calibration?format=preview',
+          options: Options(
+              responseType: ResponseType.bytes,
+              validateStatus: (s) => s != null && s < 500));
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (!mounted) return;
+      if (res.statusCode != 200) {
+        _showError(res.data);
+        return;
+      }
+      final bytes = Uint8List.fromList(res.data as List<int>);
+      await showDialog(
+          context: context,
+          builder: (ctx) => Dialog(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Flexible(
+                        child: SingleChildScrollView(
+                            child: Image.memory(bytes, width: 480))),
+                    const SizedBox(height: 8),
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('Close')),
+                  ]),
+                ),
+              ));
+    } catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Calibration preview failed: $e')));
+      }
+    }
+  }
+
+  Future<void> _printCalibration() async {
+    if (v == null) return;
+    final outcome = await PrintService.printDocument(
+      documentUrl: '/api/print/calibration?format=final',
+      printerType: 'DotMatrix',
+      printerName: (v!['dotMatrixPrinterName'] ?? '').toString(),
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(outcome.message),
+          backgroundColor: outcome.success ? Colors.green : Colors.red));
+    }
+  }
+
+  Future<void> _recoverParkedPaper() async {
+    if (v == null) return;
+    final printer = (v!['dotMatrixPrinterName'] ?? '').toString();
+    if (printer.isEmpty) {
+      _showMessage('Select a Dot Matrix printer first.', error: true);
+      return;
+    }
+    final outcome = await PrintService.recoverDotMatrixPaperToTof(
+      printerName: printer,
+      feedLines: (v!['dotMatrixTearOffFeedLines'] as num?)?.toDouble() ?? 12.0,
+      lineSpacingUnits:
+          (v!['dotMatrixLineSpacingUnits'] as num?)?.toInt() ?? 20,
+    );
+    if (mounted) _showMessage(outcome.message, error: !outcome.success);
+  }
+
+  Future<void> _markCurrentPaperAtTof() async {
+    if (v == null) return;
+    final printer = (v!['dotMatrixPrinterName'] ?? '').toString();
+    if (printer.isEmpty) {
+      _showMessage('Select a Dot Matrix printer first.', error: true);
+      return;
+    }
+    await PrintService.markDotMatrixPaperAtTof(printer);
+    if (mounted) {
+      _showMessage(
+          'Current physical paper position is now marked as logical TOF.');
+    }
+  }
+
+  void _showMessage(String message, {bool error = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: error ? Colors.red : Colors.green,
+    ));
   }
 
   void _showError(List<int> bytes) {

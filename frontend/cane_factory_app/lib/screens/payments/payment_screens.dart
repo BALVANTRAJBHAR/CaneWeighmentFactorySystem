@@ -25,6 +25,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   DateTime? _fromDate;
   DateTime? _toDate;
   int? _paymentModeId;
+  String _printTarget = 'DotMatrix';
   final _txnRef = TextEditingController();
   List _paymentModes = [];
   Map<String, dynamic>? _preview;
@@ -169,6 +170,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       final data = <String, dynamic>{
         'selectionMode': _mode,
         'paymentModeId': _paymentModeId,
+        'printTarget': _printTarget,
         'transactionRefNumber':
             _txnRef.text.trim().isEmpty ? null : _txnRef.text.trim(),
         'idempotencyKey':
@@ -575,6 +577,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       decoration: const InputDecoration(
                           labelText: 'Transaction Ref (optional)',
                           hintText: 'UPI/Bank Ref No.'),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 220,
+                    child: DropdownButtonFormField<String>(
+                      value: _printTarget,
+                      decoration:
+                          const InputDecoration(labelText: 'Print Type'),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'DotMatrix',
+                            child: Text('Dot Matrix (half-page slip)')),
+                        DropdownMenuItem(
+                            value: 'A4', child: Text('A4 / Laser')),
+                      ],
+                      onChanged: (value) =>
+                          setState(() => _printTarget = value!),
                     ),
                   ),
                 ]),

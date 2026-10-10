@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../core/api_client.dart';
 import '../../core/file_download.dart';
 import '../../core/report_format.dart';
+import '../../widgets/pinned_table_scroll.dart';
 
 /// Phase 11: Reports hub - Purchases (covers Daily Weighment, Gross/Tare/Net, Village-wise,
 /// Grower-wise, Date-range, Rate-wise, Variety-wise, Vehicle-wise, Pending Payment, Lock report),
@@ -19,10 +20,10 @@ class ReportsScreen extends StatefulWidget {
 
 class _ReportsScreenState extends State<ReportsScreen> {
   static const _reportTypes = {
-    'purchases': 'Purchase / Weighment Report',
+    'purchases': 'SugarCane Purchase Report',
     'rate-overrides': 'Rate Change Approval Report',
     'payments': 'Payment Report',
-    'sale-purchases': 'SalePurchase Weighment Report',
+    'sale-purchases': 'Sale Product Report',
     'loans': 'Loan Report',
     'daily-collection': 'Daily Collection Report',
     'cash-book': 'Cash Book Report',
@@ -401,66 +402,39 @@ class _ReportsScreenState extends State<ReportsScreen> {
                       ? const Center(
                           child: Text(
                               'No records found for the selected filters.'))
-                      : LayoutBuilder(
-                          builder: (context, constraints) => Scrollbar(
-                            controller: _reportVerticalController,
-                            thumbVisibility: true,
-                            trackVisibility: true,
-                            interactive: true,
-                            child: SingleChildScrollView(
-                              controller: _reportVerticalController,
-                              scrollDirection: Axis.vertical,
-                              child: Scrollbar(
-                                controller: _reportHorizontalController,
-                                thumbVisibility: true,
-                                trackVisibility: true,
-                                interactive: true,
-                                scrollbarOrientation:
-                                    ScrollbarOrientation.bottom,
-                                child: SingleChildScrollView(
-                                  controller: _reportHorizontalController,
-                                  scrollDirection: Axis.horizontal,
-                                  child: ConstrainedBox(
-                                    constraints: BoxConstraints(
-                                        minWidth: constraints.maxWidth),
-                                    child: DataTable(
-                                      columns: [
-                                        for (final c in _columns)
-                                          DataColumn(label: Text(c))
-                                      ],
-                                      rows: [
-                                        for (final item in _items)
-                                          DataRow(cells: [
-                                            for (final c in _columns)
-                                              DataCell(c == 'attachment'
-                                                  ? TextButton.icon(
-                                                      onPressed: item[
-                                                                  'hasAttachment'] ==
-                                                              true
-                                                          ? () =>
-                                                              _openRateEvidence(
-                                                                  item)
-                                                          : null,
-                                                      icon: const Icon(
-                                                          Icons.image_outlined,
-                                                          size: 18),
-                                                      label: const Text('View'),
-                                                    )
-                                                  : Tooltip(
-                                                      message: formatReportCell(
-                                                          c, item[c]),
-                                                      child: Text(
-                                                          formatReportCell(
-                                                              c, item[c]),
-                                                          overflow: TextOverflow
-                                                              .ellipsis))),
-                                          ]),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+                      : PinnedTableScroll(
+                          verticalController: _reportVerticalController,
+                          horizontalController: _reportHorizontalController,
+                          minTableWidth: 1600,
+                          child: DataTable(
+                            columns: [
+                              for (final c in _columns)
+                                DataColumn(label: Text(c))
+                            ],
+                            rows: [
+                              for (final item in _items)
+                                DataRow(cells: [
+                                  for (final c in _columns)
+                                    DataCell(c == 'attachment'
+                                        ? TextButton.icon(
+                                            onPressed: item['hasAttachment'] ==
+                                                    true
+                                                ? () => _openRateEvidence(item)
+                                                : null,
+                                            icon: const Icon(
+                                                Icons.image_outlined,
+                                                size: 18),
+                                            label: const Text('View'),
+                                          )
+                                        : Tooltip(
+                                            message:
+                                                formatReportCell(c, item[c]),
+                                            child: Text(
+                                                formatReportCell(c, item[c]),
+                                                overflow:
+                                                    TextOverflow.ellipsis))),
+                                ]),
+                            ],
                           ),
                         ),
             ),

@@ -80,11 +80,11 @@ public static class DbSeeder
         {
             "Weighment.View", "Weighment.Create", "Weighment.Edit", "Weighment.Print",
             "Purchase.View", "Purchase.Create", "Purchase.Edit",
-            "Expense.View", "Expense.Create", "Expense.Edit",
-            "CashBook.View", "CashBook.Create",
+            "SalePurchase.View", "SalePurchase.Create", "SalePurchase.Edit", "SalePurchase.Print",
             "Grower.View", "Village.View", "Zone.View", "Vehicle.View", "Vehicle.Create",
-            "VarietyType.View", "Variety.View", "Rate.View",
-            "Report.View", "Report.Print", "Camera.ViewCamera", "Image.Create",
+            "VarietyType.View", "Variety.View", "Rate.View", "RateReason.View",
+            "Item.View", "Party.View", "PaymentMode.View", "LoanType.View", "ExpenseType.View",
+            "WeightRule.View", "Camera.ViewCamera", "Image.Create",
             "Dashboard.View", "Health.View", "UserGuide.View", "Print.Print"
         };
 
@@ -130,7 +130,10 @@ public static class DbSeeder
                 ? allPerms
                 : allPerms.Where(p => codes.Contains(p.Code)).ToList();
             var have = role.RolePermissions.Select(rp => rp.PermissionId).ToHashSet();
-            if (roleName == "Farmer")
+            // These restricted roles are an exact allow-list. Reconcile removals as
+            // well as additions so a previously granted permission cannot survive a
+            // deployment merely because it already exists in RolePermissions.
+            if (roleName is "Farmer" or "Operator")
             {
                 var targetIds = target.Select(p => p.Id).ToHashSet();
                 db.RolePermissions.RemoveRange(role.RolePermissions
@@ -182,6 +185,15 @@ public static class DbSeeder
         if (!await db.Items.AnyAsync())
             db.Items.AddRange(new[] { "Sugar", "Gud", "Bagasse", "Molasses" }
                 .Select(n => new Item { ItemName = n }));
+
+        var defaultCrops = new[]
+        {
+            ("Plant", "पौधा"), ("Ratoon 1", "पहला पेड़ी"),
+            ("Ratoon 2", "दूसरा पेड़ी"), ("Ratoon 3", "तीसरा पेड़ी")
+        };
+        var existingCrops = await db.Crops.Select(c => c.CropName).ToListAsync();
+        db.Crops.AddRange(defaultCrops.Where(c => !existingCrops.Contains(c.Item1, StringComparer.OrdinalIgnoreCase))
+            .Select(c => new Crop { CropName = c.Item1, CropNameHi = c.Item2 }));
 
         if (!await db.LoanTypes.AnyAsync())
             db.LoanTypes.AddRange(new[] { "Fertilizer Loan", "Seed Loan", "Equipment Loan", "Emergency Loan" }

@@ -42,6 +42,7 @@ class _LoanScreenState extends State<LoanScreen> {
   int? _loanTypeId;
   final _amount = TextEditingController();
   final _remarks = TextEditingController();
+  String _printTarget = 'DotMatrix';
   List _loanTypes = [];
   List _items = [];
   bool _loading = true;
@@ -124,6 +125,7 @@ class _LoanScreenState extends State<LoanScreen> {
       'loanTypeId': _loanTypeId,
       'loanAmount': amt,
       'remarks': _remarks.text.trim().isEmpty ? null : _remarks.text.trim(),
+      'printTarget': _printTarget,
       'idempotencyKey':
           'loan-${_grower!['growerId']}-${DateTime.now().millisecondsSinceEpoch ~/ 30000}',
     });
@@ -271,6 +273,23 @@ class _LoanScreenState extends State<LoanScreen> {
                                   labelText: 'Remarks (optional)'),
                             ),
                           ),
+                          SizedBox(
+                            width: 220,
+                            child: DropdownButtonFormField<String>(
+                              value: _printTarget,
+                              decoration: const InputDecoration(
+                                  labelText: 'Print Type'),
+                              items: const [
+                                DropdownMenuItem(
+                                    value: 'DotMatrix',
+                                    child: Text('Dot Matrix (half-page slip)')),
+                                DropdownMenuItem(
+                                    value: 'A4', child: Text('A4 / Laser')),
+                              ],
+                              onChanged: (value) =>
+                                  setState(() => _printTarget = value!),
+                            ),
+                          ),
                         ]),
                     if (_grower != null)
                       Padding(
@@ -398,6 +417,7 @@ class _LoanRecoveryScreenState extends State<LoanRecoveryScreen> {
   String? _loanError;
   final _amount = TextEditingController();
   final _remarks = TextEditingController();
+  String _printTarget = 'DotMatrix';
   List _items = [];
   bool _loading = true;
   bool _saving = false;
@@ -456,6 +476,7 @@ class _LoanRecoveryScreenState extends State<LoanRecoveryScreen> {
       'loanId': _loan!['loanId'],
       'recoveryAmount': amt,
       'remarks': _remarks.text.trim().isEmpty ? null : _remarks.text.trim(),
+      'printTarget': _printTarget,
       'idempotencyKey':
           'lr-${_loan!['loanId']}-${DateTime.now().millisecondsSinceEpoch ~/ 15000}',
     });
@@ -583,6 +604,23 @@ class _LoanRecoveryScreenState extends State<LoanRecoveryScreen> {
                               controller: _remarks,
                               decoration: const InputDecoration(
                                   labelText: 'Remarks (optional)'),
+                            ),
+                          ),
+                          SizedBox(
+                            width: 220,
+                            child: DropdownButtonFormField<String>(
+                              value: _printTarget,
+                              decoration: const InputDecoration(
+                                  labelText: 'Print Type'),
+                              items: const [
+                                DropdownMenuItem(
+                                    value: 'DotMatrix',
+                                    child: Text('Dot Matrix (half-page slip)')),
+                                DropdownMenuItem(
+                                    value: 'A4', child: Text('A4 / Laser')),
+                              ],
+                              onChanged: (value) =>
+                                  setState(() => _printTarget = value!),
                             ),
                           ),
                         ]),

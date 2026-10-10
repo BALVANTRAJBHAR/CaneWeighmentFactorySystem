@@ -28,6 +28,7 @@ public class AppDbContext : DbContext
     public DbSet<RateOverrideEvidence> RateOverrideEvidences => Set<RateOverrideEvidence>();
     public DbSet<WeighmentRateOverride> WeighmentRateOverrides => Set<WeighmentRateOverride>();
     public DbSet<Item> Items => Set<Item>();
+    public DbSet<Crop> Crops => Set<Crop>();
     public DbSet<Party> Parties => Set<Party>();
     public DbSet<Season> Seasons => Set<Season>();
     public DbSet<PaymentModeMaster> PaymentModes => Set<PaymentModeMaster>();
@@ -168,6 +169,12 @@ public class AppDbContext : DbContext
             e.HasOne<RateReasonMaster>().WithMany().HasForeignKey(x => x.RateReasonId).OnDelete(DeleteBehavior.Restrict);
         });
         b.Entity<Item>(e => { e.HasIndex(x => x.ItemName).IsUnique(); e.Property(x => x.ItemNameHi).HasMaxLength(50); });
+        b.Entity<Crop>(e =>
+        {
+            e.HasIndex(x => x.CropName).IsUnique();
+            e.Property(x => x.CropName).HasMaxLength(50).IsRequired();
+            e.Property(x => x.CropNameHi).HasMaxLength(50);
+        });
         b.Entity<Party>(e =>
         {
             e.HasIndex(x => x.PartyName);
@@ -222,6 +229,7 @@ public class AppDbContext : DbContext
             e.HasOne(x => x.Grower).WithMany().HasForeignKey(x => x.GrowerId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.VehicleType).WithMany().HasForeignKey(x => x.VehicleTypeId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Variety).WithMany().HasForeignKey(x => x.VarietyId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Crop).WithMany().HasForeignKey(x => x.CropId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Season).WithMany().HasForeignKey(x => x.SeasonId).OnDelete(DeleteBehavior.Restrict);
         });
         b.Entity<PurchaseImage>().HasIndex(x => x.PurchaseId);
@@ -369,6 +377,7 @@ public class AppDbContext : DbContext
             e.Property(x => x.VehicleReweighCooldownMinutes).HasDefaultValue(30);
         });
         b.Entity<SoundConfig>().Property(x => x.SpeechRate).HasPrecision(4, 2);
+        b.Entity<PrintConfig>().Property(x => x.DotMatrixTearOffFeedLines).HasPrecision(5, 1);
         b.Entity<SystemSetting>().HasIndex(x => x.Key).IsUnique();
         b.Entity<NumberSequence>().HasKey(x => x.Name);
         b.Entity<NumberSequence>().Property(x => x.Name).HasMaxLength(64);

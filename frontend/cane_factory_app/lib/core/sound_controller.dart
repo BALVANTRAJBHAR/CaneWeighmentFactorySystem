@@ -46,6 +46,7 @@ class SoundController {
   Timer? _repeatTimer;
   int _playCount = 0;
   bool _speaking = false;
+  int _speechGeneration = 0;
   String? _activeEvent;
   Future<void>? _configFuture;
   Future<void>? _voiceFuture;
@@ -55,8 +56,7 @@ class SoundController {
   bool _windowsHasHindiVoice = false;
 
   List<String> get windowsVoices => List.unmodifiable(_windowsVoices);
-  List<String> get windowsHindiVoices =>
-      List.unmodifiable(_windowsHindiVoices);
+  List<String> get windowsHindiVoices => List.unmodifiable(_windowsHindiVoices);
   String? get windowsVoiceName => _windowsVoiceName;
   bool get windowsHasHindiVoice => _windowsHasHindiVoice;
 
@@ -193,9 +193,34 @@ class SoundController {
 
   Future<void> onWeighmentSaved() async {
     await loadConfig();
-    // Repeat the configured "move vehicle off" announcement until onWeight
-    // receives a zero-platform reading. This is intentionally not a timer.
-    _setState(SoundState.completed);
+    if (!enabled || repeatMode == 'OFF') return;
+
+    // A save is an explicit event, not merely another state transition. At
+    // zero weight there may be no new live-weight frame/change between two
+    // successful test saves, so the previous `completed` state can remain
+    // active. Always restart this announcement for every save.
+    _stopRepeat();
+    state = SoundState.completed;
+
+    // Completion has priority over an older BELOW_MINIMUM/WEIGHING_ACTIVE
+    // phrase. On Windows stop the process immediately; otherwise briefly wait
+    // for the serialized native channel so speech never overlaps.
+    if (_speaking && _windowsSpeech.isSupported) {
+      _speechGeneration++;
+      _windowsSpeech.stop();
+      _speaking = false;
+      await Future.delayed(const Duration(milliseconds: 50));
+    } else {
+      for (var i = 0; i < 50 && _speaking; i++) {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+    }
+
+    _activeEvent = 'WEIGHMENT_COMPLETED';
+    _playCount = 0;
+    // Speech remains non-blocking: saving/printing/camera work must continue
+    // while the explicit completion phrase is playing.
+    unawaited(_speakEvent('WEIGHMENT_COMPLETED'));
   }
 
   /// Plays a configured one-time event after an asynchronous operation such as
@@ -210,6 +235,7 @@ class SoundController {
     // the mandatory vehicle-removal instruction after a saved weighment.
     final resumeVehicleRemoval = state == SoundState.completed;
     _stopRepeat();
+    _speechGeneration++;
     _speaking = false;
     if (repeatMode != 'OFF') await _speakEvent(event);
     if (resumeVehicleRemoval && state == SoundState.completed) {
@@ -229,6 +255,7 @@ class SoundController {
         await _nativeTts.stop();
       }));
     }
+    _speechGeneration++;
     _speaking = false;
     state = SoundState.noVehicle;
   }
@@ -278,6 +305,7 @@ class SoundController {
     if (_speaking) return; // no overlapping playback
     final text = _eventMessage(event);
     if (text == null) return;
+    final generation = ++_speechGeneration;
     _speaking = true;
     _playCount++;
     try {
@@ -285,7 +313,7 @@ class SoundController {
     } catch (_) {
       // A temporary platform TTS error must not mute all later messages.
     } finally {
-      _speaking = false;
+      if (_speechGeneration == generation) _speaking = false;
     }
   }
 

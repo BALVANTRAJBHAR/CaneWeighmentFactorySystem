@@ -10,6 +10,7 @@ public class GrossSaveRequest
     public string VehicleNumber { get; set; } = string.Empty;
     public int VarietyTypeId { get; set; }
     public int VarietyId { get; set; }
+    public int? CropId { get; set; }
     public decimal CuttingPercent { get; set; }
     public decimal OtherDeductionPercent { get; set; }
     public decimal ScaleReadingKg { get; set; }

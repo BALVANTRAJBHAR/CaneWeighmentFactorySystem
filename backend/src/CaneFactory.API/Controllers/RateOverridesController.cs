@@ -15,7 +15,7 @@ namespace CaneFactory.API.Controllers;
 [Route("api/rate-overrides")]
 public sealed class RateOverridesController(
     AppDbContext db, ICurrentUser current, ICameraCaptureService capture, IAuditService audit,
-    ILogger<RateOverridesController> log) : ControllerBase
+    ILogger<RateOverridesController> log, IConfiguration configuration) : ControllerBase
 {
     private const long MaximumUploadBytes = 6_000_000;
     private const long MaximumDecodedPixels = 40_000_000;
@@ -123,17 +123,57 @@ public sealed class RateOverridesController(
             ?? throw new InvalidDataException("The image could not be sanitised.");
         var safeBytes = encoded.ToArray(); // decode + re-encode strips EXIF/scripts/trailing payloads
 
-        var rootSetting = await db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(x => x.Key == "PaymentEvidenceRoot", ct);
-        var root = string.IsNullOrWhiteSpace(rootSetting?.Value)
-            ? WeighmentImagePathResolver.NormalizeConfiguredPath(@"C:\WeighmentImage\Payment")
-            : WeighmentImagePathResolver.NormalizeConfiguredPath(rootSetting.Value);
+        var configuredRoot = configuration["Storage:ImageRoot"];
+        if (string.IsNullOrWhiteSpace(configuredRoot))
+        {
+            configuredRoot = (await db.SystemSettings.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Key == "ImageStorageRoot", ct))?.Value;
+        }
+        var root = RateEditImagePathResolver.ResolveRoot(configuredRoot);
         var now = DateTime.Now;
-        var folder = Path.Combine(root, "Rate Overrides", now.ToString("yyyy-MM-dd"));
+        var typeFolder = type == "CANE" ? "Cane" : "Sale";
+        var folder = Path.Combine(root, typeFolder, now.ToString("yyyy-MM-dd"));
         Directory.CreateDirectory(folder);
         var token = Guid.NewGuid().ToString("N");
-        var imageName = $"{type}-{id}-{token}.jpg";
-        var filePath = Path.Combine(folder, imageName);
-        await System.IO.File.WriteAllBytesAsync(filePath, safeBytes, ct);
+        int relatedPartyId;
+        string stage;
+        if (type == "CANE")
+        {
+            var target = await db.Purchases.AsNoTracking().Where(x => x.Id == id && !x.IsDeleted)
+                .Select(x => new { x.GrowerId }).SingleAsync(ct);
+            relatedPartyId = target.GrowerId;
+            stage = "TARE";
+        }
+        else
+        {
+            relatedPartyId = await db.SalePurchases.AsNoTracking().Where(x => x.Id == id && !x.IsDeleted)
+                .Select(x => x.PartyId).SingleAsync(ct);
+            stage = "GROSS";
+        }
+        var stem = RateEditImagePathResolver.BuildStem(type, id, relatedPartyId, stage);
+        var existingCount = await db.RateOverrideEvidences.CountAsync(x =>
+            x.TransactionType == type && x.TransactionId == id, ct);
+        string imageName;
+        string filePath;
+        // CreateNew prevents two operators/upload retries from silently
+        // overwriting the same immutable evidence file.
+        var revision = existingCount;
+        while (true)
+        {
+            imageName = revision == 0 ? $"{stem}.jpg" : $"{stem}-R{revision + 1:D2}.jpg";
+            filePath = Path.Combine(folder, imageName);
+            try
+            {
+                await using var output = new FileStream(filePath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                    bufferSize: 81920, useAsync: true);
+                await output.WriteAsync(safeBytes, ct);
+                break;
+            }
+            catch (IOException) when (System.IO.File.Exists(filePath))
+            {
+                revision++;
+            }
+        }
         var evidence = new RateOverrideEvidence
         {
             Token = token, TransactionType = type, TransactionId = id, Source = source,

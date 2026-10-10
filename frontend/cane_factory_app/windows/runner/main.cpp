@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
@@ -31,8 +32,18 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
   FlutterWindow window(project);
-  Win32Window::Point origin(10, 10);
+  // Keep the restored fallback size centred; the first Flutter frame is shown
+  // maximized by Win32Window::Show below.
+  RECT work_area{};
+  ::SystemParametersInfo(SPI_GETWORKAREA, 0, &work_area, 0);
   Win32Window::Size size(1280, 720);
+  const auto centered_x =
+      static_cast<unsigned int>(std::max(0L, work_area.left +
+          (work_area.right - work_area.left - 1280L) / 2));
+  const auto centered_y =
+      static_cast<unsigned int>(std::max(0L, work_area.top +
+          (work_area.bottom - work_area.top - 720L) / 2));
+  Win32Window::Point origin(centered_x, centered_y);
   if (!window.Create(L"Cane Factory", origin, size)) {
     return EXIT_FAILURE;
   }

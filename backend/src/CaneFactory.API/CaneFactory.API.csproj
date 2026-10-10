@@ -10,6 +10,10 @@
   <ItemGroup>
     <Content Include="Assets\Fonts\**" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\tools\ffmpeg\ffmpeg.exe" Link="tools\ffmpeg\ffmpeg.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\..\tools\ffmpeg\ffmpeg.exe')" />
+    <!-- Production secrets/settings belong to the server and must survive an API upgrade.
+         Publishing the source placeholder previously overwrote the working IIS configuration. -->
+    <Content Update="appsettings.json" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.Production.example.json" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.31" />

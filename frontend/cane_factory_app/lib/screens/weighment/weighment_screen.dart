@@ -40,6 +40,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   final _vehicleNumber = TextEditingController();
   int? _varietyTypeId;
   int? _varietyId;
+  int? _cropId;
   final _cutting = TextEditingController(text: '0.00');
   final _otherDeduction = TextEditingController(text: '0.00');
 
@@ -52,6 +53,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   List _vehicleTypes = [];
   List _varietyTypes = [];
   List _varieties = [];
+  List _crops = [];
   List _cameras = [];
   bool _saving = false;
 
@@ -91,41 +93,52 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
   }
 
   Future<void> _loadRefs() async {
-    try {
-      final results = await Future.wait([
-        ApiClient.instance.dio.get('/api/vehicle-types'),
-        ApiClient.instance.dio.get('/api/variety-types'),
-        ApiClient.instance.dio.get('/api/config/cameras'),
-        ApiClient.instance.dio.get('/api/config/weight-rules'),
-      ]);
-      final vt = results[0];
-      final vart = results[1];
-      final cams = results[2];
-      final rules = results[3];
-      if (!mounted) return;
-      setState(() {
-        if (vt.statusCode == 200) _vehicleTypes = vt.data['items'];
-        if (vart.statusCode == 200) _varietyTypes = vart.data['items'];
-        if (cams.statusCode == 200 && cams.data is List) {
-          _cameras = (cams.data as List)
-              .where((c) =>
-                  c['cameraSystemEnabled'] == true &&
-                  c['liveViewEnabled'] == true &&
-                  c['status'] == true)
-              .toList();
-        }
-        // The configured defaults are visible and submitted with every new cane gross.
-        // Operators can still adjust them before saving when an authorised exception is needed.
-        if (rules.statusCode == 200 && rules.data is Map) {
-          final values = Map<String, dynamic>.from(rules.data);
-          _cutting.text = ((values['defaultCuttingPercent'] as num?) ?? 0)
-              .toStringAsFixed(2);
-          _otherDeduction.text =
-              ((values['defaultOtherDeductionPercent'] as num?) ?? 0)
-                  .toStringAsFixed(2);
-        }
-      });
-    } catch (_) {}
+    // A camera or one master API may be temporarily unavailable. Load every
+    // reference independently so that such a failure never suppresses the
+    // configured Cutting % / Other Deduction defaults.
+    Future<Response<dynamic>?> safeGet(String path) async {
+      try {
+        return await ApiClient.instance.dio.get(path);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final results = await Future.wait([
+      safeGet('/api/vehicle-types'),
+      safeGet('/api/variety-types'),
+      safeGet('/api/crops'),
+      safeGet('/api/config/cameras'),
+      safeGet('/api/config/weight-rules'),
+    ]);
+    if (!mounted) return;
+
+    final vt = results[0];
+    final vart = results[1];
+    final crops = results[2];
+    final cams = results[3];
+    final rules = results[4];
+    setState(() {
+      if (vt?.statusCode == 200) _vehicleTypes = vt!.data['items'];
+      if (vart?.statusCode == 200) _varietyTypes = vart!.data['items'];
+      if (crops?.statusCode == 200) _crops = crops!.data['items'];
+      if (cams?.statusCode == 200 && cams!.data is List) {
+        _cameras = (cams.data as List)
+            .where((c) =>
+                c['cameraSystemEnabled'] == true &&
+                c['liveViewEnabled'] == true &&
+                c['status'] == true)
+            .toList();
+      }
+      if (rules?.statusCode == 200 && rules!.data is Map) {
+        final values = Map<String, dynamic>.from(rules.data);
+        _cutting.text =
+            ((values['defaultCuttingPercent'] as num?) ?? 0).toStringAsFixed(2);
+        _otherDeduction.text =
+            ((values['defaultOtherDeductionPercent'] as num?) ?? 0)
+                .toStringAsFixed(2);
+      }
+    });
   }
 
   Future<void> _loadPending() async {
@@ -151,8 +164,39 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       printerType: autoPrint['printerType'] ?? 'DotMatrix',
       printerName: autoPrint['printerName'] ?? '',
       copies: autoPrint['copies'] ?? 1,
+      dotMatrixTearOffParkingEnabled:
+          autoPrint['dotMatrixTearOffParkingEnabled'] == true,
+      dotMatrixTearOffFeedLines:
+          (autoPrint['dotMatrixTearOffFeedLines'] as num?)?.toDouble() ?? 12.0,
+      dotMatrixLineSpacingUnits:
+          (autoPrint['dotMatrixLineSpacingUnits'] as num?)?.toInt() ?? 20,
+      confirmTearOff: _confirmTearOff,
     );
     if (mounted) _toast(outcome.message, error: !outcome.success);
+  }
+
+  Future<bool> _confirmTearOff(int totalCopies) async {
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(totalCopies == 1
+                ? 'Tear printed slip'
+                : 'Tear printed page ($totalCopies slips)'),
+            content: Text(totalCopies == 1
+                ? 'Wait until the final dotted line comes outside the printer cover. Tear the paper on that line, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'
+                : 'All $totalCopies configured slips have printed continuously. Wait until the final dotted line comes outside the printer cover, tear the paper there, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'),
+            actions: [
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                icon: const Icon(Icons.content_cut),
+                label: const Text('Paper Torn — Reset TOF'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Future<void> _loadVarieties(int typeId) async {
@@ -200,22 +244,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     });
   }
 
-  String? _captureFailure(dynamic response) {
-    final capture = response is Map ? response['capture'] : null;
-    if (capture is! Map || (capture['saved'] as num? ?? 0) > 0) return null;
-    final results = capture['results'];
-    if (results is List) {
-      final errors = results
-          .map((result) => result is Map ? result['error']?.toString() : null)
-          .whereType<String>()
-          .where((error) => error.trim().isNotEmpty)
-          .toList();
-      if (errors.isNotEmpty) return errors.join(' | ');
-    }
-    return 'No enabled camera was available for evidence capture.';
-  }
-
-  bool _hasConnectedCameraEvidence(dynamic response) {
+  bool _hasCapturedWeighmentEvidence(dynamic response) {
     final capture = response is Map ? response['capture'] : null;
     if (capture is! Map) return false;
     final saved = (capture['saved'] as num?)?.toInt() ?? 0;
@@ -280,8 +309,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     if (_vehicleNumber.text.trim().length < 4)
       return _toast('Enter a valid Vehicle Number. Example: UP32AB1234',
           error: true);
-    if (_varietyTypeId == null || _varietyId == null)
-      return _toast('Select Variety Type and Variety.', error: true);
+    if (_varietyTypeId == null || _varietyId == null || _cropId == null)
+      return _toast('Select Crop, Variety Type and Variety.', error: true);
     setState(() => _saving = true);
     try {
       final res =
@@ -291,6 +320,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         'vehicleNumber': _vehicleNumber.text.trim().toUpperCase(),
         'varietyTypeId': _varietyTypeId,
         'varietyId': _varietyId,
+        'cropId': _cropId,
         'cuttingPercent': double.tryParse(_cutting.text) ?? 0,
         'otherDeductionPercent': double.tryParse(_otherDeduction.text) ?? 0,
         'scaleReadingKg': live.weightKg,
@@ -311,11 +341,11 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         });
         _loadPending();
         await _autoPrint(res.data['autoPrint']);
-        final captured = await _loadCapturedImages(purchaseId, 'GROSS');
-        if (!captured || !_hasConnectedCameraEvidence(res.data)) {
-          _toast(
-              'Gross saved, but camera evidence was not captured: ${_captureFailure(res.data) ?? 'Check Camera Configuration.'}',
-              error: true);
+        // Normal weighment-camera evidence is optional and must never turn a
+        // successful save into a red warning. Rate-change evidence is a
+        // separate, synchronous required field validated by RateOverridePanel.
+        if (_hasCapturedWeighmentEvidence(res.data)) {
+          unawaited(_loadCapturedImages(purchaseId, 'GROSS'));
         }
       } else {
         _toast(ApiClient.errorMessage(res), error: true);
@@ -365,11 +395,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         });
         _loadPending();
         await _autoPrint(res.data['autoPrint']);
-        final captured = await _loadCapturedImages(purchaseId, 'TARE');
-        if (!captured || !_hasConnectedCameraEvidence(res.data)) {
-          _toast(
-              'Tare saved, but camera evidence was not captured: ${_captureFailure(res.data) ?? 'Check Camera Configuration.'}',
-              error: true);
+        if (_hasCapturedWeighmentEvidence(res.data)) {
+          unawaited(_loadCapturedImages(purchaseId, 'TARE'));
         }
       } else {
         _toast(ApiClient.errorMessage(res), error: true);
@@ -441,27 +468,28 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                                       : _tarePanel()),
                               const SizedBox(width: 6),
                               SizedBox(
-                                  width: 480,
-                                  height: 370,
+                                  width: 576,
+                                  height: 407,
                                   child: _cameraPanel()),
                             ])
                       : Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                               // In a restored/non-maximized window reserve
-                              // three parts for the form and one part for the
-                              // cameras. This keeps the camera area at 25% of
-                              // the available width instead of full width.
+                              // Keep about 30% of the available width for the
+                              // two live cameras (20% wider than the previous
+                              // 25% allocation) while retaining enough room
+                              // for all entry controls.
                               Expanded(
-                                  flex: 3,
+                                  flex: 7,
                                   child: _grossMode
                                       ? _grossPanel()
                                       : _tarePanel()),
                               const SizedBox(width: 6),
                               Expanded(
-                                  flex: 1,
+                                  flex: 3,
                                   child: SizedBox(
-                                      height: 320, child: _cameraPanel())),
+                                      height: 352, child: _cameraPanel())),
                             ]),
             ),
             const SizedBox(height: 6),
@@ -657,6 +685,24 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
               SizedBox(
                 width: 190,
                 child: DropdownButtonFormField<int>(
+                  value: _cropId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                      labelText: 'Crop', hintText: 'Plant / Ratoon'),
+                  items: [
+                    for (final crop in _crops)
+                      DropdownMenuItem(
+                          value: crop['id'] as int,
+                          child: Text(
+                              '${crop['cropName']}${(crop['cropNameHi'] ?? '').toString().isEmpty ? '' : ' • ${crop['cropNameHi']}'}',
+                              overflow: TextOverflow.ellipsis))
+                  ],
+                  onChanged: (v) => setState(() => _cropId = v),
+                ),
+              ),
+              SizedBox(
+                width: 190,
+                child: DropdownButtonFormField<int>(
                   value: _varietyTypeId,
                   isExpanded: true,
                   decoration: const InputDecoration(
@@ -709,7 +755,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                             RegExp(r'^\d*\.?\d{0,2}'))
                       ],
                       decoration: const InputDecoration(
-                          labelText: 'अन्य कटौती %', hintText: '0.00'),
+                          labelText: 'Other Cutting %', hintText: '0.00'),
                     ),
                   ),
                   const SizedBox(width: 10),

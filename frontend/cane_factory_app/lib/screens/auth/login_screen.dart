@@ -65,7 +65,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             autofocus: true,
                             decoration: const InputDecoration(
                                 labelText: 'Username / Farmer Mobile Number',
-                                hintText: 'User1 or 9876543210',
+                                //hintText: 'Ajay or 9876543210',
                                 prefixIcon: Icon(Icons.person_outline)),
                             validator: (v) => (v == null || v.trim().isEmpty)
                                 ? 'Username or farmer mobile number is required'

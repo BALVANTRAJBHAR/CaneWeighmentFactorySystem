@@ -155,8 +155,39 @@ class _SalePurchaseWeighmentScreenState
         documentUrl: print['documentUrl'],
         printerType: print['printerType'] ?? 'DotMatrix',
         printerName: print['printerName'] ?? '',
-        copies: print['copies'] ?? 2);
+        copies: print['copies'] ?? 2,
+        dotMatrixTearOffParkingEnabled:
+            print['dotMatrixTearOffParkingEnabled'] == true,
+        dotMatrixTearOffFeedLines:
+            (print['dotMatrixTearOffFeedLines'] as num?)?.toDouble() ?? 12.0,
+        dotMatrixLineSpacingUnits:
+            (print['dotMatrixLineSpacingUnits'] as num?)?.toInt() ?? 20,
+        confirmTearOff: _confirmTearOff);
     if (mounted && !outcome.success) _toast(outcome.message, error: true);
+  }
+
+  Future<bool> _confirmTearOff(int totalCopies) async {
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(totalCopies == 1
+                ? 'Tear printed slip'
+                : 'Tear printed page ($totalCopies slips)'),
+            content: Text(totalCopies == 1
+                ? 'Wait until the final dotted line comes outside the printer cover. Tear the paper on that line, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'
+                : 'All $totalCopies configured slips have printed continuously. Wait until the final dotted line comes outside the printer cover, tear the paper there, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'),
+            actions: [
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                icon: const Icon(Icons.content_cut),
+                label: const Text('Paper Torn — Reset TOF'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Future<bool> _waitForCapturedImages(int salePurchaseId, String stage) async {
@@ -178,22 +209,7 @@ class _SalePurchaseWeighmentScreenState
     return false;
   }
 
-  String? _captureFailure(dynamic response) {
-    final capture = response is Map ? response['capture'] : null;
-    if (capture is! Map || (capture['saved'] as num? ?? 0) > 0) return null;
-    final results = capture['results'];
-    if (results is List) {
-      final errors = results
-          .map((result) => result is Map ? result['error']?.toString() : null)
-          .whereType<String>()
-          .where((error) => error.trim().isNotEmpty)
-          .toList();
-      if (errors.isNotEmpty) return errors.join(' | ');
-    }
-    return 'No enabled camera was available for evidence capture.';
-  }
-
-  bool _hasConnectedCameraEvidence(dynamic response) {
+  bool _hasCapturedWeighmentEvidence(dynamic response) {
     final capture = response is Map ? response['capture'] : null;
     if (capture is! Map) return false;
     final saved = (capture['saved'] as num?)?.toInt() ?? 0;
@@ -212,6 +228,7 @@ class _SalePurchaseWeighmentScreenState
   }
 
   Future<void> _saveTare() async {
+    if (_saving) return;
     if (!_validLive()) return;
     if (_itemId == null ||
         _partyId == null ||
@@ -241,11 +258,11 @@ class _SalePurchaseWeighmentScreenState
       await _sound.onWeighmentSaved();
       await _print(res.data['autoPrint']);
       final salePurchaseId = res.data['salePurchaseId'] as int;
-      final captured = await _waitForCapturedImages(salePurchaseId, 'TARE');
-      if (!captured || !_hasConnectedCameraEvidence(res.data)) {
-        _toast(
-            'Tare saved, but camera evidence was not captured: ${_captureFailure(res.data) ?? 'Check Camera Configuration.'}',
-            error: true);
+      // Ordinary weighment-camera capture is optional. A successful save must
+      // not show an error when those cameras are not configured. Rate-change
+      // evidence remains mandatory and is validated separately before save.
+      if (_hasCapturedWeighmentEvidence(res.data)) {
+        unawaited(_waitForCapturedImages(salePurchaseId, 'TARE'));
       }
       setState(() {
         _itemId = null;
@@ -264,6 +281,7 @@ class _SalePurchaseWeighmentScreenState
   }
 
   Future<void> _saveGross() async {
+    if (_saving) return;
     if (!_validLive()) return;
     if (_selected == null)
       return _toast(
@@ -291,11 +309,8 @@ class _SalePurchaseWeighmentScreenState
       await _sound.onWeighmentSaved();
       await _print(res.data['autoPrint']);
       final salePurchaseId = res.data['salePurchaseId'] as int;
-      final captured = await _waitForCapturedImages(salePurchaseId, 'GROSS');
-      if (!captured || !_hasConnectedCameraEvidence(res.data)) {
-        _toast(
-            'Gross saved, but camera evidence was not captured: ${_captureFailure(res.data) ?? 'Check Camera Configuration.'}',
-            error: true);
+      if (_hasCapturedWeighmentEvidence(res.data)) {
+        unawaited(_waitForCapturedImages(salePurchaseId, 'GROSS'));
       }
       setState(() {
         _selected = null;

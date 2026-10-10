@@ -31,7 +31,28 @@ public class AuditController : ControllerBase
         if (from.HasValue) q = q.Where(a => a.Timestamp >= from);
         if (to.HasValue) q = q.Where(a => a.Timestamp <= to);
         var total = await q.CountAsync();
-        var items = await q.OrderByDescending(a => a.Timestamp).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+        var rows = await q.OrderByDescending(a => a.Timestamp).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+        // SQL Server commonly materialises datetime/datetime2 with Kind=Unspecified even though
+        // this application stores audit timestamps in UTC. Explicitly mark them UTC so JSON emits
+        // the trailing Z and every client can reliably convert to its own local timezone.
+        var items = rows.Select(a => new
+        {
+            a.Id,
+            a.UserId,
+            a.Username,
+            a.Role,
+            a.Action,
+            a.Module,
+            a.Entity,
+            a.EntityId,
+            a.OldValue,
+            a.NewValue,
+            Timestamp = DateTime.SpecifyKind(a.Timestamp, DateTimeKind.Utc),
+            a.Ip,
+            a.Device,
+            a.Success,
+            a.FailureReason
+        }).ToList();
         return Ok(new { items, totalCount = total, page, pageSize });
     }
 }

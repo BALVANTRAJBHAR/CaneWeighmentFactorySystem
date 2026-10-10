@@ -151,8 +151,12 @@ public class WeighmentCorrectionsController : ControllerBase
                     { result = Conflict(new { message = "Rate changed or was not previewed. Calculate / Preview again before updating." }); return; }
                     if (p.GrossTareStatus == "TARE_DONE" && p.FinalWeightQuintal == null)
                     { result = Conflict(new { message = "Final weight is missing. This record cannot be repriced." }); return; }
-                    var amount = p.VarietyTypeId == req.VarietyTypeId ? p.PurchaseAmount :
-                        p.FinalWeightQuintal.HasValue ? WeightCalculator.R2(p.FinalWeightQuintal.Value * rate) : (decimal?)null;
+                    // A variety may change inside the same variety type.  Always calculate from
+                    // the immutable final weight and the effective rate so preview, UI and saved
+                    // PurchaseAmount stay in sync for both variety-only and type changes.
+                    var amount = p.FinalWeightQuintal.HasValue
+                        ? WeightCalculator.R2(p.FinalWeightQuintal.Value * rate)
+                        : (decimal?)null;
                     if (amount is < 0 or >= 1000000000000m)
                     { result = BadRequest(new { message = "Calculated amount is outside the supported range." }); return; }
                     if (save)

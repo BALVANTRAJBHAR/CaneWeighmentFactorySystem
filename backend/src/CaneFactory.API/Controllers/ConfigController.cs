@@ -514,9 +514,26 @@ public class ConfigController : ControllerBase
         if (src.PrinterType is not ("DotMatrix" or "A4")) return BadRequest(new { message = "PrinterType must be DotMatrix or A4." });
         if (src.DotMatrixPageLines is < 80 or > 180 || src.DotMatrixPageLines % 2 != 0)
             return BadRequest(new { message = "Dot Matrix Page Lines must be an even value between 80 and 180." });
-        var halfPageLines = src.DotMatrixPageLines / 2;
-        if (src.DotMatrixHeaderReservedLines < 4 || src.DotMatrixHeaderReservedLines > halfPageLines - 34)
-            return BadRequest(new { message = $"Header Reserved Lines must be between 4 and {halfPageLines - 34} for this page height." });
+        if (src.DotMatrixHalfPageLines is < 40 or > 90 || src.DotMatrixHalfPageLines * 2 != src.DotMatrixPageLines)
+            return BadRequest(new { message = "Half-Page Lines must be between 40 and 90 and exactly half of Page/Form Lines." });
+        if (src.DotMatrixNextFormTofLines != src.DotMatrixPageLines)
+            return BadRequest(new { message = "Next Form/TOF Position must equal Page/Form Lines to prevent progressive drift." });
+        if (src.DotMatrixLineSpacingUnits is < 12 or > 30)
+            return BadRequest(new { message = "ESC/P Line Spacing must be between 12 and 30 units (1/180 inch each)." });
+        if (src.DotMatrixTearOffFeedLines is < 1m or > 18m ||
+            src.DotMatrixTearOffFeedLines * 2m != decimal.Truncate(src.DotMatrixTearOffFeedLines * 2m))
+            return BadRequest(new { message = "Tear-Off Parking Feed must be between 1 and 18 lines in 0.5-line steps." });
+        if (src.DotMatrixContentStartOffsetLines is < 0 or > 10)
+            return BadRequest(new { message = "Content Start Offset must be between 0 and 10 lines." });
+        if (src.DotMatrixPostSlipFeedLines is < 0 or > 10)
+            return BadRequest(new { message = "Post-Slip Feed must be between 0 and 10 lines." });
+        if (src.DotMatrixTearLinePosition + src.DotMatrixPostSlipFeedLines != src.DotMatrixHalfPageLines)
+            return BadRequest(new { message = "Tear Line Position + Post-Slip Feed must equal Half-Page Lines." });
+        var maximumHeaderLines = src.DotMatrixTearLinePosition - src.DotMatrixContentStartOffsetLines - 34;
+        if (maximumHeaderLines < 4)
+            return BadRequest(new { message = "The configured tear/content positions do not leave enough room for transaction details." });
+        if (src.DotMatrixHeaderReservedLines < 4 || src.DotMatrixHeaderReservedLines > maximumHeaderLines)
+            return BadRequest(new { message = $"Header Reserved Lines must be between 4 and {maximumHeaderLines} for the configured content/tear positions." });
         var old = new
         {
             p.PrinterType,
@@ -529,7 +546,16 @@ public class ConfigController : ControllerBase
             p.TareCopies,
             p.DotMatrixPrintHeader,
             p.DotMatrixPageLines,
-            p.DotMatrixHeaderReservedLines
+            p.DotMatrixHalfPageLines,
+            p.DotMatrixHeaderReservedLines,
+            p.DotMatrixContentStartOffsetLines,
+            p.DotMatrixTearLinePosition,
+            p.DotMatrixPostSlipFeedLines,
+            p.DotMatrixNextFormTofLines,
+            p.DotMatrixLineSpacingUnits,
+            p.DotMatrixTearOffParkingEnabled,
+            p.DotMatrixTearOffFeedLines,
+            p.DotMatrixFastPrint
         };
         p.PrinterType = src.PrinterType;
         p.DotMatrixPrinterName = src.DotMatrixPrinterName?.Trim() ?? "";
@@ -547,7 +573,16 @@ public class ConfigController : ControllerBase
         p.Language = src.Language;
         p.DotMatrixPrintHeader = src.DotMatrixPrintHeader;
         p.DotMatrixPageLines = src.DotMatrixPageLines;
+        p.DotMatrixHalfPageLines = src.DotMatrixHalfPageLines;
         p.DotMatrixHeaderReservedLines = src.DotMatrixHeaderReservedLines;
+        p.DotMatrixContentStartOffsetLines = src.DotMatrixContentStartOffsetLines;
+        p.DotMatrixTearLinePosition = src.DotMatrixTearLinePosition;
+        p.DotMatrixPostSlipFeedLines = src.DotMatrixPostSlipFeedLines;
+        p.DotMatrixNextFormTofLines = src.DotMatrixNextFormTofLines;
+        p.DotMatrixLineSpacingUnits = src.DotMatrixLineSpacingUnits;
+        p.DotMatrixTearOffParkingEnabled = src.DotMatrixTearOffParkingEnabled;
+        p.DotMatrixTearOffFeedLines = src.DotMatrixTearOffFeedLines;
+        p.DotMatrixFastPrint = src.DotMatrixFastPrint;
         p.UpdatedAt = DateTime.UtcNow;
         p.UpdatedBy = _current.UserId;
         await _db.SaveChangesAsync();

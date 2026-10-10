@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using CaneFactory.API.Services;
 using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Interfaces;
 using CaneFactory.Infrastructure.Camera;
@@ -26,10 +27,12 @@ public class ReportsController : ControllerBase
     private readonly AppDbContext _db;
     private readonly ICurrentUser _current;
     private readonly IReportExportService _export;
+    private readonly IConfiguration? _configuration;
 
-    public ReportsController(AppDbContext db, ICurrentUser current, IReportExportService export)
+    public ReportsController(AppDbContext db, ICurrentUser current, IReportExportService export,
+        IConfiguration? configuration = null)
     {
-        _db = db; _current = current; _export = export;
+        _db = db; _current = current; _export = export; _configuration = configuration;
     }
 
     private IActionResult? Deny(string action) =>
@@ -99,8 +102,13 @@ public class ReportsController : ControllerBase
         var received = entries.Where(x => x.EntryType == "CASH_IN").Sum(x => x.Amount);
         var paid = entries.Where(x => x.EntryType == "CASH_OUT").Sum(x => x.Amount);
         var farmerCashPaid = entries.Where(x => x.EntryType == "CASH_OUT" && x.SourceType == "FARMER_PAYMENT").Sum(x => x.Amount);
-        var otherCashPaid = entries.Where(x => x.EntryType == "CASH_OUT" && x.SourceType == "OTHER_CASH_PAYMENT").Sum(x => x.Amount);
+        var closingWithdrawal = entries.Where(x => x.EntryType == "CASH_OUT" &&
+            x.SourceType == CashBookDailyCalculator.DayClosingWithdrawal).Sum(x => x.Amount);
+        var otherCashPaid = entries.Where(x => x.EntryType == "CASH_OUT" &&
+            x.SourceType != "FARMER_PAYMENT" && x.SourceType != CashBookDailyCalculator.DayClosingWithdrawal).Sum(x => x.Amount);
         var closingBalance = openingBalance + received - paid;
+        var reportToDate = toDate?.AddDays(-1);
+        var dailySummaries = CashBookDailyCalculator.Build(entries, openingBalance, fromDate, reportToDate);
 
         if (format == "json")
         {
@@ -117,42 +125,60 @@ public class ReportsController : ControllerBase
                     remarks = x.Remarks, runningBalance = running
                 };
             }).ToList();
-            return Ok(new { items, totalCount = entries.Count, totals = new { openingBalance, received, paid, closingBalance } });
-        }
-
-        var rows = new List<List<string>>();
-        var balance = openingBalance;
-        foreach (var x in entries)
-        {
-            var inAmount = x.EntryType == "CASH_IN" ? x.Amount : 0;
-            var outAmount = x.EntryType == "CASH_OUT" ? x.Amount : 0;
-            balance += inAmount - outAmount;
-            rows.Add(new List<string>
+            return Ok(new
             {
-                x.EntryDate.ToString("dd-MM-yyyy"), CashEntryLabel(x),
-                x.SourceType, x.SourceName ?? "-",
-                x.GrowerId.HasValue ? $"{x.GrowerId} {x.GrowerName}" : "-",
-                x.PaymentId?.ToString() ?? "-", inAmount == 0 ? "-" : inAmount.ToString("F2"),
-                outAmount == 0 ? "-" : outAmount.ToString("F2"), balance.ToString("F2"), x.ReferenceNumber ?? "-"
+                items,
+                dailySummaries,
+                totalCount = entries.Count,
+                totals = new
+                {
+                    openingBalance,
+                    received,
+                    farmerCashPaid,
+                    otherCashPaid,
+                    operatingCashPaid = paid - closingWithdrawal,
+                    closingWithdrawal,
+                    paid,
+                    availableBeforeClosing = openingBalance + received - (paid - closingWithdrawal),
+                    closingBalance
+                }
             });
         }
+
+        var rows = dailySummaries.Select(x => new List<string>
+        {
+            x.Date.ToString("dd-MM-yyyy"),
+            x.OpeningCash.ToString("F2"),
+            x.CashReceived.ToString("F2"),
+            x.FarmerCashPaid.ToString("F2"),
+            x.OtherCashPaid.ToString("F2"),
+            x.OperatingCashPaid.ToString("F2"),
+            x.AvailableBeforeClosing.ToString("F2"),
+            x.ClosingWithdrawal.ToString("F2"),
+            x.ClosingBalance.ToString("F2"),
+            x.IsClosed ? "Closed" : "Open",
+            x.CashTakenBy ?? "-"
+        }).ToList();
         var totals = new List<(string, string)>
         {
             ("Opening Cash (Rs)", openingBalance.ToString("F2")),
             ("Cash Received (Rs)", received.ToString("F2")),
             ("Cash Paid to Farmers (Rs)", farmerCashPaid.ToString("F2")),
             ("Other Cash Payments (Rs)", otherCashPaid.ToString("F2")),
-            ("Total Cash Paid (Rs)", paid.ToString("F2")),
-            ("Closing Cash Balance (Rs)", closingBalance.ToString("F2"))
+            ("Operating Cash Paid (Rs)", (paid - closingWithdrawal).ToString("F2")),
+            ("Day Closing Withdrawn (Rs)", closingWithdrawal.ToString("F2")),
+            ("Cash Left at Factory (Rs)", closingBalance.ToString("F2"))
         };
-        return ExportFile("Cash-Book-Report", format, "Cash Book Report",
+        return ExportFile("Daily-Cash-Book-Report", format, "Daily Cash Book Report",
             $"Generated by {_current.Username} on {DateTime.UtcNow:dd-MM-yyyy HH:mm} UTC",
-            new List<string> { "Date", "Entry", "Source", "Source Name", "Grower", "Payment ID", "Cash In (Rs)", "Cash Out (Rs)", "Balance (Rs)", "Reference" },
+            new List<string> { "Date", "Opening", "Cash In", "Farmer Paid", "Other Paid", "Total Spent",
+                "Before Close", "Closing Withdrawal", "Cash Left", "Status", "Cash Taken By" },
             rows, totals);
     }
 
     private static string CashEntryLabel(CaneFactory.Domain.Entities.CashBookEntry entry) =>
         entry.EntryType == "CASH_IN" ? "Received" :
+        entry.SourceType == CashBookDailyCalculator.DayClosingWithdrawal ? "Day Closing Withdrawal" :
         entry.SourceType == "FARMER_PAYMENT" ? "Farmer Payment" : "Other Cash Payment";
 
     // ---------------------------------------------------------- PROFIT / LOSS
@@ -306,7 +332,7 @@ public class ReportsController : ControllerBase
             r.FinalWeightQuintal?.ToString("F2") ?? "-", r.Rate.ToString("F2"), r.PurchaseAmount?.ToString("F2") ?? "-",
             r.PurchaseDate?.ToString("dd-MM-yyyy") ?? "-", r.GrossTareStatus
         }).ToList();
-        return ExportFile("Purchase-Report", format, "Purchase / Weighment Report",
+        return ExportFile("Cane-Purchase-Report", format, "Cane Purchase Report",
             $"Generated by {_current.Username} on {DateTime.UtcNow:dd-MM-yyyy HH:mm} UTC", headers, tableRows, totals);
     }
 
@@ -469,15 +495,20 @@ public class ReportsController : ControllerBase
             if (!ownsTransaction) return NotFound(new { message = "Rate-change attachment was not found." });
         }
 
-        var rootSetting = await _db.SystemSettings.AsNoTracking()
+        var configuredRoot = _configuration?["Storage:ImageRoot"];
+        if (string.IsNullOrWhiteSpace(configuredRoot))
+            configuredRoot = (await _db.SystemSettings.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Key == "ImageStorageRoot"))?.Value;
+        var currentRoot = RateEditImagePathResolver.ResolveRoot(configuredRoot);
+        var paymentRootSetting = await _db.SystemSettings.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Key == "PaymentEvidenceRoot");
-        var evidenceRoot = string.IsNullOrWhiteSpace(rootSetting?.Value)
+        var paymentRoot = string.IsNullOrWhiteSpace(paymentRootSetting?.Value)
             ? WeighmentImagePathResolver.NormalizeConfiguredPath(@"C:\WeighmentImage\Payment")
-            : WeighmentImagePathResolver.NormalizeConfiguredPath(rootSetting.Value);
-        var allowedRoot = Path.GetFullPath(Path.Combine(evidenceRoot, "Rate Overrides"))
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            : WeighmentImagePathResolver.NormalizeConfiguredPath(paymentRootSetting.Value);
+        var legacyRoot = Path.Combine(paymentRoot, "Rate Overrides");
         var fullPath = Path.GetFullPath(record.Evidence.FilePath);
-        if (!fullPath.StartsWith(allowedRoot, StringComparison.OrdinalIgnoreCase))
+        if (!RateEditImagePathResolver.IsUnderRoot(fullPath, currentRoot) &&
+            !RateEditImagePathResolver.IsUnderRoot(fullPath, legacyRoot))
             return Conflict(new { message = "Attachment path failed the security check." });
         if (!System.IO.File.Exists(fullPath))
             return NotFound(new { message = "The attachment file is missing from storage." });
@@ -686,7 +717,7 @@ public class ReportsController : ControllerBase
             x.TareWeightQuintal.ToString("F2"), x.GrossWeightQuintal?.ToString("F2") ?? "-", x.FinalWeightQuintal?.ToString("F2") ?? "-",
             x.Rate?.ToString("F2") ?? "-", x.Amount?.ToString("F2") ?? "-", x.tareOperator, x.grossOperator ?? "-",
             x.TareDateTime.ToString("dd-MM-yyyy"), x.GrossDateTime?.ToString("dd-MM-yyyy") ?? "-", x.status }).ToList();
-        return ExportFile("SalePurchase-Report", format, "SalePurchase Weighment Report", $"Generated by {_current.Username} on {DateTime.UtcNow:dd-MM-yyyy HH:mm} UTC", headers, tableRows, totals);
+        return ExportFile("Sale-Product-Report", format, "Sale Product Report", $"Generated by {_current.Username} on {DateTime.UtcNow:dd-MM-yyyy HH:mm} UTC", headers, tableRows, totals);
     }
 
     // ---------------------------------------------------------------- DAILY COLLECTION

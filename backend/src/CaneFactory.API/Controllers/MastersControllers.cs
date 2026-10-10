@@ -267,6 +267,39 @@ public class ItemsController : MasterControllerBase<Item>
     protected override void ApplyUpdate(Item t, Item s) { t.ItemName = s.ItemName; t.ItemNameHi = s.ItemNameHi; }
 }
 
+[Route("api/crops")]
+public class CropsController : MasterControllerBase<Crop>
+{
+    public CropsController(AppDbContext db, IAuditService audit, ICurrentUser current, ISequenceGenerator seq)
+        : base(db, audit, current, seq) { }
+
+    protected override string Module => "Crop";
+    protected override string DisplayName(Crop e) => e.CropName;
+    protected override System.Linq.Expressions.Expression<Func<Crop, object>> DisplayNameExpr() => e => e.CropName;
+    protected override IQueryable<Crop> ApplySearch(IQueryable<Crop> q, string s) =>
+        q.Where(x => x.CropName.Contains(s) || (x.CropNameHi != null && x.CropNameHi.Contains(s)));
+
+    protected override async Task<string?> ValidateAsync(Crop e, int? id)
+    {
+        e.CropName = Validators.Norm(e.CropName);
+        e.CropNameHi = string.IsNullOrWhiteSpace(e.CropNameHi) ? null : e.CropNameHi.Trim();
+        if (e.CropName.Length == 0) return "Crop Name is required.";
+        if (await Db.Crops.AnyAsync(x => !x.IsDeleted && x.Id != id && x.CropName.ToLower() == e.CropName.ToLower()))
+            return $"Crop '{e.CropName}' already exists.";
+        return null;
+    }
+
+    protected override void ApplyUpdate(Crop target, Crop source)
+    {
+        target.CropName = source.CropName;
+        target.CropNameHi = source.CropNameHi;
+    }
+
+    protected override async Task<string?> InUseReasonAsync(int id) =>
+        await Db.Purchases.AnyAsync(p => p.CropId == id)
+            ? "This Crop is used in Purchases and cannot be deleted." : null;
+}
+
 [Route("api/rate-reasons")]
 public class RateReasonsController : MasterControllerBase<RateReasonMaster>
 {

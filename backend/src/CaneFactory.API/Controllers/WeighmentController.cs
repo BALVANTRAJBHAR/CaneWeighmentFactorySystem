@@ -86,7 +86,7 @@ public class WeighmentController : ControllerBase
     {
         if (Deny("View") is { } d) return d;
         var p = await _db.Purchases.Include(x => x.Grower).ThenInclude(g => g.Village)
-            .Include(x => x.Variety).Include(x => x.VehicleType)
+            .Include(x => x.Variety).Include(x => x.Crop).Include(x => x.VehicleType)
             .FirstOrDefaultAsync(x => x.Id == purchaseId);
         if (p == null) return NotFound(new { message = $"Purchase ID {purchaseId} does not exist. Example: 15482" });
         if (p.GrossTareStatus == "CANCELLED") return Conflict(new { message = $"Purchase {purchaseId} is CANCELLED." });
@@ -96,7 +96,7 @@ public class WeighmentController : ControllerBase
         {
             purchaseId = p.Id, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName, FatherName = p.Grower.FatherName,
             VillageName = p.Grower.Village.VillageName, p.VehicleNumber, VehicleTypeName = p.VehicleType.VehicleTypeName,
-            VarietyName = p.Variety.VarietyName, p.Rate, p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName,
+            VarietyName = p.Variety.VarietyName, CropName = p.Crop != null ? p.Crop.CropName : null, p.Rate, p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName,
             p.CuttingPercent, p.OtherDeductionPercent
         });
     }
@@ -122,6 +122,8 @@ public class WeighmentController : ControllerBase
         if (variety == null) return BadRequest(new { message = "Selected Variety does not exist or is inactive." });
         if (variety.VarietyTypeId != req.VarietyTypeId)
             return BadRequest(new { message = "Selected Variety does not belong to the selected Variety Type." });
+        if (!req.CropId.HasValue || !await _db.Crops.AnyAsync(c => c.Id == req.CropId.Value && !c.IsDeleted && c.Status))
+            return BadRequest(new { message = "Select an active Crop (Plant, Ratoon 1, Ratoon 2 or Ratoon 3)." });
         if (req.CuttingPercent is < 0 or > 100) return BadRequest(new { message = "Cutting % must be between 0 and 100. Example: 2.00" });
         if (req.OtherDeductionPercent is < 0 or > 100) return BadRequest(new { message = "Other Deduction % must be between 0 and 100." });
         if (!_weighing.TryGetUsableWeight(out var liveKg, out var liveWeightError))
@@ -164,6 +166,7 @@ public class WeighmentController : ControllerBase
             VehicleNumber = vehicleNumber,
             VarietyTypeId = req.VarietyTypeId,
             VarietyId = req.VarietyId,
+            CropId = req.CropId,
             ScaleReadingGrossKg = WeightCalculator.R2(liveKg),
             GrossWeightQuintal = grossQuintal,
             GrossDateTime = now,
@@ -392,6 +395,9 @@ public class WeighmentController : ControllerBase
             copies,
             language = cfg.Language,
             stage,
+            dotMatrixTearOffParkingEnabled = cfg.DotMatrixTearOffParkingEnabled,
+            dotMatrixTearOffFeedLines = cfg.DotMatrixTearOffFeedLines,
+            dotMatrixLineSpacingUnits = cfg.DotMatrixLineSpacingUnits,
             shouldAutoPrint = cfg.AutoPrint && copies > 0,
             // Dot-matrix final output is ESC/P bytes, not a PDF. When physical
             // auto-print is off the client must receive an actual A4 PDF to open.

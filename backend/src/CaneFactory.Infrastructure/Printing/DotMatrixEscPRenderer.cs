@@ -8,15 +8,18 @@ namespace CaneFactory.Infrastructure.Printing;
 /// <summary>
 /// TVS MSP 270 Classic Plus (9-pin, ESC/P2-compatible) renderer. The slip is first rasterized to a
 /// monochrome SKBitmap using proper HarfBuzz text shaping (so Hindi conjuncts/matras render
-/// correctly - the printer's own font is never used), then converted 1:1 to Epson ESC * bit-image
-/// graphics. RenderPreview returns that exact source bitmap as PNG, so preview == print (WYSIWYG).
+/// correctly - the printer's own font is never used), then converted to Epson ESC * bit-image
+/// graphics. All text is emitted at 120 dpi double density for clean, non-merged glyphs. Fast
+/// weighment mode skips blank columns/bands without reducing text density, so preview remains
+/// WYSIWYG while the carriage avoids unnecessary travel.
 /// </summary>
 public class DotMatrixEscPRenderer : IPrintRenderer
 {
     public string TargetType => "DotMatrix";
 
     private const int WidthPx = 960;        // 8" usable width @ 120 dpi (ESC * m=1, double density)
-    private const byte LineSpacingUnits = 20; // ESC '3' n -> n/180" ; one 8-dot band = 8/72" = 20/180"
+    private const byte DefaultLineSpacingUnits = 20; // configured physical pitch: n/180" per raster band
+    private const int SegmentGapAt120Dpi = 20; // seek across >= 1/6" blank gaps outside graphics mode
 
     public (byte[] bytes, string contentType, string fileExtension) RenderPreview(PrintDocument doc)
     {
@@ -29,11 +32,52 @@ public class DotMatrixEscPRenderer : IPrintRenderer
     public (byte[] bytes, string contentType, string fileExtension) RenderFinal(PrintDocument doc)
     {
         using var bmp = Draw(doc);
-        return (ToEscP(bmp, doc.UseHalfPageDotMatrixLayout), "application/octet-stream", "prn");
+        var layout = GetLayout(doc);
+        return (ToEscP(bmp, doc.UseHalfPageDotMatrixLayout || doc.IsDotMatrixCalibrationSheet,
+            UseFastBody(doc), layout.LineSpacingUnits),
+            "application/octet-stream", "prn");
     }
 
+    private static bool UseFastBody(PrintDocument doc) =>
+        doc.UseHalfPageDotMatrixLayout && !doc.IsDotMatrixCalibrationSheet && doc.DotMatrixFastPrint;
+
     private static SKBitmap Draw(PrintDocument doc) =>
-        doc.UseHalfPageDotMatrixLayout ? DrawHalfPage(doc) : DrawLegacy(doc);
+        doc.IsDotMatrixCalibrationSheet
+            ? DrawCalibrationPage(doc)
+            : doc.UseHalfPageDotMatrixLayout ? DrawHalfPage(doc) : DrawLegacy(doc);
+
+    private static DotMatrixLayout GetLayout(PrintDocument doc)
+    {
+        var pageLines = Math.Clamp(doc.DotMatrixPageLines <= 0 ? 108 : doc.DotMatrixPageLines, 80, 180);
+        if (pageLines % 2 != 0) pageLines--;
+
+        var halfPageLines = doc.DotMatrixHalfPageLines;
+        if (halfPageLines is < 40 or > 90 || halfPageLines * 2 != pageLines)
+            halfPageLines = pageLines / 2;
+
+        var contentOffset = Math.Clamp(doc.DotMatrixContentStartOffsetLines, 0, 10);
+        var postSlipFeed = Math.Clamp(doc.DotMatrixPostSlipFeedLines, 0, 10);
+        var tearLine = doc.DotMatrixTearLinePosition;
+        if (tearLine <= 0 || tearLine + postSlipFeed != halfPageLines)
+            tearLine = halfPageLines - postSlipFeed;
+        tearLine = Math.Clamp(tearLine, Math.Max(30, halfPageLines - 10), halfPageLines);
+        postSlipFeed = halfPageLines - tearLine;
+
+        // Keep 34 bands available for the longest Cane Final/Sale Final detail set and footer.
+        var maxHeader = Math.Max(4, tearLine - contentOffset - 34);
+        var header = Math.Clamp(doc.DotMatrixHeaderReservedLines <= 0 ? 9 : doc.DotMatrixHeaderReservedLines,
+            4, maxHeader);
+        var lineSpacing = (byte)Math.Clamp(
+            doc.DotMatrixLineSpacingUnits <= 0 ? DefaultLineSpacingUnits : doc.DotMatrixLineSpacingUnits,
+            12, 30);
+
+        return new DotMatrixLayout(pageLines, halfPageLines, header, contentOffset,
+            tearLine, postSlipFeed, lineSpacing);
+    }
+
+    private readonly record struct DotMatrixLayout(int PageLines, int HalfPageLines,
+        int HeaderReservedLines, int ContentStartOffsetLines, int TearLinePosition,
+        int PostSlipFeedLines, byte LineSpacingUnits);
 
     /// <summary>Fixed-height production layout for cane gross/final and sale tare/final.
     /// One render advances exactly half of the configured continuous page, so two consecutive
@@ -42,16 +86,15 @@ public class DotMatrixEscPRenderer : IPrintRenderer
     {
         var hindi = string.Equals(doc.Language, "hi", StringComparison.OrdinalIgnoreCase);
         var regular = PrintFonts.Get(doc.Language, bold: false);
-        var bold = PrintFonts.Get(doc.Language, bold: true);
+        // Impact-printer raster text is clearer with a normal-weight face. Bold glyphs create
+        // adjacent pin strikes that can visually merge on multipart/continuous stationery.
+        var bold = regular;
         var rows = ExpandRows(doc);
 
-        var pageLines = Math.Clamp(doc.DotMatrixPageLines, 80, 180);
-        if (pageLines % 2 != 0) pageLines--;
-        var halfPageLines = pageLines / 2;
-        var maxHeaderLines = Math.Max(4, halfPageLines - 34);
-        var headerLines = Math.Clamp(doc.DotMatrixHeaderReservedLines, 4, maxHeaderLines);
-        var height = halfPageLines * 8;
-        var headerHeight = headerLines * 8;
+        var layout = GetLayout(doc);
+        var height = layout.HalfPageLines * 8;
+        var headerHeight = layout.HeaderReservedLines * 8;
+        var tearY = layout.TearLinePosition * 8 - 3;
 
         var bmp = new SKBitmap(WidthPx, height);
         using var canvas = new SKCanvas(bmp);
@@ -67,7 +110,7 @@ public class DotMatrixEscPRenderer : IPrintRenderer
             DrawReservedHeader(canvas, doc, regular, bold, paint, headerHeight);
 
         // No separator is drawn beneath the company header. This keeps the QR quiet zone clear.
-        var y = headerHeight + 2;
+        var y = headerHeight + layout.ContentStartOffsetLines * 8 + 2;
         var title = hindi ? doc.TitleHindi : doc.TitleEnglish;
         DrawFittedText(canvas, title, shaperBold, bold, 18, 12,
             new SKRect(10, y, WidthPx - 280, y + 24), paint, SKTextAlign.Left);
@@ -78,7 +121,8 @@ public class DotMatrixEscPRenderer : IPrintRenderer
                 new SKRect(WidthPx - 270, y, WidthPx - 10, y + 24), paint, SKTextAlign.Right);
         }
         y += 27;
-        canvas.DrawLine(10, y, WidthPx - 10, y, paint);
+        if (!doc.SuppressHeaderSeparator)
+            canvas.DrawLine(10, y, WidthPx - 10, y, paint);
         y += 5;
 
         if (doc.IsDuplicate)
@@ -88,8 +132,9 @@ public class DotMatrixEscPRenderer : IPrintRenderer
             y += 24;
         }
 
-        const int footerHeight = 44;
-        var footerY = height - footerHeight;
+        const int footerHeight = 42;
+        var footerBottom = tearY - 4;
+        var footerY = footerBottom - footerHeight;
         var pairRows = Math.Max(1, (int)Math.Ceiling(rows.Count / 2.0));
         var rowHeight = Math.Min(22, Math.Max(16, (footerY - y - 2) / pairRows));
         var colWidth = WidthPx / 2;
@@ -112,7 +157,81 @@ public class DotMatrixEscPRenderer : IPrintRenderer
             shaperRegular, regular, 14, 9, new SKRect(WidthPx / 2, footerY + 3, WidthPx - 10, footerY + 23),
             paint, SKTextAlign.Right);
         DrawFittedText(canvas, "Warrior Softech", shaperBold, bold, 13, 9,
-            new SKRect(10, footerY + 22, WidthPx - 10, height - 2), paint, SKTextAlign.Center);
+            new SKRect(10, footerY + 22, WidthPx - 10, footerBottom), paint, SKTextAlign.Center);
+
+        DrawTearLine(canvas, tearY, paint);
+
+        canvas.Flush();
+        return bmp;
+    }
+
+    private static void DrawTearLine(SKCanvas canvas, int y, SKPaint paint)
+    {
+        const int left = 10, right = WidthPx - 10, dash = 18, gap = 10;
+        for (var x = left; x < right; x += dash + gap)
+            canvas.DrawLine(x, y, Math.Min(x + dash, right), y, paint);
+    }
+
+    /// <summary>One complete form, printed without FF, for physically matching software feed bands
+    /// to the MSP 270 tractor stationery. The output deliberately uses the same ESC/P line spacing
+    /// and feed path as production slips.</summary>
+    private static SKBitmap DrawCalibrationPage(PrintDocument doc)
+    {
+        var layout = GetLayout(doc);
+        var height = layout.PageLines * 8;
+        var bmp = new SKBitmap(WidthPx, height);
+        using var canvas = new SKCanvas(bmp);
+        canvas.Clear(SKColors.White);
+        using var paint = new SKPaint { Color = SKColors.Black, IsAntialias = false };
+        var regular = PrintFonts.Get("en", bold: false);
+        var bold = PrintFonts.Get("en", bold: true);
+        using var shaper = new SKShaper(bold);
+
+        void Zone(int topLine, int bottomLine, string label)
+        {
+            var top = topLine * 8 + 2;
+            var bottom = bottomLine * 8 - 2;
+            if (bottom <= top) return;
+            canvas.DrawRect(new SKRect(14, top, WidthPx - 14, bottom),
+                new SKPaint { Color = SKColors.Black, Style = SKPaintStyle.Stroke, StrokeWidth = 1 });
+            DrawFittedText(canvas, label, shaper, bold, 14, 9,
+                new SKRect(24, Math.Min(bottom - 20, top + 26), WidthPx - 24,
+                    Math.Min(bottom, top + 46)), paint, SKTextAlign.Center);
+        }
+
+        void Marker(int y, string label, bool dashed = false, bool labelAbove = false)
+        {
+            y = Math.Clamp(y, 1, height - 2);
+            if (dashed) DrawTearLine(canvas, y, paint);
+            else canvas.DrawLine(10, y, WidthPx - 10, y, paint);
+            var top = labelAbove || y > height - 28 ? y - 23 : y + 2;
+            canvas.DrawRect(new SKRect(18, top, WidthPx - 18, top + 20),
+                new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Fill });
+            DrawFittedText(canvas, label, shaper, bold, 13, 8,
+                new SKRect(22, top, WidthPx - 22, top + 20), paint, SKTextAlign.Center);
+        }
+
+        var firstContentLine = layout.HeaderReservedLines + layout.ContentStartOffsetLines;
+        var secondStartLine = layout.HalfPageLines;
+        var secondContentLine = secondStartLine + firstContentLine;
+        var firstTearY = layout.TearLinePosition * 8 - 3;
+        var secondTearY = (layout.HalfPageLines + layout.TearLinePosition) * 8 - 3;
+
+        Zone(0, layout.HeaderReservedLines,
+            $"PHYSICAL TOF / FIRST HEADER RESERVED: {layout.HeaderReservedLines} lines / CONTENT START: {firstContentLine}");
+        Zone(secondStartLine, secondStartLine + layout.HeaderReservedLines,
+            $"SECOND HALF TOF: {secondStartLine} / HEADER RESERVED: {layout.HeaderReservedLines} lines / CONTENT START: {secondContentLine}");
+        Marker(1, "PHYSICAL TOP OF FORM (mechanically calibrated baseline)");
+        Marker(firstContentLine * 8,
+            $"FIRST CONTENT START: line {firstContentLine} (header {layout.HeaderReservedLines} + offset {layout.ContentStartOffsetLines})");
+        Marker(firstTearY,
+            $"FIRST TEAR / HALF BOUNDARY: tear line {layout.TearLinePosition}; next half line {layout.HalfPageLines}",
+            true, true);
+        Marker(secondContentLine * 8,
+            $"SECOND CONTENT START: absolute line {secondContentLine}");
+        Marker(secondTearY,
+            $"SECOND TEAR / BOTTOM FORM BOUNDARY / NEXT TOF: {layout.PageLines} lines; spacing {layout.LineSpacingUnits}/180 inch",
+            true, true);
 
         canvas.Flush();
         return bmp;
@@ -254,7 +373,8 @@ public class DotMatrixEscPRenderer : IPrintRenderer
         }
 
         y += 4;
-        canvas.DrawLine(10, y, WidthPx - 10, y, paint);
+        if (!doc.SuppressHeaderSeparator)
+            canvas.DrawLine(10, y, WidthPx - 10, y, paint);
         y += 24;
         var title = hindi ? doc.TitleHindi : doc.TitleEnglish;
         canvas.DrawShapedText(shaperBold, title, new SKPoint(10, y), SKTextAlign.Left, subFont, paint);
@@ -339,38 +459,121 @@ public class DotMatrixEscPRenderer : IPrintRenderer
         return truncated + "...";
     }
 
-    /// <summary>Epson ESC/P bit-image raster: ESC '3' fixes line spacing to exactly one 8-dot band
-    /// (8/72"), then each band is emitted as ESC * 1 nL nH + 1 byte/column (8 vertical bits, MSB=top).</summary>
-    private static byte[] ToEscP(SKBitmap bmp, bool fixedHalfPage)
+    /// <summary>Epson ESC/P bit-image raster: ESC '3' fixes line spacing to exactly one 8-dot band.
+    /// Empty vertical bands use grouped paper feeds. Inked bands are split around large horizontal
+    /// gaps with ESC '$', so Fast mode seeks over column whitespace without traversing it in graphics
+    /// mode. The MSP 270 interprets ESC 3 in 1/216-inch units, so the user-facing physical pitch
+    /// (stored in 1/180-inch units) is converted before sending. All glyphs stay in m=1 120-dpi
+    /// double density; no horizontal pixel merging is used.</summary>
+    private static byte[] ToEscP(SKBitmap bmp, bool fixedHeight, bool optimizeWhitespace,
+        byte physicalLineSpacingUnits180)
     {
         using var ms = new MemoryStream();
         void W(params byte[] b) => ms.Write(b, 0, b.Length);
+        var printerLineSpacingUnits216 = (byte)Math.Clamp(
+            (int)Math.Round(physicalLineSpacingUnits180 * 216d / 180d), 1, 255);
+
+        void FeedBlankBands(int bandCount)
+        {
+            if (bandCount <= 0) return;
+
+            // ESC 3 accepts one byte. Group as many blank bands as fit in that command.
+            // CR keeps the next raster line at the same left edge; restoring normal spacing
+            // ensures the following inked band still advances by exactly one 8-dot band.
+            W(0x0D);
+            while (bandCount > 0)
+            {
+                var chunkBands = Math.Min(Math.Max(1, 255 / printerLineSpacingUnits216), bandCount);
+                W(0x1B, 0x33, (byte)(chunkBands * printerLineSpacingUnits216));
+                W(0x0A);
+                bandCount -= chunkBands;
+            }
+            W(0x1B, 0x33, printerLineSpacingUnits216);
+        }
+
+        void WriteRasterSegment(byte[] line, int start, int endExclusive, byte graphicsMode)
+        {
+            // ESC '$' uses 1/60" units. Double-density columns are 1/120", therefore an odd
+            // starting column is rounded down and its preceding blank byte is included.
+            if (graphicsMode == 1 && start % 2 != 0) start--;
+            var absolutePosition = graphicsMode == 0 ? start : start / 2;
+            W(0x1B, 0x24, (byte)(absolutePosition & 0xFF),
+                (byte)((absolutePosition >> 8) & 0xFF));
+
+            var length = endExclusive - start;
+            W(0x1B, 0x2A, graphicsMode, (byte)(length & 0xFF),
+                (byte)((length >> 8) & 0xFF));
+            ms.Write(line, start, length);
+        }
+
+        void WriteSegmentedRaster(byte[] line, byte graphicsMode)
+        {
+            var minimumGap = SegmentGapAt120Dpi;
+            var segmentStart = Array.FindIndex(line, value => value != 0);
+            while (segmentStart >= 0)
+            {
+                var lastInk = segmentStart;
+                var scan = segmentStart + 1;
+                for (; scan < line.Length; scan++)
+                {
+                    if (line[scan] != 0)
+                    {
+                        lastInk = scan;
+                        continue;
+                    }
+                    if (scan - lastInk >= minimumGap) break;
+                }
+
+                WriteRasterSegment(line, segmentStart, lastInk + 1, graphicsMode);
+                segmentStart = scan >= line.Length
+                    ? -1
+                    : Array.FindIndex(line, scan, value => value != 0);
+            }
+        }
 
         W(0x1B, 0x40);                       // ESC @  - initialize printer
-        W(0x1B, 0x33, LineSpacingUnits);      // ESC 3 n - line spacing n/180"
+        W(0x1B, 0x33, printerLineSpacingUnits216); // MSP 270 ESC 3 n - n/216"
 
         int width = bmp.Width, height = bmp.Height;
-        var nL = (byte)(width & 0xFF);
-        var nH = (byte)((width >> 8) & 0xFF);
+        var blankBands = 0;
 
         for (var band = 0; band < height; band += 8)
         {
-            W(0x1B, 0x2A, 0x01, nL, nH); // ESC * 1 nL nH - double density, 8 dots/column
+            const byte graphicsMode = 1; // 120-dpi double density for clean Hindi/Latin text
             var line = new byte[width];
-            for (var x = 0; x < width; x++)
+            var hasInk = false;
+            for (var outputX = 0; outputX < width; outputX++)
             {
                 byte col = 0;
                 for (var bit = 0; bit < 8; bit++)
                 {
                     var py = band + bit;
-                    if (py < height && IsBlack(bmp, x, py)) col |= (byte)(1 << (7 - bit));
+                    if (py >= height) continue;
+                    if (IsBlack(bmp, outputX, py))
+                    {
+                        col |= (byte)(1 << (7 - bit));
+                    }
                 }
-                line[x] = col;
+                line[outputX] = col;
+                hasInk |= col != 0;
             }
-            ms.Write(line, 0, line.Length);
-            W(0x0D, 0x0A); // CR LF - advances exactly one band (matches the ESC 3 20 line spacing)
+
+            if (!hasInk)
+            {
+                blankBands++;
+                continue;
+            }
+
+            FeedBlankBands(blankBands);
+            blankBands = 0;
+            if (optimizeWhitespace)
+                WriteSegmentedRaster(line, graphicsMode);
+            else
+                WriteRasterSegment(line, 0, line.Length, graphicsMode);
+            W(0x0D, 0x0A); // CR LF - advances one calibrated physical raster band
         }
-        if (!fixedHalfPage)
+        FeedBlankBands(blankBands);
+        if (!fixedHeight)
             W(0x0A, 0x0A, 0x0A, 0x0A); // preserve legacy spacing for non-weighment documents
         return ms.ToArray();
     }

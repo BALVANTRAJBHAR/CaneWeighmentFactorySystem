@@ -99,9 +99,14 @@ public class SalePurchaseWeighmentController : ControllerBase
     public async Task<IActionResult> SaveTare(SalePurchaseTareSaveRequest req)
     {
         if (Deny("Create") is { } denied) return denied;
-        if (Duplicate(req.IdempotencyKey, out var duplicate)) return duplicate!;
         if (!_weighing.TryGetUsableWeight(out var liveKg, out var deviceError))
             return Conflict(new { message = deviceError });
+        // Reject a below-minimum reading before any database work or idempotency
+        // claim. A repeated click at the same low reading must always return the
+        // same useful validation message immediately.
+        var tare = WeightCalculator.KgToQuintal(liveKg);
+        if (await MinimumWeightErrorAsync(tare, applyGross: false) is { } tareError)
+            return Conflict(new { message = tareError });
         if (req.ItemId <= 0 || req.PartyId <= 0 || req.VehicleTypeId <= 0)
             return BadRequest(new { message = "Item, Party and Vehicle Type are required." });
         var vehicle = Validators.NormalizeVehicleNumber(req.VehicleNumber);
@@ -114,12 +119,10 @@ public class SalePurchaseWeighmentController : ControllerBase
         var vehicleType = await _db.VehicleTypes.AnyAsync(x => x.Id == req.VehicleTypeId && !x.IsDeleted && x.Status);
         if (!item || party == null || !vehicleType) return BadRequest(new { message = "Selected Item, Party or Vehicle Type is inactive or invalid." });
 
-        var tare = WeightCalculator.KgToQuintal(liveKg);
-        if (await MinimumWeightErrorAsync(tare, applyGross: false) is { } tareError)
-            return Conflict(new { message = tareError });
         var now = DateTime.UtcNow;
         var eligibilityError = await CanStartNewSaleTareAsync(vehicle, now);
         if (eligibilityError != null) return Conflict(new { message = eligibilityError, soundEvent = "WEIGHING_ACTIVE" });
+        if (Duplicate(req.IdempotencyKey, out var duplicate)) return duplicate!;
         SalePurchase? record = null;
         try
         {
@@ -160,9 +163,14 @@ public class SalePurchaseWeighmentController : ControllerBase
     public async Task<IActionResult> SaveGross(SalePurchaseGrossSaveRequest req)
     {
         if (Deny("Edit") is { } denied) return denied;
-        if (Duplicate(req.IdempotencyKey, out var duplicate)) return duplicate!;
         if (!_weighing.TryGetUsableWeight(out var liveKg, out var deviceError))
             return Conflict(new { message = deviceError });
+        // Minimum weight is an indicator-level rule, so evaluate it before the
+        // serializable transaction and before comparing gross with saved tare.
+        // This avoids a lock/timeout path at zero and keeps every retry consistent.
+        var liveGross = WeightCalculator.KgToQuintal(liveKg);
+        if (await MinimumWeightErrorAsync(liveGross, applyGross: true) is { } grossError)
+            return Conflict(new { message = grossError });
         // Validate the physical reading before entering the serializable write transaction.
         // This gives the operator a usable message rather than a generic server error when
         // Gross is attempted while the indicator is still at zero or below the saved tare.
@@ -176,12 +184,12 @@ public class SalePurchaseWeighmentController : ControllerBase
             return Conflict(new { message = "Cancelled SalePurchase cannot be processed." });
         if (pendingTare.WeighmentStatus != "TARE_PENDING_GROSS")
             return Conflict(new { message = "Gross is already completed for this SalePurchase." });
-        var liveGross = WeightCalculator.KgToQuintal(liveKg);
         if (liveGross < pendingTare.TareWeightQuintal)
             return Conflict(new
             {
                 message = $"Gross weight ({liveGross:F2} Qtl) cannot be less than the saved tare ({pendingTare.TareWeightQuintal:F2} Qtl). Put the loaded vehicle on the platform and wait for a stable gross reading."
             });
+        if (Duplicate(req.IdempotencyKey, out var duplicate)) return duplicate!;
         SalePurchase? record = null;
         decimal gross = 0;
         decimal finalWeight = 0;
@@ -200,9 +208,7 @@ public class SalePurchaseWeighmentController : ControllerBase
                 if (itemRate == null)
                     throw new SalePurchaseStateException(409, "No active Sale Rate exists for this Item. Configure Sale Rates first.");
 
-                gross = WeightCalculator.KgToQuintal(liveKg);
-                var minimumError = await MinimumWeightErrorAsync(gross, applyGross: true);
-                if (minimumError != null) throw new SalePurchaseStateException(409, minimumError);
+                gross = liveGross;
                 finalWeight = WeightCalculator.R2(gross - record.TareWeightQuintal);
                 if (finalWeight < 0) throw new SalePurchaseStateException(409, "Gross weight cannot be less than tare weight.");
                 record.ScaleReadingGrossKg = WeightCalculator.R2(liveKg);
@@ -297,7 +303,11 @@ public class SalePurchaseWeighmentController : ControllerBase
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
         if (cfg == null) return null;
         return new { printerType = cfg.PrinterType, printerName = cfg.PrinterName, copies = cfg.SalePurchaseCopies,
-            language = cfg.Language, stage, shouldAutoPrint = cfg.AutoPrint && cfg.SalePurchaseCopies > 0,
+            language = cfg.Language, stage,
+            dotMatrixTearOffParkingEnabled = cfg.DotMatrixTearOffParkingEnabled,
+            dotMatrixTearOffFeedLines = cfg.DotMatrixTearOffFeedLines,
+            dotMatrixLineSpacingUnits = cfg.DotMatrixLineSpacingUnits,
+            shouldAutoPrint = cfg.AutoPrint && cfg.SalePurchaseCopies > 0,
             documentUrl = $"/api/print/sale-purchase/{id}?stage={stage}&format=final" +
                 (cfg.AutoPrint && cfg.SalePurchaseCopies > 0 ? "" : "&target=A4") };
     }

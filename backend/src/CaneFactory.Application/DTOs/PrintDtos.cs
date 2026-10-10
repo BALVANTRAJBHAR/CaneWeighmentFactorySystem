@@ -37,12 +37,26 @@ public class PrintDocument
     public List<PrintImage> Images { get; set; } = new();
     public bool PrintImages { get; set; } = true;
 
-    /// <summary>Only cane gross/final and sale tare/final use fixed half-page dot-matrix
-    /// stationery. Other documents keep their existing renderer behavior.</summary>
+    /// <summary>Documents printed on the tractor-fed stationery use this fixed half-page
+    /// dot-matrix layout. The same calibrated engine is shared by weighment, payment and loan slips.</summary>
     public bool UseHalfPageDotMatrixLayout { get; set; }
+    /// <summary>Some compact slips place a QR at the right edge of the company header.  Their
+    /// header must never draw a rule through the QR quiet zone.</summary>
+    public bool SuppressHeaderSeparator { get; set; }
     public bool DotMatrixPrintHeader { get; set; } = true;
     public int DotMatrixPageLines { get; set; } = 108;
+    public int DotMatrixHalfPageLines { get; set; } = 54;
     public int DotMatrixHeaderReservedLines { get; set; } = 9;
+    public int DotMatrixContentStartOffsetLines { get; set; }
+    public int DotMatrixTearLinePosition { get; set; } = 54;
+    public int DotMatrixPostSlipFeedLines { get; set; }
+    public int DotMatrixNextFormTofLines { get; set; } = 108;
+    public int DotMatrixLineSpacingUnits { get; set; } = 20;
+    public bool DotMatrixFastPrint { get; set; } = true;
+
+    /// <summary>Dot-matrix-only full-form calibration sheet. It is never used by operational
+    /// transaction prints or by the A4 renderer.</summary>
+    public bool IsDotMatrixCalibrationSheet { get; set; }
 
     /// <summary>Optional row-wise detail sections, used by a multi-purchase payment advice.
     /// A4 renders these as tables; dot-matrix expands them into readable field rows.</summary>

@@ -45,8 +45,29 @@ public class PrintConfig : BaseEntity
     /// <summary>Total ESC/P feed bands on one continuous stationery page. Must be even;
     /// each cane/sale weighment slip consumes exactly half.</summary>
     public int DotMatrixPageLines { get; set; } = 108;
+    /// <summary>Exact feed-band count consumed by one slip. Two halves must equal one form.</summary>
+    public int DotMatrixHalfPageLines { get; set; } = 54;
     /// <summary>Header height in ESC/P feed bands (20/180 inch each by default).</summary>
     public int DotMatrixHeaderReservedLines { get; set; } = 9;
+    /// <summary>Additional blank feed bands between the reserved header and transaction title.</summary>
+    public int DotMatrixContentStartOffsetLines { get; set; }
+    /// <summary>One-based band position of the perforation/tear marker inside each half.</summary>
+    public int DotMatrixTearLinePosition { get; set; } = 54;
+    /// <summary>Blank bands after the tear marker. Tear position plus this feed must equal half-page lines.</summary>
+    public int DotMatrixPostSlipFeedLines { get; set; }
+    /// <summary>Absolute feed-band position of the next physical form TOF; normally equals page lines.</summary>
+    public int DotMatrixNextFormTofLines { get; set; } = 108;
+    /// <summary>Physical line pitch stored in 1/180-inch units. The raw renderer converts
+    /// this to the TVS MSP 270 ESC/P command's 1/216-inch units (20/180 => 24/216).</summary>
+    public int DotMatrixLineSpacingUnits { get; set; } = 20;
+    /// <summary>After all configured copies for a transaction, temporarily park the final
+    /// perforation outside the printer cover, then reverse after operator confirmation.</summary>
+    public bool DotMatrixTearOffParkingEnabled { get; set; } = true;
+    /// <summary>Temporary forward/reverse distance expressed in configured raster/feed lines.</summary>
+    public decimal DotMatrixTearOffFeedLines { get; set; } = 12m;
+    /// <summary>Weighment slips only. Skips blank raster columns and bands while preserving
+    /// clear 120-DPI double-density text output.</summary>
+    public bool DotMatrixFastPrint { get; set; } = true;
 }
 
 public class SmsConfig : BaseEntity

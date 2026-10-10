@@ -40,11 +40,13 @@ class _NavItem {
   final String? roleOnly;
   final List<String> anyPermissions;
   final List<String> anyRoles;
+  final List<String> excludedRoles;
   final bool androidOnly;
   const _NavItem(this.label, this.icon, this.permission, this.builder,
       {this.roleOnly,
       this.anyPermissions = const [],
       this.anyRoles = const [],
+      this.excludedRoles = const [],
       this.androidOnly = false});
 }
 
@@ -68,7 +70,7 @@ class _AppShellState extends State<AppShell> {
     _NavItem('My Dashboard', Icons.eco_outlined, 'Dashboard.View',
         () => const FarmerDashboardScreen(),
         roleOnly: 'Farmer'),
-    _NavItem('Cane Weighment', Icons.scale_outlined, 'Weighment.View',
+    _NavItem('Purchase Weighment', Icons.scale_outlined, 'Weighment.View',
         () => const WeighmentScreen()),
     _NavItem('Grower Search', Icons.person_search_outlined, 'Grower.View',
         () => const GrowerSearchScreen()),
@@ -81,9 +83,11 @@ class _AppShellState extends State<AppShell> {
     _NavItem('Payments', Icons.payments_outlined, 'Payment.View',
         () => const PaymentScreen()),
     _NavItem('Cash Book', Icons.menu_book_outlined, 'CashBook.View',
-        () => const CashBookScreen()),
+        () => const CashBookScreen(),
+        excludedRoles: ['Operator']),
     _NavItem('Expenses', Icons.account_balance_wallet_outlined, 'Expense.View',
-        () => const ExpenseScreen()),
+        () => const ExpenseScreen(),
+        excludedRoles: ['Operator']),
     _NavItem('Sale Weighment', Icons.local_shipping_outlined,
         'SalePurchase.View', () => const SalePurchaseWeighmentScreen()),
     _NavItem('Weighment Corrections', Icons.edit_note_outlined, 'Purchase.Edit',
@@ -93,7 +97,8 @@ class _AppShellState extends State<AppShell> {
     _NavItem(
         'Loans', Icons.savings_outlined, 'Loan.View', () => const LoanScreen()),
     _NavItem('Reports', Icons.summarize_outlined, 'Report.View',
-        () => const ReportsScreen()),
+        () => const ReportsScreen(),
+        excludedRoles: ['Operator']),
     _NavItem('View Images', Icons.photo_library_outlined, 'Image.View',
         () => const ImageViewScreen(),
         anyPermissions: ['CashEvidence.View']),
@@ -154,6 +159,7 @@ class _AppShellState extends State<AppShell> {
             (!auth.hasRole('Farmer') || i.roleOnly == 'Farmer') &&
             (auth.can(i.permission) || i.anyPermissions.any(auth.can)) &&
             (i.roleOnly == null || auth.hasRole(i.roleOnly!)) &&
+            !i.excludedRoles.any(auth.hasRole) &&
             (!i.androidOnly ||
                 (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)) &&
             (i.anyRoles.isEmpty || i.anyRoles.any(auth.hasRole)))

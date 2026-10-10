@@ -97,6 +97,13 @@ public class Item : BaseEntity
     public string? ItemNameHi { get; set; }
 }
 
+/// <summary>Cane crop cycle selected at gross weighment (Plant / Ratoon cycle).</summary>
+public class Crop : BaseEntity
+{
+    public string CropName { get; set; } = string.Empty;
+    public string? CropNameHi { get; set; }
+}
+
 public class Party : BaseEntity
 {
     public string PartyName { get; set; } = string.Empty;

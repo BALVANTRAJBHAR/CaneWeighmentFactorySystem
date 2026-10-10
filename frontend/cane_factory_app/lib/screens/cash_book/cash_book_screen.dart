@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
 import '../../core/file_download.dart';
 import '../../providers/auth_provider.dart';
+import '../../widgets/pinned_table_scroll.dart';
 
 class CashBookScreen extends StatefulWidget {
   const CashBookScreen({super.key});
@@ -22,19 +23,27 @@ class _CashBookScreenState extends State<CashBookScreen> {
   final _cashOutAmount = TextEditingController();
   final _cashOutReference = TextEditingController();
   final _cashOutRemarks = TextEditingController();
+  final _closingTakenBy = TextEditingController();
+  final _closingReference = TextEditingController();
+  final _closingRemarks = TextEditingController();
   final _search = TextEditingController();
   final _dateFormat = DateFormat('dd-MM-yyyy');
   String _sourceType = 'BANK';
   String _entryTab = 'RECEIPT';
   DateTime _receiptDate = DateTime.now();
   DateTime _paymentDate = DateTime.now();
-  DateTime? _fromDate;
-  DateTime? _toDate;
+  DateTime _closingDate = DateTime.now();
+  DateTime? _fromDate = DateUtils.dateOnly(DateTime.now());
+  DateTime? _toDate = DateUtils.dateOnly(DateTime.now());
   bool _loading = true;
   bool _saving = false;
   String? _error;
   List<Map<String, dynamic>> _items = [];
+  List<Map<String, dynamic>> _dailySummaries = [];
   Map<String, dynamic> _totals = {};
+  Map<String, dynamic> _closingSummary = {};
+  final _verticalController = ScrollController();
+  final _horizontalController = ScrollController();
 
   @override
   void initState() {
@@ -52,7 +61,12 @@ class _CashBookScreenState extends State<CashBookScreen> {
     _cashOutAmount.dispose();
     _cashOutReference.dispose();
     _cashOutRemarks.dispose();
+    _closingTakenBy.dispose();
+    _closingReference.dispose();
+    _closingRemarks.dispose();
     _search.dispose();
+    _verticalController.dispose();
+    _horizontalController.dispose();
     super.dispose();
   }
 
@@ -77,6 +91,10 @@ class _CashBookScreenState extends State<CashBookScreen> {
         _items = List<Map<String, dynamic>>.from((data['items'] as List? ?? [])
             .map((x) => Map<String, dynamic>.from(x)));
         _totals = Map<String, dynamic>.from(data['totals'] ?? {});
+        _dailySummaries = List<Map<String, dynamic>>.from(
+            (data['dailySummaries'] as List? ?? [])
+                .map((x) => Map<String, dynamic>.from(x)));
+        await _loadClosingSummary();
       } else {
         _error = ApiClient.errorMessage(res);
       }
@@ -86,14 +104,28 @@ class _CashBookScreenState extends State<CashBookScreen> {
     if (mounted) setState(() => _loading = false);
   }
 
+  Future<void> _loadClosingSummary() async {
+    final res = await ApiClient.instance.dio.get('/api/cash-book/daily-summary',
+        queryParameters: {
+          'date': DateFormat('yyyy-MM-dd').format(_closingDate)
+        });
+    if (res.statusCode == 200) {
+      _closingSummary = Map<String, dynamic>.from(res.data);
+    }
+  }
+
   Future<void> _pickDate({required bool receipt, required bool from}) async {
     final current =
         receipt ? _receiptDate : (from ? _fromDate : _toDate) ?? DateTime.now();
+    final today = DateUtils.dateOnly(DateTime.now());
+    final initialDate = receipt && current.isAfter(today) ? today : current;
     final picked = await showDatePicker(
       context: context,
-      initialDate: current,
+      initialDate: initialDate,
       firstDate: DateTime(2020),
-      lastDate: DateTime(2035),
+      // Cash entry dates cannot be in the future. Report filters retain their
+      // wider range because this helper is also used by the report section.
+      lastDate: receipt ? today : DateTime(2035),
     );
     if (picked == null || !mounted) return;
     setState(() {
@@ -201,6 +233,66 @@ class _CashBookScreenState extends State<CashBookScreen> {
     }
   }
 
+  Future<void> _closeDay() async {
+    if (_closingTakenBy.text.trim().isEmpty) {
+      return _toast('Enter the name of the person taking the closing cash.',
+          error: true);
+    }
+    final available =
+        num.tryParse('${_closingSummary['availableBeforeClosing']}') ?? 0;
+    if (available < 0) {
+      return _toast('Cash Book is short. Reconcile the entries before closing.',
+          error: true);
+    }
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Close this cash day?'),
+            content: Text(
+                '₹${_money(available)} will be recorded as Day Closing Withdrawal for ${_dateFormat.format(_closingDate)}. The next day will start from the actual cash left after this withdrawal. This entry is retained for audit.'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('No')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Yes, Close Day')),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+
+    setState(() => _saving = true);
+    try {
+      final res =
+          await ApiClient.instance.dio.post('/api/cash-book/day-close', data: {
+        'entryDate': _closingDate.toIso8601String(),
+        'cashTakenBy': _closingTakenBy.text.trim(),
+        'referenceNumber': _closingReference.text.trim().isEmpty
+            ? null
+            : _closingReference.text.trim(),
+        'remarks': _closingRemarks.text.trim().isEmpty
+            ? null
+            : _closingRemarks.text.trim(),
+      });
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        _toast(res.data['message'] ?? 'Cash day closed.');
+        _closingTakenBy.clear();
+        _closingReference.clear();
+        _closingRemarks.clear();
+        await _load();
+      } else {
+        _toast(ApiClient.errorMessage(res), error: true);
+      }
+    } catch (e) {
+      if (mounted) _toast(ApiClient.exceptionMessage(e), error: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _export(String format) async {
     await downloadAndNotify(context, '/api/reports/cash-book',
         'cash-book-report.${format == 'pdf' ? 'pdf' : 'xlsx'}',
@@ -230,7 +322,11 @@ class _CashBookScreenState extends State<CashBookScreen> {
         if (canCreate) ...[
           _entryTabs(),
           const SizedBox(height: 12),
-          _entryTab == 'RECEIPT' ? _receiptForm() : _otherPaymentForm(),
+          switch (_entryTab) {
+            'RECEIPT' => _receiptForm(),
+            'PAYMENT' => _otherPaymentForm(),
+            _ => _dayClosingForm(),
+          },
         ],
         const SizedBox(height: 10),
         _filters(),
@@ -239,6 +335,10 @@ class _CashBookScreenState extends State<CashBookScreen> {
           Text(_error!,
               style: TextStyle(color: Theme.of(context).colorScheme.error)),
         _summary(),
+        if (_dailySummaries.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _dailySummaryPanel(),
+        ],
         const SizedBox(height: 8),
         Expanded(child: _table()),
       ]),
@@ -258,8 +358,97 @@ class _CashBookScreenState extends State<CashBookScreen> {
           _entryTabButton('Cash Receipt', 'RECEIPT', Icons.south_west_outlined),
           _entryTabButton(
               'Other Cash Payment', 'PAYMENT', Icons.north_east_outlined),
+          _entryTabButton(
+              'Day Closing', 'DAY_CLOSE', Icons.lock_clock_outlined),
         ]),
       );
+
+  Widget _dayClosingForm() {
+    final closed = _closingSummary['isClosed'] == true;
+    final available = _closingSummary['availableBeforeClosing'];
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('END-OF-DAY CASH CLOSING',
+              style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: Theme.of(context).colorScheme.primary)),
+          const SizedBox(height: 4),
+          const Text(
+              'The server calculates the complete cash available. Closing records that amount as withdrawn; do not enter it again as Other Cash Payment.'),
+          const SizedBox(height: 10),
+          Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                    onPressed: () async {
+                      final today = DateUtils.dateOnly(DateTime.now());
+                      final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _closingDate.isAfter(today)
+                              ? today
+                              : _closingDate,
+                          firstDate: DateTime(2020),
+                          lastDate: today);
+                      if (picked != null && mounted) {
+                        setState(() => _closingDate = picked);
+                        try {
+                          await _loadClosingSummary();
+                          if (mounted) setState(() {});
+                        } catch (e) {
+                          if (mounted) {
+                            _toast(ApiClient.exceptionMessage(e), error: true);
+                          }
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.date_range),
+                    label: Text(_dateFormat.format(_closingDate))),
+                SizedBox(
+                    width: 220,
+                    child: TextField(
+                        controller: _closingTakenBy,
+                        decoration:
+                            const InputDecoration(labelText: 'Cash Taken By'))),
+                SizedBox(
+                    width: 180,
+                    child: TextField(
+                        controller: _closingReference,
+                        decoration: const InputDecoration(
+                            labelText: 'Reference No. (optional)'))),
+                SizedBox(
+                    width: 250,
+                    child: TextField(
+                        controller: _closingRemarks,
+                        decoration: const InputDecoration(
+                            labelText: 'Closing Remarks (optional)'))),
+                FilledButton.icon(
+                  onPressed: _saving || closed ? null : _closeDay,
+                  icon: const Icon(Icons.lock_outline),
+                  label: Text(closed
+                      ? 'Day Already Closed'
+                      : 'Withdraw ₹${_money(available)} & Close Day'),
+                ),
+              ]),
+          const SizedBox(height: 10),
+          Wrap(spacing: 24, runSpacing: 8, children: [
+            _summaryValue('Opening', _closingSummary['openingCash']),
+            _summaryValue('Cash In', _closingSummary['cashReceived']),
+            _summaryValue('Farmer Paid', _closingSummary['farmerCashPaid']),
+            _summaryValue('Other Paid', _closingSummary['otherCashPaid']),
+            _summaryValue('Available Before Close', available, bold: true),
+            _summaryValue(
+                'Already Withdrawn', _closingSummary['closingWithdrawal']),
+            _summaryValue('Cash Left', _closingSummary['closingBalance'],
+                bold: true),
+          ]),
+        ]),
+      ),
+    );
+  }
 
   Widget _entryTabButton(String label, String value, IconData icon) {
     final selected = _entryTab == value;
@@ -404,11 +593,14 @@ class _CashBookScreenState extends State<CashBookScreen> {
                   ),
                   OutlinedButton.icon(
                       onPressed: () async {
+                        final today = DateUtils.dateOnly(DateTime.now());
+                        final initialDate =
+                            _paymentDate.isAfter(today) ? today : _paymentDate;
                         final picked = await showDatePicker(
                             context: context,
-                            initialDate: _paymentDate,
+                            initialDate: initialDate,
                             firstDate: DateTime(2020),
-                            lastDate: DateTime(2035));
+                            lastDate: today);
                         if (picked != null && mounted) {
                           setState(() => _paymentDate = picked);
                         }
@@ -477,6 +669,18 @@ class _CashBookScreenState extends State<CashBookScreen> {
                 },
                 child: const Text('Clear')),
             OutlinedButton.icon(
+                onPressed: () {
+                  final today = DateUtils.dateOnly(DateTime.now());
+                  setState(() {
+                    _fromDate = today;
+                    _toDate = today;
+                    _search.clear();
+                  });
+                  _load();
+                },
+                icon: const Icon(Icons.today_outlined),
+                label: const Text('Today')),
+            OutlinedButton.icon(
                 onPressed: () => _export('pdf'),
                 icon: const Icon(Icons.picture_as_pdf_outlined),
                 label: const Text('Print (PDF)')),
@@ -495,9 +699,10 @@ class _CashBookScreenState extends State<CashBookScreen> {
             _summaryValue('Cash Received', _totals['received']),
             _summaryValue('Paid to Farmers', _totals['farmerCashPaid']),
             _summaryValue('Other Cash Paid', _totals['otherCashPaid']),
-            _summaryValue('Total Cash Paid', _totals['paid']),
-            _summaryValue('Closing Balance', _totals['closingBalance'],
-                bold: true),
+            _summaryValue('Operating Cash Paid', _totals['operatingCashPaid']),
+            _summaryValue(
+                'Day Closing Withdrawal', _totals['closingWithdrawal']),
+            _summaryValue('Cash Left', _totals['closingBalance'], bold: true),
           ]),
         ),
       );
@@ -507,6 +712,60 @@ class _CashBookScreenState extends State<CashBookScreen> {
           style:
               TextStyle(fontWeight: bold ? FontWeight.w800 : FontWeight.w600));
 
+  Widget _dailySummaryPanel() => Card(
+        child: ExpansionTile(
+          initiallyExpanded: true,
+          title: const Text('Daily Cash Reconciliation',
+              style: TextStyle(fontWeight: FontWeight.w800)),
+          subtitle: const Text(
+              'Opening + Cash In − Farmer Paid − Other Paid − Closing Withdrawal = Cash Left'),
+          children: [
+            SizedBox(
+              height:
+                  (_dailySummaries.length * 48 + 58).clamp(105, 205).toDouble(),
+              child: SingleChildScrollView(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columns: const [
+                      DataColumn(label: Text('Date')),
+                      DataColumn(label: Text('Opening')),
+                      DataColumn(label: Text('Cash In')),
+                      DataColumn(label: Text('Farmer Paid')),
+                      DataColumn(label: Text('Other Paid')),
+                      DataColumn(label: Text('Total Spent')),
+                      DataColumn(label: Text('Before Close')),
+                      DataColumn(label: Text('Closing Withdrawal')),
+                      DataColumn(label: Text('Cash Left')),
+                      DataColumn(label: Text('Status / Taken By')),
+                    ],
+                    rows: [
+                      for (final row in _dailySummaries)
+                        DataRow(cells: [
+                          DataCell(Text(_date(row['date']))),
+                          DataCell(Text(_money(row['openingCash']))),
+                          DataCell(Text(_money(row['cashReceived']))),
+                          DataCell(Text(_money(row['farmerCashPaid']))),
+                          DataCell(Text(_money(row['otherCashPaid']))),
+                          DataCell(Text(_money(row['operatingCashPaid']))),
+                          DataCell(Text(_money(row['availableBeforeClosing']))),
+                          DataCell(Text(_money(row['closingWithdrawal']))),
+                          DataCell(Text(_money(row['closingBalance']),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w800))),
+                          DataCell(Text(row['isClosed'] == true
+                              ? 'CLOSED • ${row['cashTakenBy'] ?? '-'}'
+                              : 'OPEN')),
+                        ]),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+
   Widget _table() => Card(
         child: _loading
             ? const Center(child: CircularProgressIndicator())
@@ -514,61 +773,72 @@ class _CashBookScreenState extends State<CashBookScreen> {
                 ? const Center(
                     child: Text(
                         'No Cash Book entries found for the selected date range.'))
-                : SingleChildScrollView(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        columns: const [
-                          DataColumn(label: Text('Date')),
-                          DataColumn(label: Text('Entry')),
-                          DataColumn(label: Text('Source')),
-                          DataColumn(label: Text('Grower ID / Name')),
-                          DataColumn(label: Text('Payment ID')),
-                          DataColumn(label: Text('Net Payable (₹)')),
-                          DataColumn(label: Text('Cash In (₹)')),
-                          DataColumn(label: Text('Cash Out (₹)')),
-                          DataColumn(label: Text('Balance (₹)')),
-                          DataColumn(label: Text('Reference / Remarks')),
-                        ],
-                        rows: [
-                          for (final row in _items)
-                            DataRow(cells: [
-                              DataCell(Text(_date(row['entryDate']))),
-                              DataCell(Text(_entryLabel(row))),
-                              DataCell(Text(
-                                  '${row['sourceType']} • ${row['sourceName'] ?? '-'}')),
-                              DataCell(Text(row['growerId'] == null
-                                  ? '-'
-                                  : '${row['growerId']} ${row['growerName'] ?? ''}')),
-                              DataCell(Text('${row['paymentId'] ?? '-'}')),
-                              DataCell(Text(row['netPayableAmount'] == null
-                                  ? '-'
-                                  : _money(row['netPayableAmount']))),
-                              DataCell(Text(row['entryType'] == 'CASH_IN'
-                                  ? _money(row['amount'])
-                                  : '-')),
-                              DataCell(Text(row['entryType'] == 'CASH_OUT'
-                                  ? _money(row['amount'])
-                                  : '-')),
-                              DataCell(Text(_money(row['runningBalance']),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w700))),
-                              DataCell(SizedBox(
-                                  width: 250,
-                                  child: Text(
-                                      '${row['referenceNumber'] ?? ''} ${row['remarks'] ?? ''}',
-                                      overflow: TextOverflow.ellipsis))),
-                            ]),
-                        ],
-                      ),
+                : PinnedTableScroll(
+                    verticalController: _verticalController,
+                    horizontalController: _horizontalController,
+                    minTableWidth: 1750,
+                    child: DataTable(
+                      columns: const [
+                        DataColumn(label: Text('Date')),
+                        DataColumn(label: Text('Entry')),
+                        DataColumn(label: Text('Source')),
+                        DataColumn(label: Text('Grower ID / Name')),
+                        DataColumn(label: Text('Payment ID')),
+                        DataColumn(label: Text('Net Payable (₹)')),
+                        DataColumn(label: Text('Cash In (₹)')),
+                        DataColumn(label: Text('Cash Out (₹)')),
+                        DataColumn(label: Text('Balance (₹)')),
+                        DataColumn(label: Text('Reference / Remarks')),
+                      ],
+                      rows: [
+                        for (final row in _items)
+                          DataRow(cells: [
+                            DataCell(Text(_date(row['entryDate']))),
+                            DataCell(Text(_entryLabel(row))),
+                            DataCell(Text(
+                                '${_sourceLabel(row['sourceType'])} • ${row['sourceName'] ?? '-'}')),
+                            DataCell(Text(row['growerId'] == null
+                                ? '-'
+                                : '${row['growerId']} ${row['growerName'] ?? ''}')),
+                            DataCell(Text('${row['paymentId'] ?? '-'}')),
+                            DataCell(Text(row['netPayableAmount'] == null
+                                ? '-'
+                                : _money(row['netPayableAmount']))),
+                            DataCell(Text(row['entryType'] == 'CASH_IN'
+                                ? _money(row['amount'])
+                                : '-')),
+                            DataCell(Text(row['entryType'] == 'CASH_OUT'
+                                ? _money(row['amount'])
+                                : '-')),
+                            DataCell(Text(_money(row['runningBalance']),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700))),
+                            DataCell(SizedBox(
+                                width: 250,
+                                child: Text(
+                                    '${row['referenceNumber'] ?? ''} ${row['remarks'] ?? ''}',
+                                    overflow: TextOverflow.ellipsis))),
+                          ]),
+                      ],
                     ),
                   ),
       );
 
   String _entryLabel(Map<String, dynamic> row) {
     if (row['entryType'] == 'CASH_IN') return 'Received';
+    if (row['sourceType'] == 'DAY_CLOSING_WITHDRAWAL') {
+      return 'Day Closing Withdrawal';
+    }
     return row['sourceType'] == 'FARMER_PAYMENT'
         ? 'Farmer Payment'
         : 'Other Cash Payment';
   }
+
+  String _sourceLabel(dynamic sourceType) => switch ('$sourceType') {
+        'DAY_CLOSING_WITHDRAWAL' => 'DAY CLOSING',
+        'FARMER_PAYMENT' => 'FARMER PAYMENT',
+        'OTHER_CASH_PAYMENT' => 'OTHER PAYMENT',
+        'PAYMENT_REVERSAL' => 'PAYMENT REVERSAL',
+        final value => value,
+      };
 }

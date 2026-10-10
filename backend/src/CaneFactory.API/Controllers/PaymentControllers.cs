@@ -1,6 +1,7 @@
 using CaneFactory.Application.Common;
 using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Interfaces;
+using CaneFactory.API.Services;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -56,36 +57,46 @@ public class PaymentController : ControllerBase
     // Cash evidence is intentionally captured from the operator's live-view dialog.
     // A background snapshot could prove an empty counter rather than the farmer receiving payment.
 
-    private async Task<object?> AutoPrintAsync(int paymentId)
+    private async Task<object?> AutoPrintAsync(int paymentId, string? requestedTarget = null)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
         if (cfg == null) return null;
+        var target = requestedTarget ?? cfg.PrinterType;
+        if (target is not ("A4" or "DotMatrix")) target = cfg.PrinterType;
+        var printerName = target == "DotMatrix" ? cfg.DotMatrixPrinterName : cfg.A4PrinterName;
+        var userSelectedTarget = !string.IsNullOrWhiteSpace(requestedTarget);
+        var shouldAutoPrint = userSelectedTarget || (cfg.AutoPrint && cfg.PaymentCopies > 0);
         return new
         {
-            printerType = cfg.PrinterType,
-            printerName = cfg.PrinterName,
-            copies = cfg.PaymentCopies,
+            printerType = target,
+            printerName,
+            copies = userSelectedTarget ? Math.Max(1, cfg.PaymentCopies) : cfg.PaymentCopies,
             language = cfg.Language,
-            shouldAutoPrint = cfg.AutoPrint && cfg.PaymentCopies > 0,
-            // When physical printing is disabled, always return an A4 PDF URL for the operator.
+            shouldAutoPrint,
+            // Existing clients without an explicit choice still receive an A4 PDF when
+            // physical auto-print is disabled.  A user-selected print type is honoured.
             documentUrl = $"/api/print/payment/{paymentId}?format=final" +
-                (cfg.AutoPrint && cfg.PaymentCopies > 0 ? "" : "&target=A4")
+                (shouldAutoPrint ? $"&target={target}" : "&target=A4")
         };
     }
 
-    private async Task<object?> AutoPrintBatchAsync(string batchPrintToken)
+    private async Task<object?> AutoPrintBatchAsync(string batchPrintToken, string? requestedTarget = null)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
         if (cfg == null) return null;
+        var target = requestedTarget ?? cfg.PrinterType;
+        if (target is not ("A4" or "DotMatrix")) target = cfg.PrinterType;
+        var userSelectedTarget = !string.IsNullOrWhiteSpace(requestedTarget);
+        var shouldAutoPrint = userSelectedTarget || (cfg.AutoPrint && cfg.PaymentCopies > 0);
         return new
         {
-            printerType = cfg.PrinterType,
-            printerName = cfg.PrinterName,
-            copies = cfg.PaymentCopies,
+            printerType = target,
+            printerName = target == "DotMatrix" ? cfg.DotMatrixPrinterName : cfg.A4PrinterName,
+            copies = userSelectedTarget ? Math.Max(1, cfg.PaymentCopies) : cfg.PaymentCopies,
             language = cfg.Language,
-            shouldAutoPrint = cfg.AutoPrint && cfg.PaymentCopies > 0,
+            shouldAutoPrint,
             documentUrl = $"/api/print/payment-batch?batchToken={batchPrintToken}&format=final" +
-                (cfg.AutoPrint && cfg.PaymentCopies > 0 ? "" : "&target=A4")
+                (shouldAutoPrint ? $"&target={target}" : "&target=A4")
         };
     }
 
@@ -296,6 +307,8 @@ public class PaymentController : ControllerBase
     {
         if (Deny("Create") is { } d) return d;
         if (IsDuplicateRequest(req.IdempotencyKey, out var dup)) return dup!;
+        if (!string.IsNullOrWhiteSpace(req.PrintTarget) && req.PrintTarget is not ("A4" or "DotMatrix"))
+            return BadRequest(new { message = "Print Target must be A4 or DotMatrix." });
 
         var mode = (req.SelectionMode ?? "").Trim().ToUpperInvariant();
         if (mode is not ("SINGLE" or "DATE_RANGE" or "FARMER"))
@@ -320,6 +333,8 @@ public class PaymentController : ControllerBase
         if (paymentMode == null) return BadRequest(new { message = "Selected Payment Mode does not exist or is inactive." });
         var isCashPayment = string.Equals(paymentMode.ModeCode, "CASH", StringComparison.OrdinalIgnoreCase);
         var isBankPayment = IsBankPayment(paymentMode);
+        if (isCashPayment && await IsCashBookDayClosedAsync(DateTime.Today))
+            return Conflict(new { message = "Today's Cash Book is already closed. Cash farmer payments must be posted on the next open working day." });
         if (isBankPayment && GetBankDetailsError(grower) is { } bankError)
             return Conflict(new { message = bankError });
 
@@ -409,7 +424,7 @@ public class PaymentController : ControllerBase
         {
             _db.CashBookEntries.Add(new CashBookEntry
             {
-                EntryDate = payment.PaymentDate.Date,
+                EntryDate = DateTime.Today,
                 EntryType = "CASH_OUT",
                 SourceType = "FARMER_PAYMENT",
                 SourceName = "Farmer cash payment",
@@ -480,7 +495,7 @@ public class PaymentController : ControllerBase
             loanDeductedAmount = totalDeducted,
             netPayableAmount = netPayable,
             purchaseCount = eligible.Count,
-            autoPrint = await AutoPrintAsync(paymentId),
+            autoPrint = await AutoPrintAsync(paymentId, req.PrintTarget),
             captureQueued = false,
             cashEvidenceRequired = isCash,
             smsQueued
@@ -498,6 +513,8 @@ public class PaymentController : ControllerBase
         if (season == null) return Conflict(new { message = "No ACTIVE season is configured. Ask Admin/Developer to activate a Season." });
         var isCash = string.Equals(paymentMode.ModeCode, "CASH", StringComparison.OrdinalIgnoreCase);
         var isBank = IsBankPayment(paymentMode);
+        if (isCash && await IsCashBookDayClosedAsync(DateTime.Today))
+            return Conflict(new { message = "Today's Cash Book is already closed. Cash farmer payments must be posted on the next open working day." });
         var purchases = await EligibleDateRangePurchasesQuery(req.FromDate, req.ToDate)
             .OrderBy(p => p.GrowerId).ThenBy(p => p.TareDateTime).ToListAsync();
         if (purchases.Count == 0) return Conflict(new { message = "No payable purchases found for the selected date range." });
@@ -539,13 +556,15 @@ public class PaymentController : ControllerBase
                 growerId = result.Grower.Id, growerCode = result.Grower.GrowerCode, growerName = result.Grower.GrowerName,
                 totalPurchaseAmount = result.Payment.TotalPurchaseAmount, loanDeductedAmount = result.Payment.LoanDeductedAmount,
                 netPayableAmount = result.Payment.NetPayableAmount, purchaseCount = result.PurchaseCount,
-                captureQueued = false, cashEvidenceRequired = isCash, autoPrint = await AutoPrintAsync(result.Payment.Id) });
+                captureQueued = false, cashEvidenceRequired = isCash, autoPrint = await AutoPrintAsync(result.Payment.Id, req.PrintTarget) });
         return Ok(new
         {
             isBatch = true,
             message = $"{completed.Count} farmer payment(s) completed. One consolidated batch PDF contains every Advice, bank/payable row and purchase-wise detail.",
             paymentCount = completed.Count, purchaseCount = completed.Sum(x => x.PurchaseCount),
-            autoPrint = await AutoPrintBatchAsync(batchPrintToken),
+            // A consolidated table can span many pages.  For an explicit Dot Matrix choice,
+            // the client instead receives one calibrated half-page slip per payment below.
+            autoPrint = req.PrintTarget == "DotMatrix" ? null : await AutoPrintBatchAsync(batchPrintToken, req.PrintTarget),
             totalPurchaseAmount = WeightCalculator.R2(completed.Sum(x => x.Payment.TotalPurchaseAmount)),
             loanDeductedAmount = WeightCalculator.R2(completed.Sum(x => x.Payment.LoanDeductedAmount)),
             netPayableAmount = WeightCalculator.R2(completed.Sum(x => x.Payment.NetPayableAmount)),
@@ -603,7 +622,7 @@ public class PaymentController : ControllerBase
         if (isCashPayment && netPayable > 0)
             _db.CashBookEntries.Add(new CashBookEntry
             {
-                EntryDate = payment.PaymentDate.Date, EntryType = "CASH_OUT", SourceType = "FARMER_PAYMENT",
+                EntryDate = DateTime.Today, EntryType = "CASH_OUT", SourceType = "FARMER_PAYMENT",
                 SourceName = "Farmer cash payment", Amount = netPayable, PaymentId = paymentId, GrowerId = grower.Id,
                 GrowerCode = grower.GrowerCode, GrowerName = grower.GrowerName, NetPayableAmount = netPayable,
                 ReferenceNumber = $"PAY-{paymentId}", Remarks = $"Advice {adviceNumber}", CreatedAt = DateTime.UtcNow,
@@ -762,7 +781,7 @@ public class PaymentController : ControllerBase
         {
             _db.CashBookEntries.Add(new CashBookEntry
             {
-                EntryDate = DateTime.UtcNow.Date,
+                EntryDate = DateTime.Today,
                 EntryType = "CASH_IN",
                 SourceType = "PAYMENT_REVERSAL",
                 SourceName = "Cancelled farmer cash payment",
@@ -790,6 +809,10 @@ public class PaymentController : ControllerBase
             recoveriesReversed = recoveries.Count
         });
     }
+
+    private Task<bool> IsCashBookDayClosedAsync(DateTime date) =>
+        _db.CashBookEntries.AsNoTracking().AnyAsync(x => !x.IsDeleted && x.EntryDate == date.Date &&
+            x.EntryType == "CASH_OUT" && x.SourceType == CashBookDailyCalculator.DayClosingWithdrawal);
 
     /// <summary>Cash-payment evidence context for the live camera dialog. It contains no camera credentials.</summary>
     [HttpGet("{id:int}/evidence-context")]

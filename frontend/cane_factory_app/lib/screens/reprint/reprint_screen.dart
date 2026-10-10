@@ -13,7 +13,7 @@ enum _ReprintType {
   payment;
 
   String get label => switch (this) {
-        _ReprintType.purchase => 'Cane Weighment',
+        _ReprintType.purchase => 'Purchase Weighment',
         _ReprintType.salePurchase => 'Sale Weighment',
         _ReprintType.payment => 'Payment',
       };
@@ -32,6 +32,7 @@ class _ReprintScreenState extends State<ReprintScreen> {
   final _number = TextEditingController();
   _ReprintType _type = _ReprintType.purchase;
   _PaymentLookup _paymentLookup = _PaymentLookup.paymentId;
+  String _printerType = 'A4';
   Map<String, dynamic>? _printConfig;
   String? _configError;
   bool _busy = false;
@@ -56,6 +57,8 @@ class _ReprintScreenState extends State<ReprintScreen> {
       if (response.statusCode == 200) {
         setState(() {
           _printConfig = Map<String, dynamic>.from(response.data as Map);
+          final configuredType = _printConfig?['printerType']?.toString();
+          _printerType = configuredType == 'DotMatrix' ? 'DotMatrix' : 'A4';
           _configError = null;
         });
       } else {
@@ -131,8 +134,10 @@ class _ReprintScreenState extends State<ReprintScreen> {
       return;
     }
 
-    final printerType = config['printerType']?.toString() ?? 'A4';
-    final printerName = config['printerName']?.toString() ?? '';
+    final printerType = _printerType;
+    final printerName = printerType == 'DotMatrix'
+        ? config['dotMatrixPrinterName']?.toString() ?? ''
+        : config['a4PrinterName']?.toString() ?? '';
     setState(() => _busy = true);
     try {
       final outcome = await PrintService.printDocument(
@@ -140,6 +145,14 @@ class _ReprintScreenState extends State<ReprintScreen> {
         printerType: printerType,
         printerName: printerName,
         copies: 1,
+        dotMatrixTearOffParkingEnabled: selected != _ReprintType.payment &&
+            config['dotMatrixTearOffParkingEnabled'] == true,
+        dotMatrixTearOffFeedLines:
+            (config['dotMatrixTearOffFeedLines'] as num?)?.toDouble() ?? 12.0,
+        dotMatrixLineSpacingUnits:
+            (config['dotMatrixLineSpacingUnits'] as num?)?.toInt() ?? 20,
+        confirmTearOff:
+            selected == _ReprintType.payment ? null : _confirmTearOff,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -149,6 +162,27 @@ class _ReprintScreenState extends State<ReprintScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<bool> _confirmTearOff(int totalCopies) async {
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Tear duplicate slip'),
+            content: const Text(
+                'Wait until the dotted line comes outside the printer cover. Tear the duplicate slip on that line, then reset the remaining paper to the next TOF.'),
+            actions: [
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                icon: const Icon(Icons.content_cut),
+                label: const Text('Paper Torn — Reset TOF'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   @override
@@ -165,7 +199,7 @@ class _ReprintScreenState extends State<ReprintScreen> {
     }
     final selected = available.contains(_type) ? _type : available.first;
     final identifierLabel = selected == _ReprintType.purchase
-        ? 'Cane Weighment ID'
+        ? 'Purchase Weighment ID'
         : selected == _ReprintType.salePurchase
             ? 'Sale Weighment ID'
             : _paymentLookup == _PaymentLookup.paymentId
@@ -222,6 +256,34 @@ class _ReprintScreenState extends State<ReprintScreen> {
                             ),
                         ],
                       ),
+                      const Divider(height: 24),
+                      Text('Printer Type',
+                          style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: 8),
+                      SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment(
+                              value: 'A4',
+                              icon: Icon(Icons.description_outlined),
+                              label: Text('A4 / Full Size')),
+                          ButtonSegment(
+                              value: 'DotMatrix',
+                              icon: Icon(Icons.print_outlined),
+                              label: Text('Dot Matrix')),
+                        ],
+                        selected: {_printerType},
+                        onSelectionChanged: _busy
+                            ? null
+                            : (selection) =>
+                                setState(() => _printerType = selection.first),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _printerType == 'DotMatrix'
+                            ? 'Uses the configured raw Dot Matrix layout, header, half-page, tear-line and TOF settings.'
+                            : 'Uses the configured A4 printer and full-size PDF layout.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                       if (selected == _ReprintType.payment) ...[
                         const Divider(height: 24),
                         Text('Find Payment By',
@@ -269,7 +331,7 @@ class _ReprintScreenState extends State<ReprintScreen> {
                         FilledButton.icon(
                           onPressed: _busy ? null : () => _openPdf(selected),
                           icon: const Icon(Icons.picture_as_pdf_outlined),
-                          label: const Text('Open Duplicate PDF'),
+                          label: const Text('Open Duplicate A4 PDF'),
                         ),
                         OutlinedButton.icon(
                           onPressed: _busy ? null : () => _print(selected),
@@ -311,13 +373,7 @@ class _ReprintScreenState extends State<ReprintScreen> {
             if (_printConfig != null) ...[
               const SizedBox(height: 8),
               Text(
-                'Configured printer: ' +
-                    (_printConfig!['printerName']?.toString().isNotEmpty == true
-                        ? _printConfig!['printerName'].toString()
-                        : 'Not selected') +
-                    ' (' +
-                    (_printConfig!['printerType']?.toString() ?? '-') +
-                    ')',
+                'Selected printer: ${(_printerType == 'DotMatrix' ? _printConfig!['dotMatrixPrinterName'] : _printConfig!['a4PrinterName'])?.toString().isNotEmpty == true ? (_printerType == 'DotMatrix' ? _printConfig!['dotMatrixPrinterName'] : _printConfig!['a4PrinterName']) : 'Not selected'} ($_printerType)',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ] else if (_configError != null) ...[

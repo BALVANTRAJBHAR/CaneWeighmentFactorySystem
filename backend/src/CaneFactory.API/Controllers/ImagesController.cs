@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using CaneFactory.Application.Interfaces;
+using CaneFactory.Infrastructure.Camera;
 using CaneFactory.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,7 +18,11 @@ public class ImagesController : ControllerBase
 
     private readonly AppDbContext _db;
     private readonly ICurrentUser _current;
-    public ImagesController(AppDbContext db, ICurrentUser current) { _db = db; _current = current; }
+    private readonly IConfiguration? _configuration;
+    public ImagesController(AppDbContext db, ICurrentUser current, IConfiguration? configuration = null)
+    {
+        _db = db; _current = current; _configuration = configuration;
+    }
 
     /// <summary>
     /// Finds image evidence by the identifier selected in the View Images screen. IDs are exact;
@@ -27,16 +33,17 @@ public class ImagesController : ControllerBase
     {
         var source = (type ?? string.Empty).Trim().ToLowerInvariant();
         var term = (q ?? string.Empty).Trim();
-        if (source is not ("purchase" or "sale-purchase" or "payment"))
-            return BadRequest(new { message = "Image type must be purchase, sale-purchase, or payment." });
+        if (source is not ("purchase" or "sale-purchase" or "payment" or "rate-edit"))
+            return BadRequest(new { message = "Image type must be purchase, sale-purchase, payment, or rate-edit." });
         if (string.IsNullOrWhiteSpace(term))
-            return BadRequest(new { message = "Enter a Purchase ID, Payment ID, Advice Number, Grower ID/Name, Sale ID, or Party Name." });
+            return BadRequest(new { message = "Enter a Purchase ID, Sale ID, Payment ID, Advice Number, Grower ID/Name, or Party Name." });
 
         return source switch
         {
             "purchase" => await SearchPurchaseImagesAsync(term),
             "sale-purchase" => await SearchSalePurchaseImagesAsync(term),
             "payment" => await SearchPaymentImagesAsync(term),
+            "rate-edit" => await SearchRateEditImagesAsync(term),
             _ => BadRequest()
         };
     }
@@ -65,6 +72,18 @@ public class ImagesController : ControllerBase
         if (DenyImageView() is { } denied) return denied;
         var img = await _db.SalePurchaseImages.AsNoTracking().FirstOrDefaultAsync(i => i.Id == id && i.Status);
         return await SendImageAsync(img?.FilePath, img?.ImageName);
+    }
+
+    /// <summary>Serves only evidence consumed by a committed Cane/Sale rate change.</summary>
+    [HttpGet("rate-edit/{id:int}/file")]
+    public async Task<IActionResult> RateEditFile(int id)
+    {
+        if (DenyImageView() is { } denied) return denied;
+        var evidence = await _db.RateOverrideEvidences.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == id && x.Status && !x.IsDeleted &&
+                _db.WeighmentRateOverrides.Any(o => o.EvidenceId == x.Id && o.Status && !o.IsDeleted));
+        if (evidence == null) return NotFound(new { message = "Committed rate-update image was not found." });
+        return await SendRateEditImageAsync(evidence.FilePath, evidence.ImageName, evidence.FileHash);
     }
 
     private async Task<IActionResult> SearchPurchaseImagesAsync(string term)
@@ -191,6 +210,38 @@ public class ImagesController : ControllerBase
         return Ok(new { items, totalReturned = items.Count, cappedAt = SearchLimit });
     }
 
+    private async Task<IActionResult> SearchRateEditImagesAsync(string term)
+    {
+        if (DenyImageView() is { } denied) return denied;
+        if (!int.TryParse(term, out var transactionId) || transactionId <= 0)
+            return BadRequest(new { message = "Enter an exact Cane Purchase ID or Sale ID for rate-update images." });
+
+        var items = await (
+            from rateOverride in _db.WeighmentRateOverrides.AsNoTracking()
+            join evidence in _db.RateOverrideEvidences.AsNoTracking()
+                on rateOverride.EvidenceId equals evidence.Id
+            where rateOverride.TransactionId == transactionId && rateOverride.Status && !rateOverride.IsDeleted &&
+                evidence.Status && !evidence.IsDeleted
+            orderby evidence.CreatedAt descending
+            select new
+            {
+                imageId = evidence.Id,
+                sourceType = "rate-edit",
+                evidence.ImageName,
+                evidence.Source,
+                capturedAt = evidence.CreatedAt,
+                rateOverride.TransactionType,
+                rateOverride.TransactionId,
+                rateOverride.MasterRate,
+                rateOverride.ApprovedRate,
+                rateOverride.ApprovedByUserName,
+                rateOverride.RateReasonText,
+                rateOverride.Remark
+            }).Take(SearchLimit).ToListAsync();
+
+        return Ok(new { items, totalReturned = items.Count, cappedAt = SearchLimit });
+    }
+
     private IActionResult? DenyImageView() => _current.HasPermission("Image.View")
         ? null
         : StatusCode(StatusCodes.Status403Forbidden, new { message = "You do not have 'Image.View' permission." });
@@ -207,6 +258,41 @@ public class ImagesController : ControllerBase
             return NotFound(new { message = "Image metadata exists but the file is missing on disk." });
         var bytes = await System.IO.File.ReadAllBytesAsync(filePath);
         return File(bytes, "image/jpeg", imageName);
+    }
+
+    private async Task<IActionResult> SendRateEditImageAsync(string filePath, string imageName, string fileHash)
+    {
+        var (currentRoot, legacyRoot) = await ResolveRateEditRootsAsync();
+        if (!RateEditImagePathResolver.IsUnderRoot(filePath, currentRoot) &&
+            !RateEditImagePathResolver.IsUnderRoot(filePath, legacyRoot))
+            return Conflict(new { message = "Rate-update image path failed the security check." });
+        if (!System.IO.File.Exists(filePath))
+            return NotFound(new { message = "Image metadata exists but the file is missing on disk." });
+        var bytes = await System.IO.File.ReadAllBytesAsync(filePath);
+        byte[] expectedHash;
+        try { expectedHash = Convert.FromHexString(fileHash); }
+        catch (FormatException) { return Conflict(new { message = "Image integrity metadata is invalid." }); }
+        if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(bytes), expectedHash))
+            return Conflict(new { message = "Image integrity verification failed." });
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers.Append("X-Content-Type-Options", "nosniff");
+        return File(bytes, "image/jpeg", imageName);
+    }
+
+    private async Task<(string CurrentRoot, string LegacyRoot)> ResolveRateEditRootsAsync()
+    {
+        var configured = _configuration?["Storage:ImageRoot"];
+        if (string.IsNullOrWhiteSpace(configured))
+            configured = (await _db.SystemSettings.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Key == "ImageStorageRoot"))?.Value;
+        var currentRoot = RateEditImagePathResolver.ResolveRoot(configured);
+
+        var paymentRootSetting = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Key == "PaymentEvidenceRoot");
+        var paymentRoot = string.IsNullOrWhiteSpace(paymentRootSetting?.Value)
+            ? WeighmentImagePathResolver.NormalizeConfiguredPath(@"C:\WeighmentImage\Payment")
+            : WeighmentImagePathResolver.NormalizeConfiguredPath(paymentRootSetting.Value);
+        return (currentRoot, Path.Combine(paymentRoot, "Rate Overrides"));
     }
 }
 

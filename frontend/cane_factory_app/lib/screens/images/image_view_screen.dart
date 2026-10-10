@@ -10,18 +10,21 @@ import '../../providers/auth_provider.dart';
 enum _ImageSource {
   purchase,
   salePurchase,
-  payment;
+  payment,
+  rateEdit;
 
   String get apiType => switch (this) {
         _ImageSource.purchase => 'purchase',
         _ImageSource.salePurchase => 'sale-purchase',
         _ImageSource.payment => 'payment',
+        _ImageSource.rateEdit => 'rate-edit',
       };
 
   String get label => switch (this) {
         _ImageSource.purchase => 'Cane Purchase',
         _ImageSource.salePurchase => 'Sale / Purchase',
         _ImageSource.payment => 'Payment',
+        _ImageSource.rateEdit => 'Rate Update Image',
       };
 
   String get hint => switch (this) {
@@ -29,6 +32,7 @@ enum _ImageSource {
         _ImageSource.salePurchase => 'Sale ID or Party Name',
         _ImageSource.payment =>
           'Payment ID, Advice Number, Grower ID or Grower Name',
+        _ImageSource.rateEdit => 'Cane Purchase ID or Sale ID',
       };
 }
 
@@ -110,6 +114,7 @@ class _ImageViewScreenState extends State<ImageViewScreen> {
       if (auth.can('Image.View')) _ImageSource.purchase,
       if (auth.can('Image.View')) _ImageSource.salePurchase,
       if (auth.can('CashEvidence.View')) _ImageSource.payment,
+      if (auth.can('Image.View')) _ImageSource.rateEdit,
     ];
     if (sources.isEmpty) {
       return const Center(
@@ -235,6 +240,8 @@ class _ImageViewScreenState extends State<ImageViewScreen> {
           'Sale ID returns its image records. Party Name can return multiple transactions.',
         _ImageSource.payment =>
           'Payment ID or Advice Number returns matching images. Grower ID or Name can return multiple payments.',
+        _ImageSource.rateEdit =>
+          'Enter an exact Cane Purchase ID or Sale ID. Only evidence used by a completed rate change is shown.',
       };
 }
 
@@ -317,6 +324,22 @@ class _ImageResultCard extends StatelessWidget {
             'Driver: ' + _v(item['driverName']),
             'Stage: ' + _v(item['captureStage']),
             'Status: ' + _v(item['transactionStatus']),
+          ]
+        ),
+      'rate-edit' => (
+          (item['transactionType']?.toString() == 'CANE'
+                  ? 'Cane Purchase ID: '
+                  : 'Sale ID: ') +
+              _v(item['transactionId']),
+          <String>[
+            'Type: ' + _v(item['transactionType']),
+            'Master Rate: ' + _v(item['masterRate']),
+            'Approved Rate: ' + _v(item['approvedRate']),
+            'Approved By: ' + _v(item['approvedByUserName']),
+            'Reason: ' + _v(item['rateReasonText']),
+            'Source: ' + _v(item['source']),
+            if (item['remark']?.toString().trim().isNotEmpty == true)
+              'Remark: ' + _v(item['remark']),
           ]
         ),
       _ => (
@@ -403,9 +426,11 @@ class _ThumbnailState extends State<_Thumbnail> {
     final type = widget.item['sourceType']?.toString();
     final path = type == 'payment'
         ? '/api/images/payment/' + id + '/file'
-        : type == 'sale-purchase'
-            ? '/api/images/sale-purchase/' + id + '/file'
-            : '/api/images/' + id + '/file';
+        : type == 'rate-edit'
+            ? '/api/images/rate-edit/' + id + '/file'
+            : type == 'sale-purchase'
+                ? '/api/images/sale-purchase/' + id + '/file'
+                : '/api/images/' + id + '/file';
     final response = await ApiClient.instance.dio.get<List<int>>(path,
         options: Options(responseType: ResponseType.bytes));
     if (response.statusCode != 200 || response.data == null) {

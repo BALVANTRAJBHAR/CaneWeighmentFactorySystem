@@ -69,7 +69,7 @@ public class PurchasesController : ControllerBase
                 purchaseId = p.Id, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName,
                 FatherName = p.Grower.FatherName, p.Grower.Mobile, VillageName = p.Grower.Village.VillageName,
                 p.VehicleNumber, VehicleTypeName = p.VehicleType.VehicleTypeName,
-                VarietyName = p.Variety.VarietyName,
+                VarietyName = p.Variety.VarietyName, p.CropId, CropName = p.Crop != null ? p.Crop.CropName : null,
                 p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName,
                 p.TareWeightQuintal, p.TareDateTime, p.TareByUserName,
                 PurchaseDate = p.TareDateTime ?? p.GrossDateTime,
@@ -90,7 +90,7 @@ public class PurchasesController : ControllerBase
         {
             purchaseId = p.Id, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName,
             FatherName = p.Grower.FatherName, VillageName = p.Grower.Village.VillageName,
-            p.VehicleNumber, VarietyName = p.Variety.VarietyName,
+            p.VehicleNumber, VarietyName = p.Variety.VarietyName, p.CropId, CropName = p.Crop != null ? p.Crop.CropName : null,
             p.ScaleReadingGrossKg, p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName,
             p.ScaleReadingTareKg, p.TareWeightQuintal, p.TareDateTime, p.TareByUserName,
             p.NetWeightQuintal, p.CuttingPercent, p.CuttingWeightQuintal,

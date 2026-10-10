@@ -150,7 +150,9 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  // The factory desktop application is designed for a full workstation view.
+  // Always open maximized; Windows still retains the centred restored bounds.
+  return ShowWindow(window_handle_, SW_SHOWMAXIMIZED);
 }
 
 // static

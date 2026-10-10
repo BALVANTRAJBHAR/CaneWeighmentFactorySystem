@@ -133,6 +133,8 @@ public class LoanController : ControllerBase
     {
         if (Deny("Create") is { } d) return d;
         if (IsDuplicateRequest(req.IdempotencyKey, out var dup)) return dup!;
+        if (!string.IsNullOrWhiteSpace(req.PrintTarget) && req.PrintTarget is not ("A4" or "DotMatrix"))
+            return BadRequest(new { message = "Print Target must be A4 or DotMatrix." });
 
         var grower = req.GrowerId > 0
             ? await _db.Growers.Include(g => g.Village).FirstOrDefaultAsync(g => g.Id == req.GrowerId && !g.IsDeleted)
@@ -184,7 +186,7 @@ public class LoanController : ControllerBase
             message = $"Loan issued successfully. Loan ID: {loanId}. Amount: Rs {amount:F2}.",
             loanId,
             loanAmount = amount,
-            autoPrint = await AutoPrintAsync(loanId)
+            autoPrint = await AutoPrintAsync(loanId, req.PrintTarget)
         });
     }
 
@@ -211,17 +213,19 @@ public class LoanController : ControllerBase
         return Ok(new { message = $"Loan {id} cancelled. Reason recorded in audit log." });
     }
 
-    private async Task<object?> AutoPrintAsync(int loanId)
+    private async Task<object?> AutoPrintAsync(int loanId, string? requestedTarget = null)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
-        if (cfg == null || !cfg.AutoPrint || cfg.LoanCopies <= 0) return null;
+        if (cfg == null || (cfg.LoanCopies <= 0 && string.IsNullOrWhiteSpace(requestedTarget)) || (!cfg.AutoPrint && string.IsNullOrWhiteSpace(requestedTarget))) return null;
+        var target = requestedTarget ?? cfg.PrinterType;
+        if (target is not ("A4" or "DotMatrix")) target = cfg.PrinterType;
         return new
         {
-            printerType = cfg.PrinterType,
-            printerName = cfg.PrinterName,
-            copies = cfg.LoanCopies,
+            printerType = target,
+            printerName = target == "DotMatrix" ? cfg.DotMatrixPrinterName : cfg.A4PrinterName,
+            copies = string.IsNullOrWhiteSpace(requestedTarget) ? cfg.LoanCopies : Math.Max(1, cfg.LoanCopies),
             language = cfg.Language,
-            documentUrl = $"/api/print/loan/{loanId}?format=final"
+            documentUrl = $"/api/print/loan/{loanId}?format=final&target={target}"
         };
     }
 
@@ -314,6 +318,8 @@ public class LoanRecoveryController : ControllerBase
     {
         if (Deny("Create") is { } d) return d;
         if (IsDuplicateRequest(req.IdempotencyKey, out var dup)) return dup!;
+        if (!string.IsNullOrWhiteSpace(req.PrintTarget) && req.PrintTarget is not ("A4" or "DotMatrix"))
+            return BadRequest(new { message = "Print Target must be A4 or DotMatrix." });
 
         var loan = await _db.Loans.FirstOrDefaultAsync(l => l.Id == req.LoanId && !l.IsDeleted);
         if (loan == null) return NotFound(new { message = $"Loan ID {req.LoanId} does not exist." });
@@ -361,7 +367,7 @@ public class LoanRecoveryController : ControllerBase
             recoveryAmount = amount,
             outstandingAmount = loan.OutstandingAmount,
             loanStatus = loan.LoanStatus,
-            autoPrint = await AutoPrintAsync(lrId)
+            autoPrint = await AutoPrintAsync(lrId, req.PrintTarget)
         });
     }
 
@@ -394,17 +400,19 @@ public class LoanRecoveryController : ControllerBase
         return Ok(new { message = $"Loan Recovery {id} reversed. Reason recorded in audit log.", outstandingAmount = loan.OutstandingAmount });
     }
 
-    private async Task<object?> AutoPrintAsync(int loanRecoveryId)
+    private async Task<object?> AutoPrintAsync(int loanRecoveryId, string? requestedTarget = null)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
-        if (cfg == null || !cfg.AutoPrint || cfg.LoanCopies <= 0) return null;
+        if (cfg == null || (cfg.LoanCopies <= 0 && string.IsNullOrWhiteSpace(requestedTarget)) || (!cfg.AutoPrint && string.IsNullOrWhiteSpace(requestedTarget))) return null;
+        var target = requestedTarget ?? cfg.PrinterType;
+        if (target is not ("A4" or "DotMatrix")) target = cfg.PrinterType;
         return new
         {
-            printerType = cfg.PrinterType,
-            printerName = cfg.PrinterName,
-            copies = cfg.LoanCopies,
+            printerType = target,
+            printerName = target == "DotMatrix" ? cfg.DotMatrixPrinterName : cfg.A4PrinterName,
+            copies = string.IsNullOrWhiteSpace(requestedTarget) ? cfg.LoanCopies : Math.Max(1, cfg.LoanCopies),
             language = cfg.Language,
-            documentUrl = $"/api/print/loan-recovery/{loanRecoveryId}?format=final"
+            documentUrl = $"/api/print/loan-recovery/{loanRecoveryId}?format=final&target={target}"
         };
     }
 

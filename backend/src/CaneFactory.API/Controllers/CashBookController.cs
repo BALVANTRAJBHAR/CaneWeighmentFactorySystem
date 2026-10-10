@@ -1,4 +1,5 @@
 using CaneFactory.Application.Interfaces;
+using CaneFactory.API.Services;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -24,6 +25,16 @@ public sealed class CashBookPaymentRequest
     public DateTime? EntryDate { get; set; }
     public string? PaidTo { get; set; }
     public decimal Amount { get; set; }
+    public string? ReferenceNumber { get; set; }
+    public string? Remarks { get; set; }
+}
+
+/// <summary>Closes one physical-cash day by withdrawing the complete cash-on-hand
+/// calculated by the server. The amount is never accepted from the client.</summary>
+public sealed class CashBookDayCloseRequest
+{
+    public DateTime? EntryDate { get; set; }
+    public string? CashTakenBy { get; set; }
     public string? ReferenceNumber { get; set; }
     public string? Remarks { get; set; }
 }
@@ -81,12 +92,18 @@ public class CashBookController : ControllerBase
         var paid = await q.Where(x => x.EntryType == "CASH_OUT").SumAsync(x => (decimal?)x.Amount) ?? 0;
         var farmerCashPaid = await q.Where(x => x.EntryType == "CASH_OUT" && x.SourceType == "FARMER_PAYMENT")
             .SumAsync(x => (decimal?)x.Amount) ?? 0;
-        var otherCashPaid = await q.Where(x => x.EntryType == "CASH_OUT" && x.SourceType == "OTHER_CASH_PAYMENT")
+        var otherCashPaid = await q.Where(x => x.EntryType == "CASH_OUT" &&
+                x.SourceType != "FARMER_PAYMENT" &&
+                x.SourceType != CashBookDailyCalculator.DayClosingWithdrawal)
+            .SumAsync(x => (decimal?)x.Amount) ?? 0;
+        var closingWithdrawal = await q.Where(x => x.EntryType == "CASH_OUT" &&
+                x.SourceType == CashBookDailyCalculator.DayClosingWithdrawal)
             .SumAsync(x => (decimal?)x.Amount) ?? 0;
         var totalCount = await q.CountAsync();
         // Calculate the balance in chronological order, then display newest entries first.
         // This avoids a misleading balance when the visible table is sorted descending.
         var entries = await q.OrderBy(x => x.EntryDate).ThenBy(x => x.Id).ToListAsync();
+        var dailySummaries = CashBookDailyCalculator.Build(entries, openingBalance, from, toDate?.Date);
         var running = openingBalance;
         var calculated = entries.Select(x =>
         {
@@ -103,7 +120,10 @@ public class CashBookController : ControllerBase
         return Ok(new
         {
             items = calculated, totalCount, page, pageSize,
+            dailySummaries,
             totals = new { openingBalance, received, paid, farmerCashPaid, otherCashPaid,
+                operatingCashPaid = paid - closingWithdrawal, closingWithdrawal,
+                availableBeforeClosing = openingBalance + received - (paid - closingWithdrawal),
                 closingBalance = openingBalance + received - paid }
         });
     }
@@ -113,6 +133,8 @@ public class CashBookController : ControllerBase
     public async Task<IActionResult> ReceiveCash([FromBody] CashBookReceiptRequest request)
     {
         if (Deny("Create") is { } denied) return denied;
+        if (request.EntryDate.HasValue && request.EntryDate.Value.Date > DateTime.Today)
+            return BadRequest(new { message = "Cash receipt date cannot be in the future." });
         var sourceType = (request.SourceType ?? string.Empty).Trim().ToUpperInvariant();
         if (sourceType is not ("BANK" or "PARTY" or "OTHER"))
             return BadRequest(new { message = "Source must be Bank, Party or Other." });
@@ -121,9 +143,13 @@ public class CashBookController : ControllerBase
         if (request.Amount <= 0) return BadRequest(new { message = "Cash amount must be greater than zero." });
         if (request.Amount > 99_999_999.99m) return BadRequest(new { message = "Cash amount is too large." });
 
+        var entryDate = (request.EntryDate ?? DateTime.Now).Date;
+        if (await IsDayClosedAsync(entryDate))
+            return Conflict(new { message = $"Cash Book for {entryDate:dd-MM-yyyy} is already closed. Add this receipt on the next working day." });
+
         var entry = new CashBookEntry
         {
-            EntryDate = (request.EntryDate ?? DateTime.Now).Date,
+            EntryDate = entryDate,
             EntryType = "CASH_IN",
             SourceType = sourceType,
             SourceName = request.SourceName.Trim(),
@@ -144,6 +170,8 @@ public class CashBookController : ControllerBase
     public async Task<IActionResult> PayCash([FromBody] CashBookPaymentRequest request)
     {
         if (Deny("Create") is { } denied) return denied;
+        if (request.EntryDate.HasValue && request.EntryDate.Value.Date > DateTime.Today)
+            return BadRequest(new { message = "Cash payment date cannot be in the future." });
         if (string.IsNullOrWhiteSpace(request.PaidTo))
             return BadRequest(new { message = "Paid-to name is required." });
         if (request.PaidTo.Trim().Length > 150)
@@ -155,9 +183,13 @@ public class CashBookController : ControllerBase
         if (request.Remarks.Trim().Length > 500)
             return BadRequest(new { message = "Remarks must be 500 characters or fewer." });
 
+        var entryDate = (request.EntryDate ?? DateTime.Now).Date;
+        if (await IsDayClosedAsync(entryDate))
+            return Conflict(new { message = $"Cash Book for {entryDate:dd-MM-yyyy} is already closed. A new cash payment cannot be posted to a closed day." });
+
         var entry = new CashBookEntry
         {
-            EntryDate = (request.EntryDate ?? DateTime.Now).Date,
+            EntryDate = entryDate,
             EntryType = "CASH_OUT",
             SourceType = "OTHER_CASH_PAYMENT",
             SourceName = request.PaidTo.Trim(),
@@ -171,4 +203,125 @@ public class CashBookController : ControllerBase
         await _audit.LogAsync("Create", "CashBook", nameof(CashBookEntry), entry.Id.ToString(), newValue: entry);
         return Ok(new { message = "Other cash payment saved in Cash Book.", id = entry.Id });
     }
+
+    /// <summary>
+    /// Withdraws the complete calculated cash remaining at the end of a day. This is
+    /// an immutable ledger entry, not a reset: the following day's opening therefore
+    /// becomes zero (or any genuine amount still left after reconciliation).
+    /// </summary>
+    [HttpPost("day-close")]
+    public async Task<IActionResult> CloseDay([FromBody] CashBookDayCloseRequest request)
+    {
+        if (Deny("Create") is { } denied) return denied;
+        var entryDate = (request.EntryDate ?? DateTime.Now).Date;
+        if (entryDate > DateTime.Today)
+            return BadRequest(new { message = "Cash Book closing date cannot be in the future." });
+        if (string.IsNullOrWhiteSpace(request.CashTakenBy))
+            return BadRequest(new { message = "Enter the name of the person taking the closing cash." });
+        if (request.CashTakenBy.Trim().Length > 150)
+            return BadRequest(new { message = "Cash Taken By must be 150 characters or fewer." });
+        if (request.Remarks?.Trim().Length > 500)
+            return BadRequest(new { message = "Remarks must be 500 characters or fewer." });
+
+        CashBookEntry? closingEntry = null;
+        decimal amount = 0;
+        IActionResult? validationError = null;
+        await _db.ExecuteInTransactionAsync(async () =>
+        {
+            if (await IsDayClosedAsync(entryDate))
+            {
+                validationError = Conflict(new { message = $"Cash Book for {entryDate:dd-MM-yyyy} is already closed." });
+                return;
+            }
+
+            // Do not rewrite historical opening balances after later business has
+            // already been posted. A missed close must be reconciled by Admin first.
+            if (await _db.CashBookEntries.AnyAsync(x => !x.IsDeleted && x.EntryDate > entryDate))
+            {
+                validationError = Conflict(new
+                {
+                    message = "This past day cannot be closed because later Cash Book entries already exist. Close the current day or ask Admin to reconcile the missed day."
+                });
+                return;
+            }
+
+            // Materialize the small two-column ledger projection before summing.
+            // This works consistently on SQL Server and the SQLite regression suite,
+            // whose provider cannot translate decimal SUM.
+            var throughDay = await _db.CashBookEntries
+                .Where(x => !x.IsDeleted && x.EntryDate <= entryDate)
+                .Select(x => new { x.EntryType, x.Amount })
+                .ToListAsync();
+            var cashIn = throughDay.Where(x => x.EntryType == "CASH_IN").Sum(x => x.Amount);
+            var cashOut = throughDay.Where(x => x.EntryType == "CASH_OUT").Sum(x => x.Amount);
+            amount = decimal.Round(cashIn - cashOut, 2);
+            if (amount < 0)
+            {
+                validationError = Conflict(new
+                {
+                    message = $"Cash Book is short by Rs {Math.Abs(amount):F2}. Reconcile the entries before closing the day."
+                });
+                return;
+            }
+
+            closingEntry = new CashBookEntry
+            {
+                EntryDate = entryDate,
+                EntryType = "CASH_OUT",
+                SourceType = CashBookDailyCalculator.DayClosingWithdrawal,
+                SourceName = request.CashTakenBy.Trim(),
+                Amount = amount,
+                ReferenceNumber = string.IsNullOrWhiteSpace(request.ReferenceNumber)
+                    ? $"DAY-CLOSE-{entryDate:yyyyMMdd}"
+                    : request.ReferenceNumber.Trim(),
+                Remarks = string.IsNullOrWhiteSpace(request.Remarks)
+                    ? "End-of-day physical cash withdrawn"
+                    : request.Remarks.Trim(),
+                CreatedAt = DateTime.UtcNow,
+                CreatedBy = _current.UserId,
+                Status = true
+            };
+            _db.CashBookEntries.Add(closingEntry);
+            await _db.SaveChangesAsync();
+        });
+
+        if (validationError != null) return validationError;
+        await _audit.LogAsync("DayClose", "CashBook", nameof(CashBookEntry), closingEntry!.Id.ToString(),
+            newValue: new { closingEntry.EntryDate, closingEntry.Amount, cashTakenBy = closingEntry.SourceName,
+                closingEntry.ReferenceNumber, closingEntry.Remarks });
+        return Ok(new
+        {
+            message = amount == 0
+                ? "Day closed with no cash left to withdraw."
+                : $"Day closed. Rs {amount:F2} recorded as closing cash withdrawal.",
+            id = closingEntry.Id,
+            entryDate,
+            withdrawnAmount = amount,
+            closingBalance = 0m
+        });
+    }
+
+    [HttpGet("daily-summary")]
+    public async Task<IActionResult> DailySummary([FromQuery] DateTime? date)
+    {
+        if (Deny("View") is { } denied) return denied;
+        var selectedDate = (date ?? DateTime.Today).Date;
+        if (selectedDate > DateTime.Today)
+            return BadRequest(new { message = "Daily summary date cannot be in the future." });
+
+        var baseQuery = _db.CashBookEntries.AsNoTracking().Where(x => !x.IsDeleted);
+        var openingIn = await baseQuery.Where(x => x.EntryDate < selectedDate && x.EntryType == "CASH_IN")
+            .SumAsync(x => (decimal?)x.Amount) ?? 0;
+        var openingOut = await baseQuery.Where(x => x.EntryDate < selectedDate && x.EntryType == "CASH_OUT")
+            .SumAsync(x => (decimal?)x.Amount) ?? 0;
+        var dayEntries = await baseQuery.Where(x => x.EntryDate == selectedDate)
+            .OrderBy(x => x.Id).ToListAsync();
+        var summary = CashBookDailyCalculator.Build(dayEntries, openingIn - openingOut,
+            selectedDate, selectedDate).Single();
+        return Ok(summary);
+    }
+
+    private Task<bool> IsDayClosedAsync(DateTime entryDate) =>
+        _db.CashBookEntries.AnyAsync(x => !x.IsDeleted && x.EntryDate == entryDate.Date &&
+            x.EntryType == "CASH_OUT" && x.SourceType == CashBookDailyCalculator.DayClosingWithdrawal);
 }

@@ -9,6 +9,8 @@ public class PaymentCreateRequest
     public DateTime? FromDate { get; set; } // used for DATE_RANGE
     public DateTime? ToDate { get; set; } // used for DATE_RANGE
     public int PaymentModeId { get; set; }
+    /// <summary>Operator-selected destination: A4 or DotMatrix.  Null keeps the configured default.</summary>
+    public string? PrintTarget { get; set; }
     public string? TransactionRefNumber { get; set; }
     public string? IdempotencyKey { get; set; }
 }

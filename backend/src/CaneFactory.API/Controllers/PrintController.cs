@@ -254,7 +254,10 @@ public class PrintController : ControllerBase
             cfg.PrinterType,
             printerName = cfg.PrinterType == "A4" ? cfg.A4PrinterName : cfg.DotMatrixPrinterName,
             cfg.A4PrinterName,
-            cfg.DotMatrixPrinterName
+            cfg.DotMatrixPrinterName,
+            cfg.DotMatrixTearOffParkingEnabled,
+            cfg.DotMatrixTearOffFeedLines,
+            cfg.DotMatrixLineSpacingUnits
         });
     }
 
@@ -404,5 +407,19 @@ public class PrintController : ControllerBase
         var doc = await _engine.BuildTestDocumentAsync(language ?? "hi", _current.Username ?? "Developer");
         var (bytes, contentType, ext) = _engine.Render(doc, target ?? "DotMatrix", format == "preview");
         return File(bytes, contentType, $"PrintTest.{ext}");
+    }
+
+    /// <summary>Prints one complete continuous form with physical positioning markers. This is
+    /// intentionally DotMatrix-only: it calibrates raw ESC/P feed distances against tractor paper.</summary>
+    [HasPermission("Print.Configure")]
+    [HttpGet("calibration")]
+    public async Task<IActionResult> Calibration([FromQuery] string format = "final")
+    {
+        if (format is not ("final" or "preview"))
+            return BadRequest(new { message = "format must be final or preview." });
+
+        var doc = await _engine.BuildDotMatrixCalibrationDocumentAsync(_current.Username ?? "Developer");
+        var (bytes, contentType, ext) = _engine.Render(doc, "DotMatrix", format == "preview");
+        return File(bytes, contentType, $"DotMatrixCalibration.{ext}");
     }
 }

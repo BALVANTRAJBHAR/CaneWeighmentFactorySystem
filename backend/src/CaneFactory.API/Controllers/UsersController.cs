@@ -42,7 +42,8 @@ public class UsersController : ControllerBase
 
     [HasPermission("User.View")]
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] string? search, [FromQuery] bool includeInactive = false,
+    public async Task<IActionResult> List([FromQuery] string? search, [FromQuery] string? category,
+        [FromQuery] string? role, [FromQuery] bool includeInactive = false,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         // The system Developer account is hidden from Admin and every other
@@ -52,8 +53,32 @@ public class UsersController : ControllerBase
         if (!IsDeveloper)
             q = q.Where(u => !u.UserRoles.Any(ur => ur.Role.Name == "Developer"));
         if (!includeInactive) q = q.Where(u => u.Status);
+        var normalizedCategory = category?.Trim().ToUpperInvariant();
+        if (normalizedCategory == "SYSTEM")
+            q = q.Where(u => !u.UserRoles.Any(ur => ur.Role.Name == "Farmer"));
+        else if (normalizedCategory == "FARMER")
+            // Auto-provisioned Grower identities that have never signed in are
+            // intentionally omitted. Once a farmer has logged in, an admin can
+            // find and manage/reset that account here even after a later reset.
+            q = q.Where(u => u.GrowerId.HasValue && u.LastLoginAt != null &&
+                u.UserRoles.Any(ur => ur.Role.Name == "Farmer"));
+        else if (normalizedCategory == "ALL")
+            q = q.Where(u => !u.UserRoles.Any(ur => ur.Role.Name == "Farmer") || u.LastLoginAt != null);
+
+        var normalizedRole = role?.Trim();
+        if (!string.IsNullOrWhiteSpace(normalizedRole))
+            q = q.Where(u => u.UserRoles.Any(ur => ur.Role.Name == normalizedRole));
+
         if (!string.IsNullOrWhiteSpace(search))
-            q = q.Where(u => u.Username.Contains(search) || u.FullName.Contains(search) || u.Mobile.Contains(search));
+        {
+            var term = search.Trim();
+            var numericId = int.TryParse(term, out var parsedId) ? parsedId : (int?)null;
+            q = q.Where(u => u.Username.Contains(term) || u.FullName.Contains(term) ||
+                u.Mobile.Contains(term) || (u.Email != null && u.Email.Contains(term)) ||
+                (numericId.HasValue && (u.Id == numericId.Value || u.GrowerId == numericId.Value)));
+        }
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 10, 200);
         var total = await q.CountAsync();
         // Project UserRoles only once.  Projecting it separately for Roles and RoleIds made EF
         // compile two collection navigations for the same parent query, which triggers

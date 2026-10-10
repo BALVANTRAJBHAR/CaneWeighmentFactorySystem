@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/hindi_transliteration.dart';
@@ -15,6 +17,13 @@ class _UsersScreenState extends State<UsersScreen> {
   List _users = [];
   List _roles = [];
   bool _loading = true;
+  final _search = TextEditingController();
+  Timer? _searchDebounce;
+  String _category = 'SYSTEM';
+  String _roleName = '';
+  int _page = 1;
+  int _totalCount = 0;
+  static const int _pageSize = 50;
 
   @override
   void initState() {
@@ -22,16 +31,158 @@ class _UsersScreenState extends State<UsersScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load({bool resetPage = false}) async {
+    if (resetPage) _page = 1;
+    if (mounted) setState(() => _loading = true);
     try {
-      final u = await ApiClient.instance.dio
-          .get('/api/users', queryParameters: {'includeInactive': true});
-      if (u.statusCode == 200) _users = u.data['items'];
-      final r = await ApiClient.instance.dio.get('/api/roles');
-      if (r.statusCode == 200) _roles = r.data;
+      final responses = await Future.wait([
+        ApiClient.instance.dio.get('/api/users', queryParameters: {
+          'includeInactive': true,
+          'category': _category,
+          if (_roleName.isNotEmpty) 'role': _roleName,
+          if (_search.text.trim().isNotEmpty) 'search': _search.text.trim(),
+          'page': _page,
+          'pageSize': _pageSize,
+        }),
+        if (_roles.isEmpty) ApiClient.instance.dio.get('/api/roles'),
+      ]);
+      final usersResponse = responses.first;
+      if (usersResponse.statusCode == 200) {
+        _users = usersResponse.data['items'];
+        _totalCount = (usersResponse.data['totalCount'] as num?)?.toInt() ?? 0;
+      }
+      if (responses.length > 1 && responses[1].statusCode == 200) {
+        _roles = responses[1].data;
+      }
     } catch (_) {}
     if (mounted) setState(() => _loading = false);
+  }
+
+  void _searchChanged(String _) {
+    _searchDebounce?.cancel();
+    _searchDebounce =
+        Timer(const Duration(milliseconds: 350), () => _load(resetPage: true));
+  }
+
+  Future<void> _manageFarmer(Map<String, dynamic> farmer) async {
+    final password = TextEditingController();
+    var obscure = true;
+    var saving = false;
+    String? error;
+    final changed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: !saving,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setDialogState) {
+        Future<void> resetPassword() async {
+          final temporaryPassword = password.text;
+          if (temporaryPassword.length < 8) {
+            setDialogState(() =>
+                error = 'Temporary password must be at least 8 characters.');
+            return;
+          }
+          setDialogState(() {
+            saving = true;
+            error = null;
+          });
+          try {
+            final response = await ApiClient.instance.dio.post(
+                '/api/users/${farmer['id']}/reset-password',
+                data: {'temporaryPassword': temporaryPassword});
+            if (!ctx.mounted) return;
+            if (response.statusCode == 200) {
+              Navigator.pop(ctx, true);
+            } else {
+              setDialogState(() {
+                saving = false;
+                error = ApiClient.errorMessage(response);
+              });
+            }
+          } catch (exception) {
+            if (ctx.mounted) {
+              setDialogState(() {
+                saving = false;
+                error = ApiClient.exceptionMessage(exception);
+              });
+            }
+          }
+        }
+
+        return AlertDialog(
+          title: const Text('Manage Farmer User'),
+          content: SizedBox(
+            width: 460,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.agriculture_outlined),
+                title: Text('${farmer['fullName']}'),
+                subtitle: Text(
+                    'Grower ID: ${farmer['growerId']}  •  Mobile: ${farmer['mobile']}\nUsername: ${farmer['username']}'),
+              ),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                    'Name and mobile remain linked to Grower Master. Use this screen to securely reset login access.'),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: password,
+                obscureText: obscure,
+                enabled: !saving,
+                decoration: InputDecoration(
+                  labelText: 'New Temporary Password',
+                  helperText:
+                      'The farmer must change this password on the next login.',
+                  suffixIcon: IconButton(
+                    onPressed: saving
+                        ? null
+                        : () => setDialogState(() => obscure = !obscure),
+                    icon: Icon(obscure
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined),
+                  ),
+                ),
+              ),
+              if (error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text(error!,
+                      style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
+                ),
+            ]),
+          ),
+          actions: [
+            TextButton(
+                onPressed: saving ? null : () => Navigator.pop(ctx, false),
+                child: const Text('Close')),
+            FilledButton.icon(
+                onPressed: saving ? null : resetPassword,
+                icon: saving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.password_outlined),
+                label: const Text('Reset Password')),
+          ],
+        );
+      }),
+    );
+    password.dispose();
+    if (changed == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Farmer password reset. Existing sessions were revoked and password change is required at next login.'),
+          backgroundColor: Color(0xFF2E7D32)));
+      _load();
+    }
   }
 
   Future<void> _openForm([Map<String, dynamic>? existing]) async {
@@ -183,6 +334,14 @@ class _UsersScreenState extends State<UsersScreen> {
         : _users
             .where((u) => !(u['roles'] as List).contains('Developer'))
             .toList();
+    final selectableRoles = _roles.where((role) {
+      final name = role['name']?.toString() ?? '';
+      if (name == 'Farmer') return _category != 'SYSTEM';
+      if (name == 'Developer' && !auth.hasRole('Developer')) return false;
+      return _category != 'FARMER';
+    }).toList();
+    final firstResult = _totalCount == 0 ? 0 : ((_page - 1) * _pageSize) + 1;
+    final lastResult = (_page * _pageSize).clamp(0, _totalCount);
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -200,44 +359,181 @@ class _UsersScreenState extends State<UsersScreen> {
                 label: const Text('New User')),
         ]),
         const SizedBox(height: 10),
+        Wrap(spacing: 10, runSpacing: 10, children: [
+          SizedBox(
+            width: 190,
+            child: DropdownButtonFormField<String>(
+              key: ValueKey('category-$_category'),
+              initialValue: _category,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                  labelText: 'User Category',
+                  prefixIcon: Icon(Icons.category_outlined)),
+              items: const [
+                DropdownMenuItem(value: 'SYSTEM', child: Text('System Users')),
+                DropdownMenuItem(value: 'FARMER', child: Text('Farmers')),
+                DropdownMenuItem(value: 'ALL', child: Text('All Users')),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  _category = value;
+                  _roleName = '';
+                });
+                _load(resetPage: true);
+              },
+            ),
+          ),
+          SizedBox(
+            width: 190,
+            child: DropdownButtonFormField<String>(
+              key: ValueKey('role-$_category-$_roleName'),
+              initialValue: _roleName,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                  labelText: 'Specific Role',
+                  prefixIcon: Icon(Icons.admin_panel_settings_outlined)),
+              items: [
+                DropdownMenuItem(
+                    value: '',
+                    child: Text(
+                        _category == 'FARMER' ? 'All Farmers' : 'All Roles')),
+                for (final role in selectableRoles)
+                  DropdownMenuItem(
+                      value: role['name'].toString(),
+                      child: Text(role['name'].toString())),
+              ],
+              onChanged: _category == 'FARMER'
+                  ? null
+                  : (value) {
+                      setState(() => _roleName = value ?? '');
+                      _load(resetPage: true);
+                    },
+            ),
+          ),
+          SizedBox(
+            width: 390,
+            child: TextField(
+              controller: _search,
+              onChanged: _searchChanged,
+              onSubmitted: (_) => _load(resetPage: true),
+              decoration: InputDecoration(
+                labelText: 'Search',
+                hintText: 'Name, mobile, username, User ID or Grower ID',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _search.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        onPressed: () {
+                          _search.clear();
+                          setState(() {});
+                          _load(resetPage: true);
+                        },
+                        icon: const Icon(Icons.clear)),
+              ),
+            ),
+          ),
+        ]),
+        if (_category == 'FARMER')
+          const Padding(
+            padding: EdgeInsets.only(top: 7),
+            child: Text(
+                'Only farmers who have logged in at least once are shown. Auto-created accounts that never logged in remain hidden.'),
+          ),
+        const SizedBox(height: 10),
         Expanded(
           child: Card(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : ListView.separated(
-                    itemCount: visibleUsers.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (_, i) {
-                      final u = visibleUsers[i];
-                      return ListTile(
-                        leading: CircleAvatar(
-                            child: Text('${u['username']}'
-                                .substring(0, 1)
-                                .toUpperCase())),
-                        title: Text('${u['username']} — ${u['fullName']}'),
-                        subtitle: Text(
-                            'Roles: ${(u['roles'] as List).join(", ")} • Mobile: ${u['mobile']} • Last login: ${u['lastLoginAt'] ?? 'never'}${u['mustChangePassword'] == true ? ' • PENDING PASSWORD CHANGE' : ''}'),
-                        trailing: Wrap(spacing: 4, children: [
-                          Chip(
-                              label: Text(
-                                  u['status'] == true ? 'Active' : 'Inactive',
-                                  style: const TextStyle(
-                                      fontSize: 10, color: Colors.white)),
-                              backgroundColor: u['status'] == true
-                                  ? const Color(0xFF2E7D32)
-                                  : Colors.grey,
-                              visualDensity: VisualDensity.compact),
-                          if (auth.can('User.Edit') &&
-                              u['growerId'] == null &&
-                              !(u['roles'] as List).contains('Developer'))
-                            IconButton(
-                                icon: const Icon(Icons.edit_outlined, size: 18),
-                                onPressed: () =>
-                                    _openForm(Map<String, dynamic>.from(u))),
-                        ]),
-                      );
-                    },
-                  ),
+                : Column(children: [
+                    Expanded(
+                      child: visibleUsers.isEmpty
+                          ? const Center(
+                              child: Text('No matching users found.'))
+                          : ListView.separated(
+                              itemCount: visibleUsers.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (_, i) {
+                                final u = visibleUsers[i];
+                                final username = '${u['username']}';
+                                final isFarmer =
+                                    (u['roles'] as List).contains('Farmer');
+                                return ListTile(
+                                  leading: CircleAvatar(
+                                      child: Text(username.isEmpty
+                                          ? '?'
+                                          : username
+                                              .substring(0, 1)
+                                              .toUpperCase())),
+                                  title: Text(
+                                      '$username — ${u['fullName']}${isFarmer ? ' (Grower ${u['growerId']})' : ''}'),
+                                  subtitle: Text(
+                                      'Roles: ${(u['roles'] as List).join(", ")} • Mobile: ${u['mobile']} • Last login: ${u['lastLoginAt'] ?? 'never'}${u['mustChangePassword'] == true ? ' • PASSWORD CHANGE REQUIRED' : ''}'),
+                                  trailing: Wrap(spacing: 4, children: [
+                                    Chip(
+                                        label: Text(
+                                            u['status'] == true
+                                                ? 'Active'
+                                                : 'Inactive',
+                                            style: const TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.white)),
+                                        backgroundColor: u['status'] == true
+                                            ? const Color(0xFF2E7D32)
+                                            : Colors.grey,
+                                        visualDensity: VisualDensity.compact),
+                                    if (auth.can('User.Edit') &&
+                                        !(u['roles'] as List)
+                                            .contains('Developer'))
+                                      IconButton(
+                                          tooltip: isFarmer
+                                              ? 'Manage farmer login / reset password'
+                                              : 'Edit user',
+                                          icon: const Icon(Icons.edit_outlined,
+                                              size: 18),
+                                          onPressed: () => isFarmer
+                                              ? _manageFarmer(
+                                                  Map<String, dynamic>.from(u))
+                                              : _openForm(
+                                                  Map<String, dynamic>.from(
+                                                      u))),
+                                  ]),
+                                );
+                              },
+                            ),
+                    ),
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      child: Row(children: [
+                        Text(
+                            'Showing $firstResult–$lastResult of $_totalCount'),
+                        const Spacer(),
+                        IconButton(
+                            tooltip: 'Previous page',
+                            onPressed: _page <= 1
+                                ? null
+                                : () {
+                                    _page--;
+                                    _load();
+                                  },
+                            icon: const Icon(Icons.chevron_left)),
+                        Text('Page $_page'),
+                        IconButton(
+                            tooltip: 'Next page',
+                            onPressed: lastResult >= _totalCount
+                                ? null
+                                : () {
+                                    _page++;
+                                    _load();
+                                  },
+                            icon: const Icon(Icons.chevron_right)),
+                      ]),
+                    ),
+                  ]),
           ),
         ),
       ]),
