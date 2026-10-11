@@ -189,7 +189,13 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 : 'All $totalCopies configured slips have printed continuously. Wait until the final dotted line comes outside the printer cover, tear the paper there, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'),
             actions: [
               FilledButton.icon(
-                onPressed: () => Navigator.pop(dialogContext, true),
+                onPressed: () {
+                  // Give immediate feedback before the raw ESC/P reverse-feed
+                  // is handed to Windows. PrintService has its own timeout, so
+                  // a stalled spooler cannot leave this form indefinitely busy.
+                  _toast('Resetting paper to the next TOF...');
+                  Navigator.pop(dialogContext, true);
+                },
                 icon: const Icon(Icons.content_cut),
                 label: const Text('Paper Torn — Reset TOF'),
               ),

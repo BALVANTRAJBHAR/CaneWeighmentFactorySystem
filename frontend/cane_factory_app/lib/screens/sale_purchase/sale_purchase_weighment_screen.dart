@@ -216,6 +216,29 @@ class _SalePurchaseWeighmentScreenState
     return saved > 0;
   }
 
+  /// Saving the weighment and the optional print/sound/camera follow-up are
+  /// deliberately separated. A Windows printer or speech-plugin issue after a
+  /// successful API save must never tell the operator that the sale was not saved.
+  Future<void> _runPostSaveActions(
+      Map<String, dynamic> response, int salePurchaseId, String stage) async {
+    try {
+      await _sound.onWeighmentSaved();
+    } catch (_) {
+      // Sound is advisory; saving must remain successful when local TTS fails.
+    }
+    try {
+      await _print(response['autoPrint']);
+    } catch (_) {
+      if (mounted) {
+        _toast('Weighment was saved, but automatic printing could not start.',
+            error: true);
+      }
+    }
+    if (_hasCapturedWeighmentEvidence(response)) {
+      unawaited(_waitForCapturedImages(salePurchaseId, stage));
+    }
+  }
+
   bool _validLive() {
     final l = context.read<LiveWeightProvider>().current;
     if (!l.deviceConnected || !l.readerRunning || !l.isLive) {
@@ -254,16 +277,13 @@ class _SalePurchaseWeighmentScreenState
       if (!mounted) return;
       if (res.statusCode != 200)
         return _toast(ApiClient.errorMessage(res), error: true);
-      _toast(res.data['message']);
-      await _sound.onWeighmentSaved();
-      await _print(res.data['autoPrint']);
-      final salePurchaseId = res.data['salePurchaseId'] as int;
-      // Ordinary weighment-camera capture is optional. A successful save must
-      // not show an error when those cameras are not configured. Rate-change
-      // evidence remains mandatory and is validated separately before save.
-      if (_hasCapturedWeighmentEvidence(res.data)) {
-        unawaited(_waitForCapturedImages(salePurchaseId, 'TARE'));
+      final data = Map<String, dynamic>.from(res.data as Map);
+      final salePurchaseId = (data['salePurchaseId'] as num?)?.toInt();
+      if (salePurchaseId == null) {
+        return _toast('The server did not return a SalePurchase ID.',
+            error: true);
       }
+      _toast(data['message']?.toString() ?? 'Tare saved.');
       setState(() {
         _itemId = null;
         _partyId = null;
@@ -272,7 +292,8 @@ class _SalePurchaseWeighmentScreenState
         _driver.clear();
         _remark.clear();
       });
-      _load();
+      unawaited(_load());
+      unawaited(_runPostSaveActions(data, salePurchaseId, 'TARE'));
     } catch (e) {
       if (mounted) _toast(ApiClient.exceptionMessage(e), error: true);
     } finally {
@@ -305,20 +326,21 @@ class _SalePurchaseWeighmentScreenState
       if (!mounted) return;
       if (res.statusCode != 200)
         return _toast(ApiClient.errorMessage(res), error: true);
-      _toast(res.data['message']);
-      await _sound.onWeighmentSaved();
-      await _print(res.data['autoPrint']);
-      final salePurchaseId = res.data['salePurchaseId'] as int;
-      if (_hasCapturedWeighmentEvidence(res.data)) {
-        unawaited(_waitForCapturedImages(salePurchaseId, 'GROSS'));
+      final data = Map<String, dynamic>.from(res.data as Map);
+      final salePurchaseId = (data['salePurchaseId'] as num?)?.toInt();
+      if (salePurchaseId == null) {
+        return _toast('The server did not return a SalePurchase ID.',
+            error: true);
       }
+      _toast(data['message']?.toString() ?? 'Gross saved.');
       setState(() {
         _selected = null;
         _id.clear();
         _itemRate = null;
         _gross = false;
       });
-      _load();
+      unawaited(_load());
+      unawaited(_runPostSaveActions(data, salePurchaseId, 'GROSS'));
     } catch (e) {
       if (mounted) _toast(ApiClient.exceptionMessage(e), error: true);
     } finally {

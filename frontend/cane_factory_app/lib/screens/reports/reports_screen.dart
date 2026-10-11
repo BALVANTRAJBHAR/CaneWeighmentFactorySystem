@@ -190,6 +190,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       case 'payments':
         return [
           'paymentId',
+          'purchaseIds',
           'growerId',
           'growerName',
           'netPayableAmount',

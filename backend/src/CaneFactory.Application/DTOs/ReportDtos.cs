@@ -28,6 +28,8 @@ public class PaymentReportRow
 {
     public int PaymentId { get; set; }
     public int AdviceNumber { get; set; }
+    /// <summary>Comma-separated purchase IDs covered by this payment.</summary>
+    public string PurchaseIds { get; set; } = string.Empty;
     public int GrowerId { get; set; }
     public string GrowerCode { get; set; } = string.Empty;
     public string GrowerName { get; set; } = string.Empty;

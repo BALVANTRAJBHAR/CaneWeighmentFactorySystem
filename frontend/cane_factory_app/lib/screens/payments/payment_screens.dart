@@ -715,6 +715,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 child: DataTable(columns: [
                   const DataColumn(label: Text('Payment ID')),
                   const DataColumn(label: Text('Advice #')),
+                  const DataColumn(label: Text('Purchase ID')),
                   const DataColumn(label: Text('Grower')),
                   const DataColumn(label: Text('Total')),
                   const DataColumn(label: Text('Loan Deducted')),
@@ -730,6 +731,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       DataCell(Text('${p['paymentId']}',
                           style: const TextStyle(fontWeight: FontWeight.w700))),
                       DataCell(Text('${p['adviceNumber']}')),
+                      DataCell(Text('${p['purchaseIds'] ?? '-'}')),
                       DataCell(Text('${p['growerId']} ${p['growerName']}')),
                       DataCell(Text((p['totalPurchaseAmount'] as num)
                           .toStringAsFixed(2))),

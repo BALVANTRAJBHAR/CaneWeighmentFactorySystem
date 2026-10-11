@@ -145,6 +145,7 @@ public class SalePurchaseWeighmentController : ControllerBase
         }
         catch (Exception ex)
         {
+            ReleaseDuplicateClaim(req.IdempotencyKey);
             _log.LogError(ex, "SalePurchase tare save failed for item {ItemId}, party {PartyId}", req.ItemId, req.PartyId);
             return Problem(statusCode: StatusCodes.Status500InternalServerError,
                 title: "SalePurchase tare could not be saved. Please contact the administrator.");
@@ -155,7 +156,7 @@ public class SalePurchaseWeighmentController : ControllerBase
         catch (Exception ex) { _log.LogError(ex, "SalePurchase tare {SalePurchaseId} audit failed after commit", savedRecord.Id); }
         var captureResults = await CaptureEvidenceAsync(savedRecord.Id, "TARE");
         return Ok(new { message = $"Tare saved. SalePurchase ID: {savedRecord.Id}. Pending gross weighment.", salePurchaseId = savedRecord.Id,
-            tareWeightQuintal = tare, status = savedRecord.WeighmentStatus, autoPrint = await AutoPrintAsync(savedRecord.Id, "TARE"),
+            tareWeightQuintal = tare, status = savedRecord.WeighmentStatus, autoPrint = await SafeAutoPrintAsync(savedRecord.Id, "TARE"),
             capture = new { requested = captureResults.Count, saved = captureResults.Count(x => x.Success), results = captureResults } });
     }
 
@@ -232,14 +233,17 @@ public class SalePurchaseWeighmentController : ControllerBase
         }
         catch (SalePurchaseStateException ex)
         {
+            ReleaseDuplicateClaim(req.IdempotencyKey);
             return StatusCode(ex.StatusCode, new { message = ex.Message });
         }
         catch (RateOverrideValidationException ex)
         {
+            ReleaseDuplicateClaim(req.IdempotencyKey);
             return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)
         {
+            ReleaseDuplicateClaim(req.IdempotencyKey);
             _log.LogError(ex, "SalePurchase gross save failed for SalePurchase {SalePurchaseId}", req.SalePurchaseId);
             return Problem(statusCode: StatusCodes.Status500InternalServerError,
                 title: "SalePurchase gross could not be saved. Please contact the administrator.");
@@ -249,11 +253,9 @@ public class SalePurchaseWeighmentController : ControllerBase
         { completedRecord.GrossWeightQuintal, completedRecord.TareWeightQuintal, completedRecord.FinalWeightQuintal, completedRecord.Rate, completedRecord.Amount }); }
         catch (Exception ex) { _log.LogError(ex, "SalePurchase gross {SalePurchaseId} audit failed after commit", completedRecord.Id); }
         var captureResults = await CaptureEvidenceAsync(completedRecord.Id, "GROSS");
-        var party = await _db.Parties.AsNoTracking().Where(x => x.Id == completedRecord.PartyId)
-            .Select(x => new { x.PartyName, x.Mobile, x.Status, x.IsDeleted }).FirstAsync();
         var placeholders = new Dictionary<string, string>
             {
-                ["SalePurchaseId"] = completedRecord.Id.ToString(), ["PartyName"] = party.PartyName, ["FinalWeight"] = finalWeight.ToString("F2"),
+                ["SalePurchaseId"] = completedRecord.Id.ToString(), ["FinalWeight"] = finalWeight.ToString("F2"),
                 ["Amount"] = completedRecord.Amount?.ToString("F2") ?? ""
             };
         // A completed sale purchase informs the selected Party as well as all active owner/operational
@@ -261,7 +263,10 @@ public class SalePurchaseWeighmentController : ControllerBase
         var queued = new List<bool>();
         try
         {
-            if (party.Status && !party.IsDeleted)
+            var party = await _db.Parties.AsNoTracking().Where(x => x.Id == completedRecord.PartyId)
+                .Select(x => new { x.PartyName, x.Mobile, x.Status, x.IsDeleted }).FirstOrDefaultAsync();
+            placeholders["PartyName"] = party?.PartyName ?? "";
+            if (party is { Status: true, IsDeleted: false })
                 queued.Add(await _sms.QueueForPartyAsync("SALE_PURCHASE_COMPLETED", completedRecord.PartyId, party.Mobile,
                     $"SP-{completedRecord.Id}-PARTY", placeholders));
             var recipients = await _db.SmsRecipients.AsNoTracking()
@@ -278,7 +283,7 @@ public class SalePurchaseWeighmentController : ControllerBase
         var smsQueued = queued.Any(x => x);
         return Ok(new { message = $"SalePurchase {completedRecord.Id} completed successfully. Final Weight: {finalWeight:F2} Quintal.",
             salePurchaseId = completedRecord.Id, grossWeightQuintal = gross, finalWeightQuintal = finalWeight,
-            amount = completedRecord.Amount, status = completedRecord.WeighmentStatus, smsQueued, autoPrint = await AutoPrintAsync(completedRecord.Id, "GROSS"),
+            amount = completedRecord.Amount, status = completedRecord.WeighmentStatus, smsQueued, autoPrint = await SafeAutoPrintAsync(completedRecord.Id, "GROSS"),
             capture = new { requested = captureResults.Count, saved = captureResults.Count(x => x.Success), results = captureResults } });
     }
 
@@ -302,14 +307,29 @@ public class SalePurchaseWeighmentController : ControllerBase
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
         if (cfg == null) return null;
-        return new { printerType = cfg.PrinterType, printerName = cfg.PrinterName, copies = cfg.SalePurchaseCopies,
+        var copies = stage.Equals("GROSS", StringComparison.OrdinalIgnoreCase)
+            ? cfg.SalePurchaseGrossCopies
+            : cfg.SalePurchaseTareCopies;
+        return new { printerType = cfg.PrinterType, printerName = cfg.PrinterName, copies,
             language = cfg.Language, stage,
             dotMatrixTearOffParkingEnabled = cfg.DotMatrixTearOffParkingEnabled,
             dotMatrixTearOffFeedLines = cfg.DotMatrixTearOffFeedLines,
             dotMatrixLineSpacingUnits = cfg.DotMatrixLineSpacingUnits,
-            shouldAutoPrint = cfg.AutoPrint && cfg.SalePurchaseCopies > 0,
+            shouldAutoPrint = cfg.AutoPrint && copies > 0,
             documentUrl = $"/api/print/sale-purchase/{id}?stage={stage}&format=final" +
-                (cfg.AutoPrint && cfg.SalePurchaseCopies > 0 ? "" : "&target=A4") };
+                (cfg.AutoPrint && copies > 0 ? "" : "&target=A4") };
+    }
+
+    // Printing is optional post-save work. A printer/configuration problem must
+    // never make an already-committed SalePurchase look like a failed save.
+    private async Task<object?> SafeAutoPrintAsync(int id, string stage)
+    {
+        try { return await AutoPrintAsync(id, stage); }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "SalePurchase {SalePurchaseId} saved, but auto-print configuration could not be loaded", id);
+            return null;
+        }
     }
 
     private sealed class SalePurchaseStateException : Exception
@@ -402,7 +422,7 @@ public class SalePurchaseWeighmentController : ControllerBase
     {
         result = null;
         if (string.IsNullOrWhiteSpace(idempotencyKey)) return false;
-        var key = $"sale-purchase-idempotency:{_current.UserId}:{idempotencyKey}";
+        var key = IdempotencyCacheKey(idempotencyKey);
         if (_cache.TryGetValue(key, out _))
         {
             result = Conflict(new { message = "Duplicate SalePurchase request detected." });
@@ -411,4 +431,15 @@ public class SalePurchaseWeighmentController : ControllerBase
         _cache.Set(key, true, TimeSpan.FromMinutes(10));
         return false;
     }
+
+    // A failed transaction must not consume the key: the operator can retry a
+    // transient SQL/network failure without receiving a misleading duplicate error.
+    private void ReleaseDuplicateClaim(string? idempotencyKey)
+    {
+        if (!string.IsNullOrWhiteSpace(idempotencyKey))
+            _cache.Remove(IdempotencyCacheKey(idempotencyKey));
+    }
+
+    private string IdempotencyCacheKey(string idempotencyKey) =>
+        $"sale-purchase-idempotency:{_current.UserId}:{idempotencyKey}";
 }

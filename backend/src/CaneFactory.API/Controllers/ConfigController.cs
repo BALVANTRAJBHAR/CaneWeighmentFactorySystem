@@ -544,6 +544,8 @@ public class ConfigController : ControllerBase
             p.PrintImages,
             p.GrossCopies,
             p.TareCopies,
+            p.SalePurchaseGrossCopies,
+            p.SalePurchaseTareCopies,
             p.DotMatrixPrintHeader,
             p.DotMatrixPageLines,
             p.DotMatrixHalfPageLines,
@@ -569,7 +571,8 @@ public class ConfigController : ControllerBase
         p.TareCopies = Math.Clamp(src.TareCopies, 0, 5);
         p.PaymentCopies = Math.Clamp(src.PaymentCopies, 0, 5);
         p.LoanCopies = Math.Clamp(src.LoanCopies, 0, 5);
-        p.SalePurchaseCopies = Math.Clamp(src.SalePurchaseCopies, 0, 5);
+        p.SalePurchaseGrossCopies = Math.Clamp(src.SalePurchaseGrossCopies, 0, 5);
+        p.SalePurchaseTareCopies = Math.Clamp(src.SalePurchaseTareCopies, 0, 5);
         p.Language = src.Language;
         p.DotMatrixPrintHeader = src.DotMatrixPrintHeader;
         p.DotMatrixPageLines = src.DotMatrixPageLines;

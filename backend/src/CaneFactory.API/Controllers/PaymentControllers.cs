@@ -141,7 +141,7 @@ public class PaymentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(status)) q = q.Where(p => p.PaymentStatus == status);
         if (adviceNumber.HasValue) q = q.Where(p => p.AdviceNumber == adviceNumber);
         var total = await q.CountAsync();
-        var items = await q.OrderByDescending(p => p.Id).Skip((page - 1) * pageSize).Take(pageSize)
+        var pageItems = await q.OrderByDescending(p => p.Id).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(p => new
             {
                 paymentId = p.Id, p.AdviceNumber, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName,
@@ -149,6 +149,23 @@ public class PaymentController : ControllerBase
                 p.NetPayableAmount, PaymentModeName = p.PaymentMode.ModeName, p.TransactionRefNumber,
                 p.PaymentDate, p.PaidByUserName, p.PaymentStatus, p.PrintCount
             }).ToListAsync();
+
+        // A payment can settle more than one purchase. Fetch those links in one
+        // query instead of relying on an EF string aggregation that differs by SQL provider.
+        var purchaseIdsByPayment = (await _db.PaymentPurchases.AsNoTracking()
+                .Where(pp => pageItems.Select(p => p.paymentId).Contains(pp.PaymentId))
+                .OrderBy(pp => pp.PurchaseId)
+                .Select(pp => new { pp.PaymentId, pp.PurchaseId })
+                .ToListAsync())
+            .GroupBy(x => x.PaymentId)
+            .ToDictionary(g => g.Key, g => string.Join(", ", g.Select(x => x.PurchaseId)));
+        var items = pageItems.Select(p => new
+        {
+            p.paymentId, p.AdviceNumber, p.GrowerId, p.GrowerCode, p.GrowerName, p.VillageName,
+            p.TotalPurchaseAmount, p.LoanDeductedAmount, p.NetPayableAmount, p.PaymentModeName,
+            p.TransactionRefNumber, p.PaymentDate, p.PaidByUserName, p.PaymentStatus, p.PrintCount,
+            purchaseIds = purchaseIdsByPayment.GetValueOrDefault(p.paymentId, "-")
+        });
         return Ok(new { items, totalCount = total, page, pageSize });
     }
 

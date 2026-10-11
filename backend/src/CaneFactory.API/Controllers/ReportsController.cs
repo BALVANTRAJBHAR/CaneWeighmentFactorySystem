@@ -68,6 +68,22 @@ public class ReportsController : ControllerBase
         return File(_export.ToExcel(title, headers, rows, totals), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"{reportName}.xlsx");
     }
 
+    /// <summary>Adds the purchase IDs covered by each payment without provider-specific SQL aggregation.</summary>
+    private async Task AddPurchaseIdsAsync(IList<PaymentReportRow> payments)
+    {
+        if (payments.Count == 0) return;
+        var ids = payments.Select(p => p.PaymentId).ToList();
+        var links = await _db.PaymentPurchases.AsNoTracking()
+            .Where(pp => ids.Contains(pp.PaymentId))
+            .OrderBy(pp => pp.PurchaseId)
+            .Select(pp => new { pp.PaymentId, pp.PurchaseId })
+            .ToListAsync();
+        var lookup = links.GroupBy(x => x.PaymentId)
+            .ToDictionary(g => g.Key, g => string.Join(", ", g.Select(x => x.PurchaseId)));
+        foreach (var payment in payments)
+            payment.PurchaseIds = lookup.GetValueOrDefault(payment.PaymentId, "-");
+    }
+
     // --------------------------------------------------------------- CASH BOOK
     [HttpGet("cash-book")]
     public async Task<IActionResult> CashBook([FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate,
@@ -586,14 +602,16 @@ public class ReportsController : ControllerBase
         if (format == "json")
         {
             var items = await projected.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+            await AddPurchaseIdsAsync(items);
             return Ok(new { items, totalCount = pCount, page, pageSize, totals = new { count = pCount, total = pTotal, deducted = pDeducted, net = pNet } });
         }
 
         var rows = await projected.Take(5000).ToListAsync();
-        var headers = new List<string> { "Payment ID", "Advice No", "Grower ID", "Grower Name", "Village",
+        await AddPurchaseIdsAsync(rows);
+        var headers = new List<string> { "Payment ID", "Advice No", "Purchase ID", "Grower ID", "Grower Name", "Village",
             "Total Purchase (Rs)", "Loan Deducted (Rs)", "Net Payable (Rs)", "Payment Mode", "Bank Details", "Payment Date", "Paid By", "Status" };
         var tableRows = rows.Select(r => new List<string> {
-            r.PaymentId.ToString(), r.AdviceNumber.ToString(), r.GrowerId.ToString(), r.GrowerName, r.VillageName,
+            r.PaymentId.ToString(), r.AdviceNumber.ToString(), r.PurchaseIds, r.GrowerId.ToString(), r.GrowerName, r.VillageName,
             r.TotalPurchaseAmount.ToString("F2"), r.LoanDeductedAmount.ToString("F2"), r.NetPayableAmount.ToString("F2"),
             r.PaymentModeName,
             r.IsBankPayment

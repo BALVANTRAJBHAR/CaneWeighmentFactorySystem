@@ -1276,6 +1276,12 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<int>("SalePurchaseCopies")
                         .HasColumnType("int");
 
+                    b.Property<int>("SalePurchaseGrossCopies")
+                        .HasColumnType("int");
+
+                    b.Property<int>("SalePurchaseTareCopies")
+                        .HasColumnType("int");
+
                     b.Property<bool>("Status")
                         .HasColumnType("bit");
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -52,11 +53,26 @@ Future<bool> printNativeRaw(
   if (!Platform.isWindows) return false;
   var accepted = true;
   for (var i = 0; i < copies; i++) {
-    final jobAccepted = await PrintingFfi.instance.rawDataToPrinter(
-      printerName,
-      bytes,
-      docName: 'CaneFactorySlip',
-    );
+    // The package delegates this work to a Windows helper isolate. A stuck
+    // printer driver/spooler can otherwise leave its Future pending forever,
+    // which used to make the Tear-Off "Reset TOF" confirmation look like the
+    // whole desktop app had frozen. Spooling raw ESC/P is normally immediate;
+    // on timeout discard the stuck worker so the next print gets a fresh one.
+    bool jobAccepted;
+    try {
+      jobAccepted = await PrintingFfi.instance
+          .rawDataToPrinter(
+            printerName,
+            bytes,
+            docName: 'CaneFactorySlip',
+          )
+          .timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      PrintingFfi.instance.dispose();
+      return false;
+    } catch (_) {
+      return false;
+    }
     accepted = accepted && jobAccepted;
   }
   return accepted;

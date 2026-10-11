@@ -37,6 +37,14 @@ public class PrintConfig : BaseEntity
     public int TareCopies { get; set; } = 2;
     public int PaymentCopies { get; set; } = 1;
     public int LoanCopies { get; set; } = 1;
+    /// <summary>Copies for Sale Weighment completion (Gross) slip. This is
+    /// deliberately independent from cane-purchase GrossCopies.</summary>
+    public int SalePurchaseGrossCopies { get; set; } = 2;
+    /// <summary>Copies for the first Sale Weighment (Tare) slip. This is
+    /// deliberately independent from cane-purchase TareCopies.</summary>
+    public int SalePurchaseTareCopies { get; set; } = 1;
+    /// <summary>Legacy combined Sale Weighment copy count retained only so older
+    /// installations can upgrade without dropping their existing column.</summary>
     public int SalePurchaseCopies { get; set; } = 2;
     public string Language { get; set; } = "hi";
     /// <summary>Dot-matrix only. When false, the physical pre-printed header area is

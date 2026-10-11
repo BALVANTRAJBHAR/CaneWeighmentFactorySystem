@@ -1413,7 +1413,8 @@ class _PrintTabState extends State<_PrintTab> {
           ('tareCopies', 'Tare Copies'),
           ('paymentCopies', 'Payment Copies'),
           ('loanCopies', 'Loan Copies'),
-          ('salePurchaseCopies', 'SalePurchase Copies')
+          ('salePurchaseGrossCopies', 'Sale Weighment Gross Copies'),
+          ('salePurchaseTareCopies', 'Sale Weighment Tare Copies')
         ])
           SizedBox(
               width: 170,
