@@ -22,7 +22,14 @@ var builder = WebApplication.CreateBuilder(args);
 // ---- Environment variable aliases (no secrets in source / appsettings) ----
 void MapEnv(string env, string key)
 {
+    // IIS worker processes inherit their environment when WAS starts.  A
+    // machine-level secret added or repaired later can therefore be absent
+    // from a recycled app pool until the whole server is restarted.  Read the
+    // machine store as a fallback so a valid IIS deployment can recover
+    // without copying secrets into web.config or appsettings.json.
     var v = Environment.GetEnvironmentVariable(env);
+    if (string.IsNullOrWhiteSpace(v))
+        v = Environment.GetEnvironmentVariable(env, EnvironmentVariableTarget.Machine);
     if (!string.IsNullOrWhiteSpace(v)) builder.Configuration[key] = v;
 }
 MapEnv("CANE_JWT_SECRET", "Jwt:Secret");
