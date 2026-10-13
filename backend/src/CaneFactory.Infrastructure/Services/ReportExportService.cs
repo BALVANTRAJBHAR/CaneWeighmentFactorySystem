@@ -1,4 +1,5 @@
 using CaneFactory.Application.Interfaces;
+using CaneFactory.Application.Utilities;
 using ClosedXML.Excel;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
@@ -94,7 +95,7 @@ public class ReportExportService : IReportExportService
                     {
                         t.Span("Rows: ").FontSize(7);
                         t.Span(rows.Count.ToString()).FontSize(7).Bold();
-                        t.Span($"   Generated: {DateTime.UtcNow:dd-MM-yyyy HH:mm} UTC").FontSize(7);
+                        t.Span($"   Generated: {IndiaTime.Format(DateTime.UtcNow)} IST").FontSize(7);
                         t.Span("   Page ");
                         t.CurrentPageNumber().FontSize(7);
                         t.Span(" of ");
@@ -136,7 +137,7 @@ public class ReportExportService : IReportExportService
             ws.AddPicture(qr).MoveTo(ws.Cell(1, lastColumn), 4, 4).WithSize(76, 76);
         ws.Range(4, 1, 4, lastColumn).Merge().Value = title;
         ws.Cell(4, 1).Style.Font.SetBold().Font.SetFontSize(14);
-        ws.Range(5, 1, 5, lastColumn).Merge().Value = $"Generated: {DateTime.UtcNow:dd-MM-yyyy HH:mm} UTC";
+        ws.Range(5, 1, 5, lastColumn).Merge().Value = $"Generated: {IndiaTime.Format(DateTime.UtcNow)} IST";
         const int headerRow = 7;
 
         for (var c = 0; c < headers.Count; c++)
@@ -154,10 +155,12 @@ public class ReportExportService : IReportExportService
                 var cell = ws.Cell(headerRow + 1 + r, c + 1);
                 var value = rows[r][c];
                 if (headers[c].Contains("Date", StringComparison.OrdinalIgnoreCase) &&
-                    DateTime.TryParseExact(value, new[] { "dd-MM-yyyy", "dd-MM-yyyy HH:mm" }, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+                    DateTime.TryParseExact(value, new[] { "dd-MM-yyyy", "dd-MM-yyyy HH:mm", "dd-MM-yyyy HH:mm:ss" }, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
                 {
-                    cell.Value = date.Date;
-                    cell.Style.DateFormat.Format = "dd-mm-yyyy";
+                    cell.Value = date;
+                    cell.Style.DateFormat.Format = value.Contains(':')
+                        ? "dd-mm-yyyy hh:mm:ss"
+                        : "dd-mm-yyyy";
                 }
                 else cell.Value = value;
             }

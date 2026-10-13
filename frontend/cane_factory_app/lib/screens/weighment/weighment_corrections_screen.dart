@@ -22,8 +22,8 @@ class _WeighmentCorrectionsScreenState
   final _vehicle = TextEditingController();
   String _kind = 'purchase';
   Map<String, dynamic>? _record, _preview;
-  List<Map<String, dynamic>> _vehicles = [], _types = [], _varieties = [];
-  int? _vehicleType, _varietyType, _variety;
+  List<Map<String, dynamic>> _vehicles = [];
+  int? _vehicleType;
   String? _message, _updater;
   bool _busy = false, _error = false;
   Dio get _api => widget.api ?? ApiClient.instance.dio;
@@ -102,17 +102,7 @@ class _WeighmentCorrectionsScreenState
             (x) => Map<String, dynamic>.from(x),
           ),
         );
-        _types = List<Map<String, dynamic>>.from(
-          (data['varietyTypes'] as List).map(
-            (x) => Map<String, dynamic>.from(x),
-          ),
-        );
-        _varieties = List<Map<String, dynamic>>.from(
-          (data['varieties'] as List).map((x) => Map<String, dynamic>.from(x)),
-        );
         _vehicleType = _record!['vehicleTypeId'];
-        _varietyType = _record!['varietyTypeId'];
-        _variety = _record!['varietyId'];
         _vehicle.text = _record!['vehicleNumber'] ?? '';
         _updater = data['updatedByName'];
       });
@@ -127,17 +117,12 @@ class _WeighmentCorrectionsScreenState
         'vehicleTypeId': _vehicleType,
         'vehicleNumber': _vehicle.text,
         'revision': _record!['revision'],
-        if (_cane) 'varietyTypeId': _varietyType,
-        if (_cane) 'varietyId': _variety,
-        if (_cane) 'expectedRate': _preview?['rate'],
       };
 
   Future<void> _calculateOrSave(bool save) async {
     if (!_allowed || _busy || _record == null) return;
-    if (_vehicleType == null ||
-        (_cane && (_varietyType == null || _variety == null)) ||
-        _vehicle.text.trim().isEmpty) {
-      _show('Select all required fields and enter the vehicle number.');
+    if (_vehicleType == null || _vehicle.text.trim().isEmpty) {
+      _show('Select a vehicle type and enter the vehicle number.');
       return;
     }
     if (save && _preview == null) {
@@ -190,8 +175,6 @@ class _WeighmentCorrectionsScreenState
             ..._record!,
             ...data,
             'vehicleTypeId': _vehicleType,
-            if (_cane) 'varietyTypeId': _varietyType,
-            if (_cane) 'varietyId': _variety,
           };
           _vehicle.text = data['vehicleNumber'];
           _updater = data['updatedByName'];
@@ -212,15 +195,6 @@ class _WeighmentCorrectionsScreenState
   }
 
   String _money(dynamic value) => value is num ? value.toStringAsFixed(2) : '-';
-  String _selectedVarietyTypeName() {
-    for (final type in _types) {
-      if (type['id'] == _varietyType) {
-        return type['name']?.toString() ?? 'selected';
-      }
-    }
-    return 'selected';
-  }
-
   String _date(dynamic value) {
     final date = DateTime.tryParse(value?.toString() ?? '');
     return date == null
@@ -449,7 +423,7 @@ class _WeighmentCorrectionsScreenState
                     const Padding(
                       padding: EdgeInsets.only(top: 10),
                       child: Text(
-                        'The selected variety type preview uses the Rate Master effective on the original gross date.',
+                        'Variety Type, Variety, Rate and Amount are locked. Only Vehicle Type and Vehicle Number can be corrected.',
                       ),
                     ),
                 ],
@@ -481,20 +455,6 @@ class _WeighmentCorrectionsScreenState
                   }),
                 ),
               ),
-              if (_cane)
-                _dropdown('Variety Type', _types, _varietyType, (v) {
-                  _varietyType = v;
-                  _variety = null;
-                }),
-              if (_cane)
-                _dropdown(
-                  'Variety',
-                  _varieties
-                      .where((x) => x['varietyTypeId'] == _varietyType)
-                      .toList(),
-                  _variety,
-                  (v) => _variety = v,
-                ),
             ],
           ),
           const SizedBox(height: 20),
@@ -502,7 +462,7 @@ class _WeighmentCorrectionsScreenState
             Padding(
               padding: const EdgeInsets.only(bottom: 14),
               child: Text(
-                'New preview${_cane ? ' — ${_selectedVarietyTypeName()} rate' : ''}: Vehicle ${_preview!['vehicleNumber']}    Rate: ${_money(_preview!['rate'])}    Amount: ${_money(_preview!['amount'])}',
+                'Vehicle preview: ${_preview!['vehicleNumber']}    Rate: ${_money(_preview!['rate'])}    Amount: ${_money(_preview!['amount'])}',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),

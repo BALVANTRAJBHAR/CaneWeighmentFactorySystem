@@ -55,15 +55,15 @@ class FakeApi {
               ? lookup()
               : {
                   'vehicleNumber': 'UP32AA1111',
-                  'rate': 325.5,
-                  'amount': 3336.38,
+                  'rate': 300.0,
+                  'amount': 3075.0,
                   'revision': 'updated',
                   'updatedAt': '2026-09-20T12:00:00Z',
                   'updatedBy': 7,
                   'updatedByName': 'admin-test',
                   'message': request.method == 'PUT'
                       ? 'Purchase corrected successfully.'
-                      : 'Calculation ready.',
+                      : 'Vehicle correction ready.',
                 };
       handler.resolve(Response(
           requestOptions: request,
@@ -146,12 +146,12 @@ void main() {
             .onPressed,
         isNull);
     await preview(tester);
-    expect(find.textContaining('3336.38'), findsOneWidget);
+    expect(find.textContaining('Vehicle preview: UP32AA1111'), findsOneWidget);
     await save(tester);
     final put = api.calls.singleWhere((r) => r.method == 'PUT');
     expect(put.path, '/api/weighment-corrections/purchase/12');
     expect(put.data['revision'], 'original');
-    expect(put.data['expectedRate'], 325.5);
+    expect(put.data.containsKey('expectedRate'), isFalse);
     expect(find.text('Purchase corrected successfully.'), findsOneWidget);
     expect(find.text('Last Updated By'), findsOneWidget);
     expect(find.text('admin-test'), findsOneWidget);
@@ -192,26 +192,15 @@ void main() {
     expect(find.text('Update'), findsNothing);
   });
 
-  testWidgets('Changing variety type clears old variety and preview',
+  testWidgets('Purchase variety fields are locked and only vehicle type is selectable',
       (tester) async {
     final api = FakeApi();
     await open(tester, api);
     await search(tester);
-    await preview(tester);
-    await tester.tap(find.byType(DropdownButtonFormField<int>).at(1));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Early').last);
-    await tester.pumpAndSettle();
-    expect(find.text('Normal cane'), findsNothing);
-    expect(
-        tester
-            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Update'))
-            .onPressed,
-        isNull);
-    await preview(tester);
-    expect(
-        find.text('Select all required fields and enter the vehicle number.'),
-        findsOneWidget);
+    expect(find.byType(DropdownButtonFormField<int>), findsOneWidget);
+    expect(find.text('Variety Type'), findsNothing);
+    expect(find.text('Variety'), findsNothing);
+    expect(find.textContaining('Rate and Amount are locked'), findsOneWidget);
   });
 
   testWidgets(

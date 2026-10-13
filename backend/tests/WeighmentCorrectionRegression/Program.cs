@@ -18,7 +18,7 @@ JsonElement Json(IActionResult result) => JsonSerializer.SerializeToElement(((Ob
 int Status(IActionResult result) => ((ObjectResult)result).StatusCode ?? 200;
 async Task<WeighmentCorrectionRequest> Request(Fixture f, int id = 1, string kind = "purchase") =>
     new(2, " up32 AB-1234 ", Json(await f.Controller.Get(kind, id)).GetProperty("record").GetProperty("revision").GetString()!,
-        kind == "purchase" ? 2 : null, kind == "purchase" ? 2 : null, 325.50m);
+        null, null, null);
 
 var auth = typeof(WeighmentCorrectionsController).GetCustomAttributes(typeof(AuthorizeAttribute), true).Cast<AuthorizeAttribute>().Single();
 Check(auth.Roles == "Admin,Developer", "HTTP authorization limits roles");
@@ -33,25 +33,25 @@ await using (var f = await Fixture.Create())
     }
     var request = await Request(f);
     var preview = await f.Controller.Preview("purchase", 1, request);
-    Check(Status(preview) == 200 && Json(preview).GetProperty("amount").GetDecimal() == 3336.38m, "server preview rounds final weight times effective rate");
+    Check(Status(preview) == 200 && Json(preview).GetProperty("amount").GetDecimal() == 3075m, "server preview preserves saved amount");
     Check(await f.Db.AuditLogs.CountAsync() == 0, "preview does not audit or write");
     Check((await f.Db.Purchases.AsNoTracking().SingleAsync(x => x.Id == 1)).Rate == 300m, "preview leaves original price intact");
     var result = await f.Controller.Update("purchase", 1, request);
     Check(Status(result) == 200, "unpaid correction succeeds");
     var saved = await f.Db.Purchases.AsNoTracking().SingleAsync(x => x.Id == 1);
-    Check(saved.VarietyTypeId == 2 && saved.VarietyId == 2 && saved.VehicleTypeId == 2 && saved.VehicleNumber == "UP32AB1234", "all editable fields saved and vehicle normalized");
-    Check(saved.Rate == 325.50m && saved.PurchaseAmount == 3336.38m, "amount repriced");
+    Check(saved.VarietyTypeId == 1 && saved.VarietyId == 1 && saved.VehicleTypeId == 2 && saved.VehicleNumber == "UP32AB1234", "only vehicle fields are saved and vehicle is normalized");
+    Check(saved.Rate == 300m && saved.PurchaseAmount == 3075m, "rate and amount are preserved");
     Check(saved.GrossWeightQuintal == 25.25m && saved.TareWeightQuintal == 15m && saved.FinalWeightQuintal == 10.25m, "weights untouched");
     Check(saved.UpdatedBy == 7 && saved.UpdatedAt.HasValue && saved.GrossByUserName == "original", "updated attribution preserves original operator");
     var audit = await f.Db.AuditLogs.SingleAsync();
-    Check(audit.Username == "admin-test" && audit.OldValue!.Contains("300") && audit.NewValue!.Contains("3336.38"), "atomic before-after audit with username");
+    Check(audit.Username == "admin-test" && audit.OldValue!.Contains("UP32AA1111") && audit.NewValue!.Contains("UP32AB1234"), "atomic before-after audit with username");
     Check(Status(await f.Controller.Update("purchase", 1, request)) == 409, "stale form cannot overwrite correction");
     var reload = Json(await f.Controller.Get("purchase", 1));
     Check(reload.GetProperty("record").GetProperty("revision").GetString() == Json(result).GetProperty("revision").GetString(), "revision stable after database UTC roundtrip");
     var vehicleOnly = (await Request(f)) with { VehicleNumber = "UP32CD2222" };
     await f.Db.Rates.Where(x => x.Id == 2).ExecuteUpdateAsync(s => s.SetProperty(x => x.Rate, 900m));
     Check(Status(await f.Controller.Update("purchase", 1, vehicleOnly)) == 200, "vehicle-only edit does not reprice from new master rate");
-    Check((await f.Db.Purchases.AsNoTracking().SingleAsync(x => x.Id == 1)).Rate == 325.50m, "original type rate snapshot preserved");
+    Check((await f.Db.Purchases.AsNoTracking().SingleAsync(x => x.Id == 1)).Rate == 300m, "original rate snapshot preserved");
 }
 
 foreach (var paidBy in new[] { "flag", "status", "link" })
@@ -75,11 +75,12 @@ await using (var f = await Fixture.Create())
 {
     var req = await Request(f);
     Check(Status(await f.Controller.Update("purchase", 1, req with { VarietyId = 1 })) == 400, "mismatched variety rejected");
-    Check(Status(await f.Controller.Update("purchase", 1, req with { ExpectedRate = 999 })) == 409, "changed/unpreviewed rate rejected");
+    Check(Status(await f.Controller.Update("purchase", 1, req with { ExpectedRate = 999 })) == 400, "rate correction rejected");
     Check(Status(await f.Controller.Update("purchase", 1, req with { VehicleTypeId = 999 })) == 400, "missing vehicle type rejected");
     Check(Status(await f.Controller.Update("purchase", 1, req with { VehicleNumber = "?" })) == 400, "invalid vehicle rejected");
     await f.Db.Rates.Where(x => x.Id == 2).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, false));
-    Check(Status(await f.Controller.Update("purchase", 1, req)) == 409, "missing applicable rate rejected (future rate not used)");
+    req = await Request(f);
+    Check(Status(await f.Controller.Update("purchase", 1, req)) == 200, "vehicle correction does not depend on Rate Master");
     await f.Db.Purchases.Where(x => x.Id == 1).ExecuteUpdateAsync(s => s.SetProperty(x => x.LockStatus, "LOCKED"));
     Check(Status(await f.Controller.Update("purchase", 1, req)) == 409, "locked purchase rejected");
 }
@@ -158,12 +159,12 @@ foreach (var mode in new[] { "SINGLE", "FARMER", "DATE_RANGE" })
         FromDate = new DateTime(2026, 9, 1), ToDate = new DateTime(2026, 9, 30) });
     Check(Status(response) == 200, mode + " normal payment succeeds");
     var payments = await f.Db.Payments.AsNoTracking().ToListAsync();
-    var total = mode == "SINGLE" ? 3336.38m : 6411.38m;
+    var total = mode == "SINGLE" ? 3075m : 6150m;
     Check(payments.Sum(x => x.TotalPurchaseAmount) == total && payments.Sum(x => x.NetPayableAmount) == total - 100m,
         mode + " payment uses corrected amount and loan recovery");
     Check(payments.Count == (mode == "DATE_RANGE" ? 2 : 1), mode + " expected number of grower payments");
-    Check((await f.Db.PaymentPurchases.AsNoTracking().SingleAsync(x => x.PurchaseId == 1)).PurchaseAmountAtPayment == 3336.38m,
-        mode + " immutable payment snapshot uses corrected price");
+    Check((await f.Db.PaymentPurchases.AsNoTracking().SingleAsync(x => x.PurchaseId == 1)).PurchaseAmountAtPayment == 3075m,
+        mode + " immutable payment snapshot preserves original price");
     Check(Status(await f.Controller.Get("purchase", 1)) == 409, mode + " paid record now cannot be corrected");
 }
 

@@ -28,6 +28,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     'daily-collection': 'Daily Collection Report',
     'cash-book': 'Cash Book Report',
     'profit-loss': 'Profit / Loss Report',
+    'daily-cash-profit-loss': 'Daily Cash & Profit/Loss Report',
   };
 
   String _reportType = 'purchases';
@@ -60,7 +61,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
       if (_toDate != null) 'toDate': DateFormat('yyyy-MM-dd').format(_toDate!),
       if (format != null) 'format': format,
     };
-    if (_reportType == 'profit-loss' || _reportType == 'cash-book') {
+    if (_reportType == 'profit-loss' ||
+        _reportType == 'cash-book' ||
+        _reportType == 'daily-cash-profit-loss') {
       // Profit/loss and Cash Book use only the date-range filters.
     } else if (_reportType == 'rate-overrides') {
       if (_growerId.text.trim().isNotEmpty) {
@@ -268,6 +271,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
           'runningBalance',
           'referenceNumber'
         ];
+      case 'daily-cash-profit-loss':
+        return [
+          'date',
+          'cashBookExpense',
+          'farmerCashPaid',
+          'otherCashPaid',
+          'expenseAmount',
+          'cashReceived',
+          'cashReceivedBeforeWithdrawal',
+          'closingWithdrawal',
+          'saleProductAmount',
+          'canePurchaseAmount',
+          'profitLoss',
+          'profitLossStatus',
+        ];
       default:
         return [
           'purchaseId',
@@ -282,6 +300,26 @@ class _ReportsScreenState extends State<ReportsScreen> {
           'paymentStatus'
         ];
     }
+  }
+
+  String _columnLabel(String column) {
+    const dailyCashLabels = {
+      'date': 'Date',
+      'cashBookExpense': 'Cash Book Expense (₹)',
+      'farmerCashPaid': 'Farmer Cash Paid (₹)',
+      'otherCashPaid': 'Other Cash Paid (₹)',
+      'expenseAmount': 'Expense Module (₹)',
+      'cashReceived': 'Cash Received (₹)',
+      'cashReceivedBeforeWithdrawal': 'Received Before Withdrawal (₹)',
+      'closingWithdrawal': 'Day Closing Withdrawal (₹)',
+      'saleProductAmount': 'Sale Product (₹)',
+      'canePurchaseAmount': 'Cane Purchase (₹)',
+      'profitLoss': 'Profit / Loss (₹)',
+      'profitLossStatus': 'Result',
+    };
+    return _reportType == 'daily-cash-profit-loss'
+        ? dailyCashLabels[column] ?? column
+        : column;
   }
 
   @override
@@ -333,7 +371,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 ),
                 if (_reportType != 'daily-collection' &&
                     _reportType != 'profit-loss' &&
-                    _reportType != 'cash-book')
+                    _reportType != 'cash-book' &&
+                    _reportType != 'daily-cash-profit-loss')
                   SizedBox(
                       width: 160,
                       child: TextField(
@@ -351,7 +390,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                       : '100001'))),
                 if (_reportType != 'daily-collection' &&
                     _reportType != 'profit-loss' &&
-                    _reportType != 'cash-book')
+                    _reportType != 'cash-book' &&
+                    _reportType != 'daily-cash-profit-loss')
                   SizedBox(
                       width: 160,
                       child: TextField(
@@ -378,6 +418,13 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     icon: const Icon(Icons.grid_on_outlined),
                     label: const Text('Export (Excel)')),
               ]),
+          if (_reportType == 'daily-cash-profit-loss')
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Text(
+                'Each selected date covers 00:00:00 to 23:59:59. Cash Received = received cash − Day Closing Withdrawal. Profit/Loss = Sale Product − Cane Purchase − Expense Module.',
+              ),
+            ),
           const SizedBox(height: 10),
           if (_error != null)
             Text(_error!,
@@ -410,7 +457,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           child: DataTable(
                             columns: [
                               for (final c in _columns)
-                                DataColumn(label: Text(c))
+                                DataColumn(label: Text(_columnLabel(c)))
                             ],
                             rows: [
                               for (final item in _items)

@@ -90,11 +90,7 @@ public class WeighmentCorrectionsController : ControllerBase
             ? await _db.Users.Where(x => x.Id == updatedBy).Select(x => x.Username).FirstOrDefaultAsync() : null;
         return Ok(new { record, updatedByName = updater,
             vehicleTypes = await _db.VehicleTypes.AsNoTracking().Where(x => !x.IsDeleted && x.Status)
-                .OrderBy(x => x.VehicleTypeName).Select(x => new { x.Id, name = x.VehicleTypeName }).ToListAsync(),
-            varietyTypes = await _db.VarietyTypes.AsNoTracking().Where(x => !x.IsDeleted && x.Status)
-                .OrderBy(x => x.VarietyTypeName).Select(x => new { x.Id, name = x.VarietyTypeName }).ToListAsync(),
-            varieties = await _db.Varieties.AsNoTracking().Where(x => !x.IsDeleted && x.Status)
-                .OrderBy(x => x.VarietyName).Select(x => new { x.Id, name = x.VarietyName, x.VarietyTypeId }).ToListAsync() });
+                .OrderBy(x => x.VehicleTypeName).Select(x => new { x.Id, name = x.VehicleTypeName }).ToListAsync() });
     }
 
     [HttpPost("{kind}/{id:int}/preview")]
@@ -130,45 +126,21 @@ public class WeighmentCorrectionsController : ControllerBase
                     { result = Conflict(new { message = "Inactive, cancelled or locked purchases cannot be corrected." }); return; }
                     var before = Snapshot(p);
                     if (req.Revision != Revision(before)) { result = Stale(); return; }
-                    if (!await _db.VarietyTypes.AnyAsync(x => x.Id == req.VarietyTypeId && x.Status && !x.IsDeleted) ||
-                        !await _db.Varieties.AnyAsync(x => x.Id == req.VarietyId && x.VarietyTypeId == req.VarietyTypeId && x.Status && !x.IsDeleted))
-                    { result = BadRequest(new { message = "Select an active variety belonging to the selected variety type." }); return; }
+                    if (req.VarietyTypeId.HasValue || req.VarietyId.HasValue || req.ExpectedRate.HasValue)
+                    { result = BadRequest(new { message = "Variety and rate cannot be changed in weighment correction. Only vehicle type and vehicle number can be updated." }); return; }
                     if (p.GrossTareStatus == "GROSS_DONE" && await DuplicateCane(id, vehicle))
                     { result = Conflict(new { message = "This vehicle already has another gross pending tare." }); return; }
 
-                    var rate = p.Rate; // A vehicle-only correction must preserve the original price snapshot.
-                    if (p.VarietyTypeId != req.VarietyTypeId)
-                    {
-                        var rateDate = p.GrossDateTime.Date;
-                        var rateMaster = await _db.Rates.Where(x => x.VarietyTypeId == req.VarietyTypeId && x.Status && !x.IsDeleted &&
-                            x.EffectiveFrom.Date <= rateDate && (x.EffectiveTo == null || x.EffectiveTo.Value.Date >= rateDate))
-                            .OrderByDescending(x => x.EffectiveFrom).ThenByDescending(x => x.Id).FirstOrDefaultAsync();
-                        if (rateMaster == null || rateMaster.Rate <= 0)
-                        { result = Conflict(new { message = $"No valid rate for the selected variety type on {rateDate:dd-MM-yyyy}. Configure Rate Master first." }); return; }
-                        rate = WeightCalculator.R2(rateMaster.Rate);
-                    }
-                    if (save && req.ExpectedRate != rate)
-                    { result = Conflict(new { message = "Rate changed or was not previewed. Calculate / Preview again before updating." }); return; }
-                    if (p.GrossTareStatus == "TARE_DONE" && p.FinalWeightQuintal == null)
-                    { result = Conflict(new { message = "Final weight is missing. This record cannot be repriced." }); return; }
-                    // A variety may change inside the same variety type.  Always calculate from
-                    // the immutable final weight and the effective rate so preview, UI and saved
-                    // PurchaseAmount stay in sync for both variety-only and type changes.
-                    var amount = p.FinalWeightQuintal.HasValue
-                        ? WeightCalculator.R2(p.FinalWeightQuintal.Value * rate)
-                        : (decimal?)null;
-                    if (amount is < 0 or >= 1000000000000m)
-                    { result = BadRequest(new { message = "Calculated amount is outside the supported range." }); return; }
+                    var rate = p.Rate;
+                    var amount = p.PurchaseAmount;
                     if (save)
                     {
                         p.VehicleTypeId = req.VehicleTypeId; p.VehicleNumber = vehicle;
-                        p.VarietyTypeId = req.VarietyTypeId!.Value; p.VarietyId = req.VarietyId!.Value;
-                        p.Rate = rate; p.PurchaseAmount = amount;
                         p.UpdatedBy = _current.UserId; p.UpdatedAt = DateTime.UtcNow;
                         // Audit and correction share a transaction; neither may succeed alone.
                         await _audit.LogAsync("CorrectWeighment", "Purchase", "Purchase", id.ToString(), before, Snapshot(p));
                     }
-                    result = Ok(new { message = save ? "Purchase corrected successfully." : "Calculation ready. Weights are unchanged.",
+                    result = Ok(new { message = save ? "Purchase corrected successfully." : "Vehicle correction ready. Weight, variety, rate and amount are unchanged.",
                         vehicleNumber = vehicle, rate, amount, p.FinalWeightQuintal, p.UpdatedAt, p.UpdatedBy,
                         updatedByName = _current.Username, revision = Revision(Snapshot(p)) });
                 }
@@ -181,8 +153,8 @@ public class WeighmentCorrectionsController : ControllerBase
                     var before = Snapshot(p);
                     if (req.Revision != Revision(before)) { result = Stale(); return; }
                     // Non-cane records use Item/Party and have no payment linkage or variety rate master.
-                    if (req.VarietyTypeId.HasValue || req.VarietyId.HasValue)
-                    { result = BadRequest(new { message = "Variety fields apply only to cane purchases." }); return; }
+                    if (req.VarietyTypeId.HasValue || req.VarietyId.HasValue || req.ExpectedRate.HasValue)
+                    { result = BadRequest(new { message = "Only vehicle type and vehicle number can be changed in weighment correction." }); return; }
                     if (p.WeighmentStatus == "TARE_PENDING_GROSS" && await DuplicateSale(id, vehicle))
                     { result = Conflict(new { message = "This vehicle already has another tare pending gross." }); return; }
                     if (save)
