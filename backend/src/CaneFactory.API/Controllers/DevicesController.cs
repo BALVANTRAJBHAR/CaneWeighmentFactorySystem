@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Net;
 using CaneFactory.API.Auth;
 using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Interfaces;
@@ -194,7 +195,39 @@ public class DevicesController : ControllerBase
     // operational state too; saves remain protected by Device.Configure.
     [HasPermission("Device.View")]
     [HttpGet("live-weight")]
-    public IActionResult LiveWeight() => Ok(_weighing.Current);
+    public async Task<IActionResult> LiveWeight()
+    {
+        var state = _weighing.Current;
+        var mode = await _db.WeightRules.AsNoTracking().Where(r => !r.IsDeleted)
+            .Select(r => new { r.RestrictWeighmentSaveToBridgeHost, r.LiveWeightOnlyOnDigitizerPc }).FirstOrDefaultAsync();
+        var localOnly = mode?.LiveWeightOnlyOnDigitizerPc == true;
+        var restrict = mode?.RestrictWeighmentSaveToBridgeHost == true || localOnly;
+        var bridgeHost = await _db.SystemSettings.AsNoTracking().Where(x => x.Key == "ScaleBridgeHostIp")
+            .Select(x => x.Value).FirstOrDefaultAsync();
+        var requester = HttpContext.Connection.RemoteIpAddress;
+        var requesterIp = requester?.IsIPv4MappedToIPv6 == true ? requester.MapToIPv4().ToString() : requester?.ToString();
+        var canSaveWeighment = !localOnly && (!restrict || (!string.IsNullOrWhiteSpace(bridgeHost) &&
+            string.Equals(bridgeHost, requesterIp, StringComparison.OrdinalIgnoreCase)));
+        if (localOnly)
+        {
+            return Ok(new
+            {
+                weightKg = 0m, weightQuintal = 0m, state.WeightUnit, stable = false,
+                deviceConnected = false, readerRunning = false, isLive = false,
+                readerState = "LOCAL_ONLY", lastReceivedAt = (DateTime?)null, state.DeviceName,
+                error = "Live weight is available only on the Windows PC connected to the digitizer.",
+                canSaveWeighment, weightSaveRestrictedToBridgeHost = true,
+                liveWeightOnlyOnDigitizerPc = true
+            });
+        }
+        return Ok(new
+        {
+            state.WeightKg, state.WeightQuintal, state.WeightUnit, state.Stable, state.DeviceConnected,
+            state.ReaderRunning, state.IsLive, state.ReaderState, state.LastReceivedAt, state.DeviceName, state.Error,
+            canSaveWeighment, weightSaveRestrictedToBridgeHost = restrict,
+            liveWeightOnlyOnDigitizerPc = false
+        });
+    }
 
     /// <summary>Parser test: paste RAW HEX (e.g. "02 20 30 30 31 35 30 30 03 0D 0A") or raw text and verify parsing before activation.</summary>
     [HasPermission("Device.Configure")]

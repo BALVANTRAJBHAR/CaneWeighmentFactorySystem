@@ -5,6 +5,7 @@ using CaneFactory.API.Services;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
 using CaneFactory.Infrastructure.Weighing;
+using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -32,17 +33,33 @@ public class SalePurchaseWeighmentController : ControllerBase
     private readonly IMemoryCache _cache;
     private readonly ILogger<SalePurchaseWeighmentController> _log;
     private readonly RateOverrideService _rateOverrides;
+    private readonly ScaleReadingResolver _scaleReadings;
 
     public SalePurchaseWeighmentController(AppDbContext db, ICurrentUser current, IAuditService audit,
         ISequenceGenerator sequence, WeighingService weighing, ISmsService sms, ICameraCaptureService capture, IMemoryCache cache,
-        ILogger<SalePurchaseWeighmentController> log, RateOverrideService rateOverrides)
+        ILogger<SalePurchaseWeighmentController> log, RateOverrideService rateOverrides,
+        ScaleReadingResolver scaleReadings)
     {
         _db = db; _current = current; _audit = audit; _sequence = sequence; _weighing = weighing;
-        _sms = sms; _capture = capture; _cache = cache; _log = log; _rateOverrides = rateOverrides;
+        _sms = sms; _capture = capture; _cache = cache; _log = log; _rateOverrides = rateOverrides; _scaleReadings = scaleReadings;
     }
 
     private IActionResult? Deny(string action) => _current.HasPermission($"SalePurchase.{action}")
         ? null : StatusCode(403, new { message = $"You do not have 'SalePurchase.{action}' permission." });
+
+    private async Task<string?> WeightSaveAccessErrorAsync()
+    {
+        var mode = await _db.WeightRules.AsNoTracking().Where(r => !r.IsDeleted)
+            .Select(r => new { r.RestrictWeighmentSaveToBridgeHost, r.LiveWeightOnlyOnDigitizerPc }).FirstOrDefaultAsync();
+        if (mode?.LiveWeightOnlyOnDigitizerPc == true) return null;
+        if (mode?.RestrictWeighmentSaveToBridgeHost != true) return null;
+        var bridgeHost = await _db.SystemSettings.AsNoTracking().Where(x => x.Key == "ScaleBridgeHostIp")
+            .Select(x => x.Value).FirstOrDefaultAsync();
+        var ip = HttpContext.Connection.RemoteIpAddress;
+        var requester = ip?.IsIPv4MappedToIPv6 == true ? ip.MapToIPv4().ToString() : ip?.ToString();
+        return !string.IsNullOrWhiteSpace(bridgeHost) && string.Equals(bridgeHost, requester, StringComparison.OrdinalIgnoreCase)
+            ? null : "Weighment saving is allowed only on the PC connected to the digitizer / Scale Bridge.";
+    }
 
     [HttpGet("{id:int}/images")]
     public async Task<IActionResult> Images(int id)
@@ -86,7 +103,8 @@ public class SalePurchaseWeighmentController : ControllerBase
                 Party = x.Party.PartyName, partyMobile = x.Party.Mobile, vehicleTypeId = x.VehicleTypeId,
                 VehicleType = x.VehicleType.VehicleTypeName, x.VehicleNumber, x.DriverName, x.Remark,
                 x.TareWeightQuintal, x.TareDateTime, TareOperator = x.TareByUserName, Status = x.WeighmentStatus,
-                x.GrossWeightQuintal, x.FinalWeightQuintal, x.Rate, x.Amount
+                x.GrossWeightQuintal, x.FinalWeightQuintal, x.Rate, x.GstPercent, x.Amount, x.GstAmount, x.FinalAmount,
+                x.SalesPercent, x.SalesAmount, x.TaxSupplyType, x.SgstAmount, x.CgstAmount, x.IgstAmount
             }).FirstOrDefaultAsync();
         if (row == null) return NotFound(new { message = $"SalePurchase ID {id} does not exist." });
         if (row.Status == "CANCELLED") return Conflict(new { message = $"SalePurchase {id} is cancelled." });
@@ -99,8 +117,10 @@ public class SalePurchaseWeighmentController : ControllerBase
     public async Task<IActionResult> SaveTare(SalePurchaseTareSaveRequest req)
     {
         if (Deny("Create") is { } denied) return denied;
-        if (!_weighing.TryGetUsableWeight(out var liveKg, out var deviceError))
-            return Conflict(new { message = deviceError });
+        if (await WeightSaveAccessErrorAsync() is { } accessError) return StatusCode(403, new { message = accessError });
+        var (scaleReading, deviceError) = await _scaleReadings.ResolveAsync(req);
+        if (scaleReading == null) return Conflict(new { message = deviceError });
+        var liveKg = scaleReading.WeightKg;
         // Reject a below-minimum reading before any database work or idempotency
         // claim. A repeated click at the same low reading must always return the
         // same useful validation message immediately.
@@ -120,6 +140,7 @@ public class SalePurchaseWeighmentController : ControllerBase
         if (!item || party == null || !vehicleType) return BadRequest(new { message = "Selected Item, Party or Vehicle Type is inactive or invalid." });
 
         var now = DateTime.UtcNow;
+        await _scaleReadings.TryReleasePlatformLockAsync(scaleReading);
         var eligibilityError = await CanStartNewSaleTareAsync(vehicle, now);
         if (eligibilityError != null) return Conflict(new { message = eligibilityError, soundEvent = "WEIGHING_ACTIVE" });
         if (Duplicate(req.IdempotencyKey, out var duplicate)) return duplicate!;
@@ -140,6 +161,7 @@ public class SalePurchaseWeighmentController : ControllerBase
             _db.SalePurchases.Add(record);
             await _db.SaveChangesAsync();
             await MarkPlatformClearRequiredAsync(liveKg);
+            await _scaleReadings.RecordSavedAsync(scaleReading);
             await _db.SaveChangesAsync();
             });
         }
@@ -164,8 +186,17 @@ public class SalePurchaseWeighmentController : ControllerBase
     public async Task<IActionResult> SaveGross(SalePurchaseGrossSaveRequest req)
     {
         if (Deny("Edit") is { } denied) return denied;
-        if (!_weighing.TryGetUsableWeight(out var liveKg, out var deviceError))
-            return Conflict(new { message = deviceError });
+        if (await WeightSaveAccessErrorAsync() is { } accessError) return StatusCode(403, new { message = accessError });
+        if (req.GstPercent is < 0 or > 100)
+            return BadRequest(new { message = "GST % must be between 0 and 100." });
+        if (req.SalesPercent is < 0 or > 100)
+            return BadRequest(new { message = "Sales % must be between 0 and 100." });
+        var taxSupplyType = (req.TaxSupplyType ?? "").Trim().ToUpperInvariant();
+        if (taxSupplyType is not ("INTRA_STATE" or "INTER_STATE"))
+            return BadRequest(new { message = "Tax Supply Type must be INTRA_STATE or INTER_STATE." });
+        var (scaleReading, deviceError) = await _scaleReadings.ResolveAsync(req);
+        if (scaleReading == null) return Conflict(new { message = deviceError });
+        var liveKg = scaleReading.WeightKg;
         // Minimum weight is an indicator-level rule, so evaluate it before the
         // serializable transaction and before comparing gross with saved tare.
         // This avoids a lock/timeout path at zero and keeps every retry consistent.
@@ -223,11 +254,31 @@ public class SalePurchaseWeighmentController : ControllerBase
                     req.ApprovedByUserId, req.RateReasonId, req.RateOverrideRemark, req.RateEvidenceToken,
                     _current.UserId!.Value, HttpContext.RequestAborted);
                 record.Amount = WeightCalculator.R2(finalWeight * record.Rate.Value);
+                record.GstPercent = WeightCalculator.R2(req.GstPercent);
+                record.GstAmount = WeightCalculator.R2(record.Amount.Value * record.GstPercent / 100m);
+                record.FinalAmount = WeightCalculator.R2(record.Amount.Value + record.GstAmount.Value);
+                record.SalesPercent = WeightCalculator.R2(req.SalesPercent);
+                record.SalesAmount = WeightCalculator.R2(record.Amount.Value * record.SalesPercent / 100m);
+                record.TaxSupplyType = taxSupplyType;
+                if (taxSupplyType == "INTRA_STATE")
+                {
+                    // Round one half and derive the second half so CGST + SGST always equals saved GST exactly.
+                    record.CgstAmount = WeightCalculator.R2(record.GstAmount.Value / 2m);
+                    record.SgstAmount = WeightCalculator.R2(record.GstAmount.Value - record.CgstAmount.Value);
+                    record.IgstAmount = 0m;
+                }
+                else
+                {
+                    record.CgstAmount = 0m;
+                    record.SgstAmount = 0m;
+                    record.IgstAmount = record.GstAmount;
+                }
                 record.WeighmentStatus = "COMPLETED";
                 record.UpdatedAt = DateTime.UtcNow;
                 record.UpdatedBy = _current.UserId;
                 await _db.SaveChangesAsync();
                 await MarkPlatformClearRequiredAsync(liveKg);
+                await _scaleReadings.RecordSavedAsync(scaleReading);
                 await _db.SaveChangesAsync();
             }, System.Data.IsolationLevel.Serializable);
         }
@@ -250,13 +301,13 @@ public class SalePurchaseWeighmentController : ControllerBase
         }
         var completedRecord = record ?? throw new InvalidOperationException("SalePurchase completion did not return a record.");
         try { await _audit.LogAsync("GrossSave", "SalePurchase", "SalePurchase", completedRecord.Id.ToString(), newValue: new
-        { completedRecord.GrossWeightQuintal, completedRecord.TareWeightQuintal, completedRecord.FinalWeightQuintal, completedRecord.Rate, completedRecord.Amount }); }
+        { completedRecord.GrossWeightQuintal, completedRecord.TareWeightQuintal, completedRecord.FinalWeightQuintal, completedRecord.Rate, completedRecord.Amount, completedRecord.GstPercent, completedRecord.GstAmount, completedRecord.FinalAmount, completedRecord.SalesPercent, completedRecord.SalesAmount, completedRecord.TaxSupplyType, completedRecord.SgstAmount, completedRecord.CgstAmount, completedRecord.IgstAmount }); }
         catch (Exception ex) { _log.LogError(ex, "SalePurchase gross {SalePurchaseId} audit failed after commit", completedRecord.Id); }
         var captureResults = await CaptureEvidenceAsync(completedRecord.Id, "GROSS");
         var placeholders = new Dictionary<string, string>
             {
                 ["SalePurchaseId"] = completedRecord.Id.ToString(), ["FinalWeight"] = finalWeight.ToString("F2"),
-                ["Amount"] = completedRecord.Amount?.ToString("F2") ?? ""
+                ["Amount"] = completedRecord.FinalAmount?.ToString("F2") ?? ""
             };
         // A completed sale purchase informs the selected Party as well as all active owner/operational
         // recipients opted into this event. ISmsService applies the master + event enable switches.
@@ -283,7 +334,10 @@ public class SalePurchaseWeighmentController : ControllerBase
         var smsQueued = queued.Any(x => x);
         return Ok(new { message = $"SalePurchase {completedRecord.Id} completed successfully. Final Weight: {finalWeight:F2} Quintal.",
             salePurchaseId = completedRecord.Id, grossWeightQuintal = gross, finalWeightQuintal = finalWeight,
-            amount = completedRecord.Amount, status = completedRecord.WeighmentStatus, smsQueued, autoPrint = await SafeAutoPrintAsync(completedRecord.Id, "GROSS"),
+            amount = completedRecord.Amount, gstPercent = completedRecord.GstPercent, gstAmount = completedRecord.GstAmount,
+            finalAmount = completedRecord.FinalAmount, salesPercent = completedRecord.SalesPercent, salesAmount = completedRecord.SalesAmount,
+            taxSupplyType = completedRecord.TaxSupplyType, sgstAmount = completedRecord.SgstAmount, cgstAmount = completedRecord.CgstAmount, igstAmount = completedRecord.IgstAmount,
+            status = completedRecord.WeighmentStatus, smsQueued, autoPrint = await SafeAutoPrintAsync(completedRecord.Id, "GROSS"),
             capture = new { requested = captureResults.Count, saved = captureResults.Count(x => x.Success), results = captureResults } });
     }
 
@@ -310,6 +364,22 @@ public class SalePurchaseWeighmentController : ControllerBase
         var copies = stage.Equals("GROSS", StringComparison.OrdinalIgnoreCase)
             ? cfg.SalePurchaseGrossCopies
             : cfg.SalePurchaseTareCopies;
+        var useInvoice = stage.Equals("GROSS", StringComparison.OrdinalIgnoreCase) && cfg.SalePurchaseInvoiceEnabled;
+        if (useInvoice)
+        {
+            return new
+            {
+                printerType = "A4",
+                printerName = cfg.A4PrinterName,
+                copies,
+                language = cfg.Language,
+                stage,
+                invoice = true,
+                invoiceUrl = $"/api/print/sale-purchase/{id}/invoice?format=excel",
+                documentUrl = $"/api/print/sale-purchase/{id}/invoice?format=final",
+                shouldAutoPrint = cfg.AutoPrint && copies > 0
+            };
+        }
         return new { printerType = cfg.PrinterType, printerName = cfg.PrinterName, copies,
             language = cfg.Language, stage,
             dotMatrixTearOffParkingEnabled = cfg.DotMatrixTearOffParkingEnabled,

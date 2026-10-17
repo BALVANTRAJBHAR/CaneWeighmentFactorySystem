@@ -178,6 +178,7 @@ public class VarietyTypesController : MasterControllerBase<VarietyType>
     protected override async Task<string?> ValidateAsync(VarietyType e, int? id)
     {
         e.VarietyTypeName = Validators.Norm(e.VarietyTypeName);
+        e.VarietyTypeNameHi = string.IsNullOrWhiteSpace(e.VarietyTypeNameHi) ? null : e.VarietyTypeNameHi.Trim();
         if (e.VarietyTypeName.Length == 0) return "Variety Type Name is required.";
         if (await Db.VarietyTypes.AnyAsync(v => !v.IsDeleted && v.Id != id
                 && v.VarietyTypeName.ToLower() == e.VarietyTypeName.ToLower()))
@@ -185,7 +186,11 @@ public class VarietyTypesController : MasterControllerBase<VarietyType>
         return null;
     }
 
-    protected override void ApplyUpdate(VarietyType t, VarietyType s) => t.VarietyTypeName = s.VarietyTypeName;
+    protected override void ApplyUpdate(VarietyType t, VarietyType s)
+    {
+        t.VarietyTypeName = s.VarietyTypeName;
+        t.VarietyTypeNameHi = s.VarietyTypeNameHi;
+    }
 
     protected override async Task<string?> InUseReasonAsync(int id) =>
         await Db.Varieties.AnyAsync(v => v.VarietyTypeId == id && !v.IsDeleted)
@@ -258,13 +263,18 @@ public class ItemsController : MasterControllerBase<Item>
     protected override async Task<string?> ValidateAsync(Item e, int? id)
     {
         e.ItemName = Validators.Norm(e.ItemName); e.ItemNameHi = string.IsNullOrWhiteSpace(e.ItemNameHi) ? null : e.ItemNameHi.Trim();
+        e.HsnSacCode = string.IsNullOrWhiteSpace(e.HsnSacCode) ? null : e.HsnSacCode.Trim();
+        if (e.HsnSacCode?.Length > 32) return "HSN/SAC Code cannot exceed 32 characters.";
         if (e.ItemName.Length == 0) return "Item Name is required.";
         if (await Db.Items.AnyAsync(i => !i.IsDeleted && i.Id != id && i.ItemName.ToLower() == e.ItemName.ToLower()))
             return $"Item '{e.ItemName}' already exists.";
         return null;
     }
 
-    protected override void ApplyUpdate(Item t, Item s) { t.ItemName = s.ItemName; t.ItemNameHi = s.ItemNameHi; }
+    protected override void ApplyUpdate(Item t, Item s)
+    {
+        t.ItemName = s.ItemName; t.ItemNameHi = s.ItemNameHi; t.HsnSacCode = s.HsnSacCode;
+    }
 }
 
 [Route("api/crops")]

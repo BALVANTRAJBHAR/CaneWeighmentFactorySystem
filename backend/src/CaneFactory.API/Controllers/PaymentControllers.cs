@@ -224,7 +224,10 @@ public class PaymentController : ControllerBase
         object? selectedPurchase = null;
         if (mode == "SINGLE")
         {
-            var selected = await _db.Purchases.AsNoTracking().FirstAsync(p => p.Id == purchaseId && !p.IsDeleted);
+            var selected = await _db.Purchases.AsNoTracking()
+                .FirstAsync(p => p.Id == purchaseId && !p.IsDeleted);
+            var selectedVarietyType = await _db.VarietyTypes.AsNoTracking()
+                .FirstOrDefaultAsync(v => v.Id == selected.VarietyTypeId && !v.IsDeleted);
             selectedPurchase = new
             {
                 purchaseId = selected.Id,
@@ -235,7 +238,9 @@ public class PaymentController : ControllerBase
                 selected.FinalWeightQuintal,
                 selected.Rate,
                 selected.PurchaseAmount,
-                selected.TareDateTime
+                selected.TareDateTime,
+                VarietyTypeName = selectedVarietyType?.VarietyTypeName,
+                VarietyTypeNameHi = selectedVarietyType?.VarietyTypeNameHi
             };
             if (selected.GrossTareStatus != "TARE_DONE" || !selected.FinalWeightQuintal.HasValue)
                 return Conflict(new
@@ -250,6 +255,9 @@ public class PaymentController : ControllerBase
             if (selected.PaymentStatus != "PENDING")
                 return Ok(new { growerId = grower.Id, growerCode = grower.GrowerCode, growerName = grower.GrowerName,
                     fatherName = grower.FatherName, villageName = grower.Village?.VillageName ?? "-", selectedPurchase,
+                    accountHolderName = grower.AccountHolderName, bankName = grower.Bank?.BankName,
+                    bankBranch = grower.Bank?.BranchName, bankIfsc = grower.Bank?.IFSC,
+                    bankAccountNumber = grower.BankAccountNumber,
                     eligiblePurchases = Array.Empty<object>(),
                     outstandingLoans = Array.Empty<object>(), totalPurchaseAmount = 0m, totalOutstandingLoan = 0m,
                     estimatedLoanDeduction = 0m, estimatedNetPayable = 0m, alreadyPaid = true,
@@ -273,6 +281,11 @@ public class PaymentController : ControllerBase
             growerName = grower.GrowerName,
             fatherName = grower.FatherName,
             villageName = grower.Village?.VillageName ?? "-",
+            accountHolderName = grower.AccountHolderName,
+            bankName = grower.Bank?.BankName,
+            bankBranch = grower.Bank?.BranchName,
+            bankIfsc = grower.Bank?.IFSC,
+            bankAccountNumber = grower.BankAccountNumber,
             selectedPurchase,
             eligiblePurchases = eligible,
             purchaseCount = eligible.Count,
@@ -290,6 +303,12 @@ public class PaymentController : ControllerBase
         var eligible = await EligibleDateRangePurchasesQuery(fromDate, toDate)
             .OrderBy(p => p.GrowerCode).ThenBy(p => p.TareDateTime)
             .Select(p => new { p.Id, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName,
+                FatherName = p.Grower.FatherName, VillageName = p.Grower.Village.VillageName,
+                AccountHolderName = p.Grower.AccountHolderName,
+                BankName = p.Grower.Bank != null ? p.Grower.Bank.BankName : null,
+                BankBranch = p.Grower.Bank != null ? p.Grower.Bank.BranchName : null,
+                BankIfsc = p.Grower.Bank != null ? p.Grower.Bank.IFSC : null,
+                BankAccountNumber = p.Grower.BankAccountNumber,
                 p.VehicleNumber, p.FinalWeightQuintal, p.PurchaseAmount, p.TareDateTime })
             .ToListAsync();
         if (eligible.Count == 0)
@@ -297,12 +316,15 @@ public class PaymentController : ControllerBase
 
         var loanByGrower = await _db.Loans.AsNoTracking().Where(l => !l.IsDeleted && l.LoanStatus == "ACTIVE")
             .GroupBy(l => l.GrowerId).Select(g => new { GrowerId = g.Key, Total = g.Sum(l => l.OutstandingAmount) }).ToDictionaryAsync(x => x.GrowerId, x => x.Total);
-        var groups = eligible.GroupBy(x => new { x.GrowerId, x.GrowerCode, x.GrowerName }).Select(g =>
+        var groups = eligible.GroupBy(x => new { x.GrowerId, x.GrowerCode, x.GrowerName, x.FatherName,
+            x.VillageName, x.AccountHolderName, x.BankName, x.BankBranch, x.BankIfsc, x.BankAccountNumber }).Select(g =>
         {
             var total = WeightCalculator.R2(g.Sum(x => x.PurchaseAmount ?? 0));
             var loan = loanByGrower.GetValueOrDefault(g.Key.GrowerId, 0m);
             var deduction = WeightCalculator.R2(Math.Min(loan, total));
-            return new { g.Key.GrowerId, g.Key.GrowerCode, g.Key.GrowerName, purchaseCount = g.Count(),
+            return new { g.Key.GrowerId, g.Key.GrowerCode, g.Key.GrowerName, g.Key.FatherName,
+                g.Key.VillageName, g.Key.AccountHolderName, g.Key.BankName, g.Key.BankBranch,
+                g.Key.BankIfsc, g.Key.BankAccountNumber, purchaseCount = g.Count(),
                 totalFinalWeight = WeightCalculator.R2(g.Sum(x => x.FinalWeightQuintal ?? 0)), totalPurchaseAmount = total,
                 estimatedLoanDeduction = deduction, estimatedNetPayable = WeightCalculator.R2(total - deduction) };
         }).ToList();
@@ -362,6 +384,15 @@ public class PaymentController : ControllerBase
         if (season == null) return Conflict(new { message = "No ACTIVE season is configured. Ask Admin/Developer to activate a Season." });
 
         var totalPurchaseAmount = WeightCalculator.R2(eligible.Sum(p => p.PurchaseAmount ?? 0));
+
+        if (isCashPayment)
+        {
+            var outstandingLoan = await _db.Loans.AsNoTracking()
+                .Where(l => l.GrowerId == grower.Id && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
+                .SumAsync(l => (decimal?)l.OutstandingAmount) ?? 0;
+            var cashRequired = WeightCalculator.R2(totalPurchaseAmount - Math.Min(totalPurchaseAmount, outstandingLoan));
+            if (await CashAvailabilityErrorAsync(cashRequired) is { } cashError) return cashError;
+        }
 
         int paymentId = 0;
         int adviceNumber = 0;
@@ -513,6 +544,7 @@ public class PaymentController : ControllerBase
             netPayableAmount = netPayable,
             purchaseCount = eligible.Count,
             autoPrint = await AutoPrintAsync(paymentId, req.PrintTarget),
+            bankExcelUrl = isBankPayment ? $"/api/reports/payments?format=excel&paymentId={paymentId}" : null,
             captureQueued = false,
             cashEvidenceRequired = isCash,
             smsQueued
@@ -545,6 +577,21 @@ public class PaymentController : ControllerBase
                 .FirstOrDefault(x => x.Error != null);
             if (invalidGrower != null)
                 return Conflict(new { message = invalidGrower.Error });
+        }
+
+        if (isCash)
+        {
+            var outstandingByGrower = await _db.Loans.AsNoTracking()
+                .Where(l => growerIds.Contains(l.GrowerId) && l.LoanStatus == "ACTIVE" && !l.IsDeleted)
+                .GroupBy(l => l.GrowerId)
+                .Select(g => new { GrowerId = g.Key, Outstanding = g.Sum(x => x.OutstandingAmount) })
+                .ToDictionaryAsync(x => x.GrowerId, x => x.Outstanding);
+            var cashRequired = purchases.GroupBy(p => p.GrowerId).Sum(group =>
+            {
+                var total = WeightCalculator.R2(group.Sum(p => p.PurchaseAmount ?? 0));
+                return WeightCalculator.R2(total - Math.Min(total, outstandingByGrower.GetValueOrDefault(group.Key, 0m)));
+            });
+            if (await CashAvailabilityErrorAsync(cashRequired) is { } cashError) return cashError;
         }
 
         var batchPrintToken = Guid.NewGuid().ToString("N");
@@ -585,6 +632,7 @@ public class PaymentController : ControllerBase
             totalPurchaseAmount = WeightCalculator.R2(completed.Sum(x => x.Payment.TotalPurchaseAmount)),
             loanDeductedAmount = WeightCalculator.R2(completed.Sum(x => x.Payment.LoanDeductedAmount)),
             netPayableAmount = WeightCalculator.R2(completed.Sum(x => x.Payment.NetPayableAmount)),
+            bankExcelUrl = isBank ? $"/api/reports/payments?format=excel&batchToken={batchPrintToken}" : null,
             cashCaptureQueued = false, cashEvidenceRequired = isCash, smsQueuedCount = smsQueued, payments = paymentSummaries
         });
     }
@@ -682,6 +730,23 @@ public class PaymentController : ControllerBase
 
     private static bool IsBankPayment(PaymentModeMaster paymentMode) =>
         string.Equals(paymentMode.ModeCode, "BANK", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Physical cash cannot be paid out beyond the current immutable Cash Book balance.
+    /// A cancelled payment's reversal is already included as CASH_IN, so it restores availability.</summary>
+    private async Task<IActionResult?> CashAvailabilityErrorAsync(decimal requiredAmount)
+    {
+        if (requiredAmount <= 0) return null;
+        var entries = await _db.CashBookEntries.AsNoTracking().Where(x => !x.IsDeleted)
+            .Select(x => new { x.EntryType, x.Amount }).ToListAsync();
+        var available = WeightCalculator.R2(entries.Sum(x => x.EntryType == "CASH_IN" ? x.Amount : -x.Amount));
+        if (available >= requiredAmount) return null;
+        return Conflict(new
+        {
+            message = $"Cash payment cannot be completed. Cash Book has Rs {Math.Max(available, 0):F2}; Rs {requiredAmount:F2} is required. Record a Cash Receipt first.",
+            availableCash = Math.Max(available, 0),
+            requiredCash = requiredAmount
+        });
+    }
 
     private static string? GetBankDetailsError(Grower grower)
     {

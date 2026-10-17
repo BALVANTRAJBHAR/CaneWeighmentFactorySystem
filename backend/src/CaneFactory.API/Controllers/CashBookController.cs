@@ -88,21 +88,18 @@ public class CashBookController : ControllerBase
                 (x.GrowerName != null && x.GrowerName.Contains(term)) ||
                 (x.ReferenceNumber != null && x.ReferenceNumber.Contains(term)));
         }
-        var received = await q.Where(x => x.EntryType == "CASH_IN").SumAsync(x => (decimal?)x.Amount) ?? 0;
-        var paid = await q.Where(x => x.EntryType == "CASH_OUT").SumAsync(x => (decimal?)x.Amount) ?? 0;
-        var farmerCashPaid = await q.Where(x => x.EntryType == "CASH_OUT" && x.SourceType == "FARMER_PAYMENT")
-            .SumAsync(x => (decimal?)x.Amount) ?? 0;
-        var otherCashPaid = await q.Where(x => x.EntryType == "CASH_OUT" &&
-                x.SourceType != "FARMER_PAYMENT" &&
-                x.SourceType != CashBookDailyCalculator.DayClosingWithdrawal)
-            .SumAsync(x => (decimal?)x.Amount) ?? 0;
-        var closingWithdrawal = await q.Where(x => x.EntryType == "CASH_OUT" &&
-                x.SourceType == CashBookDailyCalculator.DayClosingWithdrawal)
-            .SumAsync(x => (decimal?)x.Amount) ?? 0;
         var totalCount = await q.CountAsync();
         // Calculate the balance in chronological order, then display newest entries first.
         // This avoids a misleading balance when the visible table is sorted descending.
         var entries = await q.OrderBy(x => x.EntryDate).ThenBy(x => x.Id).ToListAsync();
+        // A cancelled cash payment remains in the audit ledger with its reversal,
+        // but the pair has zero operational impact in normal totals.
+        var received = CashBookDailyCalculator.CashReceived(entries);
+        var farmerCashPaid = CashBookDailyCalculator.FarmerCashPaid(entries);
+        var otherCashPaid = CashBookDailyCalculator.OtherCashPaid(entries);
+        var closingWithdrawal = CashBookDailyCalculator.ClosingWithdrawal(entries);
+        var operatingCashPaid = farmerCashPaid + otherCashPaid;
+        var paid = operatingCashPaid + closingWithdrawal;
         var dailySummaries = CashBookDailyCalculator.Build(entries, openingBalance, from, toDate?.Date);
         var running = openingBalance;
         var calculated = entries.Select(x =>
@@ -122,8 +119,8 @@ public class CashBookController : ControllerBase
             items = calculated, totalCount, page, pageSize,
             dailySummaries,
             totals = new { openingBalance, received, paid, farmerCashPaid, otherCashPaid,
-                operatingCashPaid = paid - closingWithdrawal, closingWithdrawal,
-                availableBeforeClosing = openingBalance + received - (paid - closingWithdrawal),
+                operatingCashPaid, closingWithdrawal,
+                availableBeforeClosing = openingBalance + received - operatingCashPaid,
                 closingBalance = openingBalance + received - paid }
         });
     }
@@ -187,13 +184,24 @@ public class CashBookController : ControllerBase
         if (await IsDayClosedAsync(entryDate))
             return Conflict(new { message = $"Cash Book for {entryDate:dd-MM-yyyy} is already closed. A new cash payment cannot be posted to a closed day." });
 
+        var availableCash = await _db.CashBookEntries.AsNoTracking()
+            .Where(x => !x.IsDeleted && x.EntryDate <= entryDate)
+            .SumAsync(x => (decimal?)(x.EntryType == "CASH_IN" ? x.Amount : -x.Amount)) ?? 0;
+        var amount = decimal.Round(request.Amount, 2);
+        if (availableCash < amount)
+            return Conflict(new
+            {
+                message = $"Cash payment cannot be completed. Cash Book has Rs {Math.Max(availableCash, 0):F2}; Rs {amount:F2} is required. Record a Cash Receipt first.",
+                availableCash = Math.Max(availableCash, 0), requiredCash = amount
+            });
+
         var entry = new CashBookEntry
         {
             EntryDate = entryDate,
             EntryType = "CASH_OUT",
             SourceType = "OTHER_CASH_PAYMENT",
             SourceName = request.PaidTo.Trim(),
-            Amount = decimal.Round(request.Amount, 2),
+            Amount = amount,
             ReferenceNumber = string.IsNullOrWhiteSpace(request.ReferenceNumber) ? null : request.ReferenceNumber.Trim(),
             Remarks = request.Remarks.Trim(),
             CreatedAt = DateTime.UtcNow, CreatedBy = _current.UserId, Status = true

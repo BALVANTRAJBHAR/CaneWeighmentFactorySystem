@@ -23,10 +23,12 @@ public class PrintController : ControllerBase
     private readonly ICurrentUser _current;
     private readonly IAuditService _audit;
     private readonly IPrintEngineService _engine;
+    private readonly ISaleInvoiceService _saleInvoice;
 
-    public PrintController(AppDbContext db, ICurrentUser current, IAuditService audit, IPrintEngineService engine)
+    public PrintController(AppDbContext db, ICurrentUser current, IAuditService audit, IPrintEngineService engine,
+        ISaleInvoiceService saleInvoice)
     {
-        _db = db; _current = current; _audit = audit; _engine = engine;
+        _db = db; _current = current; _audit = audit; _engine = engine; _saleInvoice = saleInvoice;
     }
 
     /// <summary>Renders the Gross/Tare slip. format=final (default) is auditable Print/Reprint and is
@@ -55,8 +57,8 @@ public class PrintController : ControllerBase
         try
         {
             doc = stage == "GROSS"
-                ? await _engine.BuildGrossSlipAsync(id, _current.Username ?? "")
-                : await _engine.BuildTareSlipAsync(id, _current.Username ?? "");
+                ? await _engine.BuildGrossSlipAsync(id, _current.Username ?? "", resolvedTarget != "DotMatrix")
+                : await _engine.BuildTareSlipAsync(id, _current.Username ?? "", resolvedTarget != "DotMatrix");
         }
         catch (KeyNotFoundException ex)
         {
@@ -224,7 +226,7 @@ public class PrintController : ControllerBase
         if (record == null) return NotFound(new { message = $"SalePurchase {id} not found." });
         if (stage == "GROSS" && record.WeighmentStatus != "COMPLETED") return Conflict(new { message = "Gross slip is available only after completion." });
         PrintDocument doc;
-        try { doc = await _engine.BuildSalePurchaseSlipAsync(id, stage, _current.Username ?? ""); }
+        try { doc = await _engine.BuildSalePurchaseSlipAsync(id, stage, _current.Username ?? "", resolvedTarget != "DotMatrix"); }
         catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException) { return Conflict(new { message = ex.Message }); }
         var (bytes, contentType, ext) = _engine.Render(doc, resolvedTarget, format == "preview");
         if (format == "final")
@@ -235,6 +237,44 @@ public class PrintController : ControllerBase
             await _audit.LogAsync(reprint ? "Reprint" : "Print", "SalePurchase", "SalePurchase", id.ToString(), newValue: new { stage, target = resolvedTarget });
         }
         return File(bytes, contentType, $"SalePurchase-{id}-{stage}.{ext}");
+    }
+
+    /// <summary>
+    /// Dedicated Excel tax invoice for a completed Sale Weighment.  Excel is
+    /// opened for the operator; format=final provides the same invoice as PDF
+    /// for the configured A4 Windows print queue and is audited as a print.
+    /// </summary>
+    [HttpGet("sale-purchase/{id:int}/invoice")]
+    public async Task<IActionResult> SalePurchaseInvoice(int id, [FromQuery] string format = "excel")
+    {
+        if (!_current.HasPermission("SalePurchase.Print"))
+            return StatusCode(403, new { message = "You do not have 'SalePurchase.Print' permission." });
+        if (format is not ("excel" or "final" or "preview"))
+            return BadRequest(new { message = "format must be excel, final or preview." });
+        var sale = await _db.SalePurchases.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
+        if (sale == null) return NotFound(new { message = $"SalePurchase {id} not found." });
+        if (sale.WeighmentStatus != "COMPLETED")
+            return Conflict(new { message = "Tax invoice is available only after Sale Weighment final/gross save." });
+        try
+        {
+            if (format == "excel")
+                return File(await _saleInvoice.BuildExcelAsync(id),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"Sale-Invoice-{id}.xlsx");
+
+            var pdf = await _saleInvoice.BuildPdfAsync(id);
+            if (format == "final")
+            {
+                sale.GrossPrintCount++;
+                await _db.SaveChangesAsync();
+                await _audit.LogAsync("Print", "SalePurchase", "SaleInvoice", id.ToString(),
+                    newValue: new { target = "A4", format = "TaxInvoice", sale.GrossPrintCount });
+            }
+            return File(pdf, "application/pdf", $"Sale-Invoice-{id}.pdf");
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
 
@@ -277,8 +317,8 @@ public class PrintController : ControllerBase
             return Conflict(new { message = $"Purchase {id} is cancelled and cannot be reprinted as a valid slip." });
         var stage = purchase.TareDateTime.HasValue ? "TARE" : "GROSS";
         var doc = stage == "TARE"
-            ? await _engine.BuildTareSlipAsync(id, _current.Username ?? "")
-            : await _engine.BuildGrossSlipAsync(id, _current.Username ?? "");
+            ? await _engine.BuildTareSlipAsync(id, _current.Username ?? "", resolvedTarget.target != "DotMatrix")
+            : await _engine.BuildGrossSlipAsync(id, _current.Username ?? "", resolvedTarget.target != "DotMatrix");
         MarkDuplicate(doc);
         var rendered = _engine.Render(doc, resolvedTarget.target!, format == "preview");
         if (format == "final")
@@ -307,7 +347,7 @@ public class PrintController : ControllerBase
         if (sale.WeighmentStatus == "CANCELLED")
             return Conflict(new { message = $"SalePurchase {id} is cancelled and cannot be reprinted as a valid slip." });
         var stage = sale.WeighmentStatus == "COMPLETED" && sale.GrossDateTime.HasValue ? "GROSS" : "TARE";
-        var doc = await _engine.BuildSalePurchaseSlipAsync(id, stage, _current.Username ?? "");
+        var doc = await _engine.BuildSalePurchaseSlipAsync(id, stage, _current.Username ?? "", resolvedTarget.target != "DotMatrix");
         MarkDuplicate(doc);
         var rendered = _engine.Render(doc, resolvedTarget.target!, format == "preview");
         if (format == "final")

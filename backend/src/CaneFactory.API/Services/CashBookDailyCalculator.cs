@@ -10,6 +10,28 @@ namespace CaneFactory.API.Services;
 public static class CashBookDailyCalculator
 {
     public const string DayClosingWithdrawal = "DAY_CLOSING_WITHDRAWAL";
+    public const string PaymentReversal = "PAYMENT_REVERSAL";
+
+    /// <summary>
+    /// Reversal rows remain visible in the immutable ledger, but must neutralize
+    /// the original farmer cash payment in operational totals.  A reversal is
+    /// not new physical cash received from a bank/party.
+    /// </summary>
+    public static decimal CashReceived(IEnumerable<CashBookEntry> entries) => entries
+        .Where(x => x.EntryType == "CASH_IN" && x.SourceType != PaymentReversal)
+        .Sum(x => x.Amount);
+
+    public static decimal FarmerCashPaid(IEnumerable<CashBookEntry> entries) =>
+        entries.Where(x => x.EntryType == "CASH_OUT" && x.SourceType == "FARMER_PAYMENT").Sum(x => x.Amount)
+        - entries.Where(x => x.EntryType == "CASH_IN" && x.SourceType == PaymentReversal).Sum(x => x.Amount);
+
+    public static decimal OtherCashPaid(IEnumerable<CashBookEntry> entries) => entries
+        .Where(x => x.EntryType == "CASH_OUT" && x.SourceType != "FARMER_PAYMENT" && x.SourceType != DayClosingWithdrawal)
+        .Sum(x => x.Amount);
+
+    public static decimal ClosingWithdrawal(IEnumerable<CashBookEntry> entries) => entries
+        .Where(x => x.EntryType == "CASH_OUT" && x.SourceType == DayClosingWithdrawal)
+        .Sum(x => x.Amount);
 
     public static IReadOnlyList<CashBookDailySummary> Build(
         IEnumerable<CashBookEntry> source,
@@ -34,14 +56,10 @@ public static class CashBookDailyCalculator
         foreach (var date in dates)
         {
             var day = byDate.GetValueOrDefault(date) ?? [];
-            var cashReceived = day.Where(x => x.EntryType == "CASH_IN").Sum(x => x.Amount);
-            var farmerCashPaid = day.Where(x => x.EntryType == "CASH_OUT" && x.SourceType == "FARMER_PAYMENT")
-                .Sum(x => x.Amount);
-            var closingWithdrawal = day.Where(x => x.EntryType == "CASH_OUT" && x.SourceType == DayClosingWithdrawal)
-                .Sum(x => x.Amount);
-            var otherCashPaid = day.Where(x => x.EntryType == "CASH_OUT" &&
-                x.SourceType != "FARMER_PAYMENT" && x.SourceType != DayClosingWithdrawal)
-                .Sum(x => x.Amount);
+            var cashReceived = CashReceived(day);
+            var farmerCashPaid = FarmerCashPaid(day);
+            var closingWithdrawal = ClosingWithdrawal(day);
+            var otherCashPaid = OtherCashPaid(day);
             var operatingCashPaid = farmerCashPaid + otherCashPaid;
             var availableBeforeClosing = runningOpening + cashReceived - operatingCashPaid;
             var closingBalance = availableBeforeClosing - closingWithdrawal;

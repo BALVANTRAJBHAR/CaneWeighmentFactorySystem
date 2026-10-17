@@ -43,7 +43,7 @@ public class ConfigController : ControllerBase
         if (src.DefaultCuttingPercent is < 0 or > 100 || src.DefaultOtherDeductionPercent is < 0 or > 100)
             return BadRequest(new { message = "Cutting/Other Deduction % must be between 0 and 100." });
         var r = await _db.WeightRules.FirstAsync(x => !x.IsDeleted);
-        var old = new { r.MinimumWeightQuintal, r.Enabled, r.ApplyToGross, r.ApplyToTare, r.DefaultCuttingPercent, r.DefaultOtherDeductionPercent, r.VehicleReweighCooldownMinutes };
+        var old = new { r.MinimumWeightQuintal, r.Enabled, r.ApplyToGross, r.ApplyToTare, r.DefaultCuttingPercent, r.DefaultOtherDeductionPercent, r.RestrictWeighmentSaveToBridgeHost, r.LiveWeightOnlyOnDigitizerPc, r.VehicleReweighCooldownMinutes };
         r.MinimumWeightQuintal = Math.Round(src.MinimumWeightQuintal, 2);
         r.Enabled = src.Enabled;
         r.ApplyToCanePurchase = src.ApplyToCanePurchase;
@@ -52,6 +52,8 @@ public class ConfigController : ControllerBase
         r.ApplyToTare = src.ApplyToTare;
         r.DefaultCuttingPercent = Math.Round(src.DefaultCuttingPercent, 2);
         r.DefaultOtherDeductionPercent = Math.Round(src.DefaultOtherDeductionPercent, 2);
+        r.RestrictWeighmentSaveToBridgeHost = src.RestrictWeighmentSaveToBridgeHost;
+        r.LiveWeightOnlyOnDigitizerPc = src.LiveWeightOnlyOnDigitizerPc;
         r.VehicleReweighCooldownMinutes = src.VehicleReweighCooldownMinutes;
         r.UpdatedAt = DateTime.UtcNow;
         r.UpdatedBy = _current.UserId;
@@ -187,12 +189,12 @@ public class ConfigController : ControllerBase
             .Select(c => new
             {
                 c.Id, c.CameraNumber, c.Vendor, c.Model, c.Protocol, c.Resolution, c.Fps,
-                c.CaptureEnabled, c.LiveViewEnabled, c.RetentionDays, c.Status
+                c.CaptureEnabled, c.WeighmentCaptureEnabled, c.LiveViewEnabled, c.RetentionDays, c.Status
             }).ToListAsync();
         return Ok(cameras.Select(c => new
         {
             c.Id, c.CameraNumber, c.Vendor, c.Model, c.Protocol, c.Resolution, c.Fps,
-            c.CaptureEnabled, c.LiveViewEnabled, c.RetentionDays, c.Status, cameraSystemEnabled
+            c.CaptureEnabled, c.WeighmentCaptureEnabled, c.LiveViewEnabled, c.RetentionDays, c.Status, cameraSystemEnabled
         }));
     }
 
@@ -206,6 +208,7 @@ public class ConfigController : ControllerBase
             {
                 c.Id, c.CameraNumber, c.Vendor, c.Model, c.Protocol, c.IpAddress, c.Port,
                 c.Channel, c.StreamType, c.Resolution, c.Fps, c.CaptureEnabled, c.LiveViewEnabled,
+                c.WeighmentCaptureEnabled,
                 c.RetentionDays, c.Status,
                 HasUsername = c.Username != null,
                 HasPassword = c.PasswordEncrypted != null,
@@ -233,7 +236,8 @@ public class ConfigController : ControllerBase
         cam.Channel = req.Channel; cam.StreamType = req.StreamType;
         if (!string.IsNullOrWhiteSpace(req.RtspUrl)) cam.RtspUrl = req.RtspUrl;
         cam.Resolution = req.Resolution; cam.Fps = req.Fps;
-        cam.CaptureEnabled = req.CaptureEnabled; cam.LiveViewEnabled = req.LiveViewEnabled;
+        cam.CaptureEnabled = req.CaptureEnabled; cam.WeighmentCaptureEnabled = req.WeighmentCaptureEnabled;
+        cam.LiveViewEnabled = req.LiveViewEnabled;
         cam.RetentionDays = req.RetentionDays; cam.Status = req.Status;
         if (isNew) _db.Cameras.Add(cam);
         else { cam.UpdatedAt = DateTime.UtcNow; cam.UpdatedBy = _current.UserId; }
@@ -384,6 +388,57 @@ public class ConfigController : ControllerBase
             selectedCameraId = camera.Id,
             configuredPath = effectivePath,
             filenamePattern = @"{path}\yyyy-MM-dd\GrowerId-AdviceNo-PurchaseId-PaymentId.jpg"
+        });
+    }
+
+    // -------------------------------------------------------------- RATE EDIT CAMERA
+    /// <summary>Dedicated camera for cane/sale rate-change approval evidence.</summary>
+    [HasPermission("Camera.Configure")]
+    [HttpGet("rate-evidence")]
+    public async Task<IActionResult> GetRateEvidenceConfiguration()
+    {
+        var setting = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Key == "RateEvidenceCameraId");
+        var cameras = await _db.Cameras.AsNoTracking().Where(c => !c.IsDeleted)
+            .OrderBy(c => c.CameraNumber)
+            .Select(c => new { c.Id, c.CameraNumber, c.Vendor, c.Model, c.Status, c.CaptureEnabled, c.LiveViewEnabled })
+            .ToListAsync();
+        return Ok(new
+        {
+            selectedCameraId = int.TryParse(setting?.Value, out var cameraId) ? cameraId : (int?)null,
+            cameras
+        });
+    }
+
+    [HasPermission("Camera.Configure")]
+    [HttpPut("rate-evidence")]
+    public async Task<IActionResult> UpdateRateEvidenceConfiguration([FromBody] RateEvidenceConfigRequest req)
+    {
+        var camera = await _db.Cameras.FirstOrDefaultAsync(c => c.Id == req.CameraId && !c.IsDeleted &&
+            c.Status && c.CaptureEnabled && c.LiveViewEnabled);
+        if (camera == null)
+            return BadRequest(new { message = "Select an active camera with Capture and Live View enabled for rate-edit evidence." });
+
+        var setting = await _db.SystemSettings.FirstOrDefaultAsync(s => s.Key == "RateEvidenceCameraId");
+        var oldCameraId = setting?.Value;
+        if (setting == null)
+        {
+            setting = new SystemSetting { Key = "RateEvidenceCameraId", Value = camera.Id.ToString() };
+            _db.SystemSettings.Add(setting);
+        }
+        else
+        {
+            setting.Value = camera.Id.ToString();
+            setting.UpdatedAt = DateTime.UtcNow;
+            setting.UpdatedBy = _current.UserId;
+        }
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("RateEvidenceConfiguration", "Camera", "SystemSetting", "RateEvidenceCameraId",
+            oldValue: new { CameraId = oldCameraId }, newValue: new { CameraId = camera.Id, camera.CameraNumber });
+        return Ok(new
+        {
+            message = $"Rate-edit evidence camera {camera.CameraNumber:D2} saved successfully.",
+            selectedCameraId = camera.Id
         });
     }
 
@@ -546,6 +601,7 @@ public class ConfigController : ControllerBase
             p.TareCopies,
             p.SalePurchaseGrossCopies,
             p.SalePurchaseTareCopies,
+            p.SalePurchaseInvoiceEnabled,
             p.DotMatrixPrintHeader,
             p.DotMatrixPageLines,
             p.DotMatrixHalfPageLines,
@@ -573,6 +629,7 @@ public class ConfigController : ControllerBase
         p.LoanCopies = Math.Clamp(src.LoanCopies, 0, 5);
         p.SalePurchaseGrossCopies = Math.Clamp(src.SalePurchaseGrossCopies, 0, 5);
         p.SalePurchaseTareCopies = Math.Clamp(src.SalePurchaseTareCopies, 0, 5);
+        p.SalePurchaseInvoiceEnabled = src.SalePurchaseInvoiceEnabled;
         p.Language = src.Language;
         p.DotMatrixPrintHeader = src.DotMatrixPrintHeader;
         p.DotMatrixPageLines = src.DotMatrixPageLines;
@@ -841,7 +898,9 @@ public class ConfigController : ControllerBase
             (!System.IO.File.Exists(src.LogoPath) || Path.GetExtension(src.LogoPath).ToLowerInvariant() is not (".png" or ".jpg" or ".jpeg")))
             return BadRequest(new { message = "Logo must be an existing PNG or JPG file on the factory server/PC." });
         var c = await _db.CompanyConfigs.FirstAsync(x => !x.IsDeleted);
-        var old = new { c.CompanyName, c.CompanyNameHi, c.Address, c.AddressHi, c.DefaultLanguage, c.ThemeColor };
+        var old = new { c.CompanyName, c.CompanyNameHi, c.Address, c.AddressHi, c.DefaultLanguage, c.ThemeColor,
+            c.InvoiceRoadStreet, c.InvoiceNearbyLandmark, c.InvoiceLocality, c.InvoiceCity, c.InvoiceDistrict,
+            c.InvoiceState, c.InvoicePinCode, c.InvoicePhone, c.InvoiceEmail, c.InvoiceGstin, c.InvoiceTermsAndConditions };
         c.CompanyName = src.CompanyName.Trim();
         c.CompanyNameHi = string.IsNullOrWhiteSpace(src.CompanyNameHi) ? null : src.CompanyNameHi.Trim();
         c.Address = src.Address;
@@ -849,12 +908,25 @@ public class ConfigController : ControllerBase
         c.LogoPath = src.LogoPath;
         c.DefaultLanguage = src.DefaultLanguage;
         c.ThemeColor = src.ThemeColor;
+        c.InvoiceRoadStreet = NullIfBlank(src.InvoiceRoadStreet);
+        c.InvoiceNearbyLandmark = NullIfBlank(src.InvoiceNearbyLandmark);
+        c.InvoiceLocality = NullIfBlank(src.InvoiceLocality);
+        c.InvoiceCity = NullIfBlank(src.InvoiceCity);
+        c.InvoiceDistrict = NullIfBlank(src.InvoiceDistrict);
+        c.InvoiceState = NullIfBlank(src.InvoiceState);
+        c.InvoicePinCode = NullIfBlank(src.InvoicePinCode);
+        c.InvoicePhone = NullIfBlank(src.InvoicePhone);
+        c.InvoiceEmail = NullIfBlank(src.InvoiceEmail);
+        c.InvoiceGstin = NullIfBlank(src.InvoiceGstin);
+        c.InvoiceTermsAndConditions = NullIfBlank(src.InvoiceTermsAndConditions);
         c.UpdatedAt = DateTime.UtcNow;
         c.UpdatedBy = _current.UserId;
         await _db.SaveChangesAsync();
         await _audit.LogAsync("SystemSettingChange", "Company", "CompanyConfig", c.Id.ToString(), oldValue: old, newValue: src);
         return Ok(new { message = $"Company '{c.CompanyName}' configuration saved successfully." });
     }
+
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     // ---------------------------------------------------------------- SYSTEM SETTINGS
     [HasPermission("SystemSetting.View")]
@@ -883,6 +955,11 @@ public class PaymentEvidenceConfigRequest
     public string? Path { get; set; }
 }
 
+public class RateEvidenceConfigRequest
+{
+    public int CameraId { get; set; }
+}
+
 public class CameraSaveRequest
 {
     public int CameraNumber { get; set; }
@@ -899,6 +976,7 @@ public class CameraSaveRequest
     public string? Resolution { get; set; }
     public int? Fps { get; set; }
     public bool CaptureEnabled { get; set; } = true;
+    public bool WeighmentCaptureEnabled { get; set; } = true;
     public bool LiveViewEnabled { get; set; } = true;
     public int RetentionDays { get; set; } = 365;
     public bool Status { get; set; } = true;

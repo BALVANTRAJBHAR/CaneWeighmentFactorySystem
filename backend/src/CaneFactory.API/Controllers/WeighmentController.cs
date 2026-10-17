@@ -5,6 +5,7 @@ using CaneFactory.API.Services;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
 using CaneFactory.Infrastructure.Weighing;
+using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -32,18 +33,59 @@ public class WeighmentController : ControllerBase
     private readonly WeighingService _weighing;
     private readonly ILogger<WeighmentController> _log;
     private readonly RateOverrideService _rateOverrides;
+    private readonly ScaleReadingResolver _scaleReadings;
 
     public WeighmentController(AppDbContext db, IAuditService audit, ICurrentUser current,
         ISequenceGenerator seq, IMemoryCache cache, ICameraCaptureService capture, ISmsService sms,
-        WeighingService weighing, ILogger<WeighmentController> log, RateOverrideService rateOverrides)
+        WeighingService weighing, ILogger<WeighmentController> log, RateOverrideService rateOverrides,
+        ScaleReadingResolver scaleReadings)
     {
         _db = db; _audit = audit; _current = current; _seq = seq; _cache = cache; _capture = capture;
-        _sms = sms; _weighing = weighing; _log = log; _rateOverrides = rateOverrides;
+        _sms = sms; _weighing = weighing; _log = log; _rateOverrides = rateOverrides; _scaleReadings = scaleReadings;
     }
 
     private IActionResult? Deny(string action) =>
         _current.HasPermission($"Weighment.{action}") ? null
             : StatusCode(403, new { message = $"You do not have 'Weighment.{action}' permission." });
+
+    private bool IsOperatorOnly()
+    {
+        var roles = (_current.Role ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return roles.Contains("Operator", StringComparer.OrdinalIgnoreCase) &&
+            !roles.Any(r => r.Equals("Admin", StringComparison.OrdinalIgnoreCase) ||
+                            r.Equals("SubAdmin", StringComparison.OrdinalIgnoreCase) ||
+                            r.Equals("Developer", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<string?> WeightSaveAccessErrorAsync()
+    {
+        var mode = await _db.WeightRules.AsNoTracking().Where(r => !r.IsDeleted)
+            .Select(r => new { r.RestrictWeighmentSaveToBridgeHost, r.LiveWeightOnlyOnDigitizerPc }).FirstOrDefaultAsync();
+        // Local-only saves are authenticated by a fresh HMAC proof from the loopback
+        // Scale Bridge. IP comparison is not reliable when several factory PCs share NAT.
+        if (mode?.LiveWeightOnlyOnDigitizerPc == true) return null;
+        if (mode?.RestrictWeighmentSaveToBridgeHost != true) return null;
+        var bridgeHost = await _db.SystemSettings.AsNoTracking().Where(x => x.Key == "ScaleBridgeHostIp")
+            .Select(x => x.Value).FirstOrDefaultAsync();
+        var ip = HttpContext.Connection.RemoteIpAddress;
+        var requester = ip?.IsIPv4MappedToIPv6 == true ? ip.MapToIPv4().ToString() : ip?.ToString();
+        return !string.IsNullOrWhiteSpace(bridgeHost) && string.Equals(bridgeHost, requester, StringComparison.OrdinalIgnoreCase)
+            ? null : "Weighment saving is allowed only on the PC connected to the digitizer / Scale Bridge.";
+    }
+
+    private async Task<decimal> ResolveMasterRateAtGrossAsync(Purchase purchase)
+    {
+        if (purchase.MasterRateAtGross > 0) return WeightCalculator.R2(purchase.MasterRateAtGross);
+        var grossDate = purchase.GrossDateTime.Date;
+        var historicalRate = await _db.Rates.AsNoTracking()
+            .Where(r => r.VarietyTypeId == purchase.VarietyTypeId && !r.IsDeleted && r.Status
+                && r.EffectiveFrom.Date <= grossDate
+                && (r.EffectiveTo == null || r.EffectiveTo.Value.Date >= grossDate))
+            .OrderByDescending(r => r.EffectiveFrom)
+            .Select(r => (decimal?)r.Rate)
+            .FirstOrDefaultAsync();
+        return WeightCalculator.R2(historicalRate ?? purchase.Rate);
+    }
 
     /// <summary>
     /// Evidence must be persisted before a PDF is rendered.  Background capture caused the
@@ -92,11 +134,13 @@ public class WeighmentController : ControllerBase
         if (p.GrossTareStatus == "CANCELLED") return Conflict(new { message = $"Purchase {purchaseId} is CANCELLED." });
         if (p.GrossTareStatus == "TARE_DONE") return Conflict(new { message = $"Tare is already completed for Purchase {purchaseId}." });
         if (p.LockStatus == "LOCKED") return Conflict(new { message = $"Purchase {purchaseId} is LOCKED." });
+        var masterRate = await ResolveMasterRateAtGrossAsync(p);
         return Ok(new
         {
             purchaseId = p.Id, p.GrowerId, p.GrowerCode, GrowerName = p.Grower.GrowerName, FatherName = p.Grower.FatherName,
             VillageName = p.Grower.Village.VillageName, p.VehicleNumber, VehicleTypeName = p.VehicleType.VehicleTypeName,
-            VarietyName = p.Variety.VarietyName, CropName = p.Crop != null ? p.Crop.CropName : null, p.Rate, p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName,
+            VarietyName = p.Variety.VarietyName, CropName = p.Crop != null ? p.Crop.CropName : null,
+            p.Rate, MasterRate = masterRate, p.GrossWeightQuintal, p.GrossDateTime, p.GrossByUserName,
             p.CuttingPercent, p.OtherDeductionPercent
         });
     }
@@ -106,6 +150,7 @@ public class WeighmentController : ControllerBase
     public async Task<IActionResult> Gross(GrossSaveRequest req)
     {
         if (Deny("Create") is { } d) return d;
+        if (await WeightSaveAccessErrorAsync() is { } accessError) return StatusCode(403, new { message = accessError });
         if (IsDuplicateRequest(req.IdempotencyKey, out var dup)) return dup!;
 
         var grower = req.GrowerId > 0
@@ -124,16 +169,28 @@ public class WeighmentController : ControllerBase
             return BadRequest(new { message = "Selected Variety does not belong to the selected Variety Type." });
         if (!req.CropId.HasValue || !await _db.Crops.AnyAsync(c => c.Id == req.CropId.Value && !c.IsDeleted && c.Status))
             return BadRequest(new { message = "Select an active Crop (Plant, Ratoon 1, Ratoon 2 or Ratoon 3)." });
-        if (req.CuttingPercent is < 0 or > 100) return BadRequest(new { message = "Cutting % must be between 0 and 100. Example: 2.00" });
+        // Operators cannot override the configured cane-cutting value.  Apply
+        // this server-side too, so a manually altered client request cannot
+        // bypass the read-only field in the desktop application.
+        var cuttingPercent = req.CuttingPercent;
+        if (IsOperatorOnly())
+        {
+            var rule = await _db.WeightRules.AsNoTracking()
+                .FirstOrDefaultAsync(r => !r.IsDeleted && r.Enabled && r.ApplyToCanePurchase);
+            cuttingPercent = rule?.DefaultCuttingPercent ?? 0m;
+        }
+        if (cuttingPercent is < 0 or > 100) return BadRequest(new { message = "Cutting % must be between 0 and 100. Example: 2.00" });
         if (req.OtherDeductionPercent is < 0 or > 100) return BadRequest(new { message = "Other Deduction % must be between 0 and 100." });
-        if (!_weighing.TryGetUsableWeight(out var liveKg, out var liveWeightError))
-            return Conflict(new { message = liveWeightError });
+        var (scaleReading, liveWeightError) = await _scaleReadings.ResolveAsync(req);
+        if (scaleReading == null) return Conflict(new { message = liveWeightError });
+        var liveKg = scaleReading.WeightKg;
 
         var grossQuintal = WeightCalculator.KgToQuintal(liveKg);
         var minError = await MinimumWeightErrorAsync(grossQuintal, applyGross: true);
         if (minError != null) return Conflict(new { message = minError, soundEvent = "BELOW_MINIMUM" });
 
         var now = DateTime.UtcNow;
+        await _scaleReadings.TryReleasePlatformLockAsync(scaleReading);
         var eligibilityError = await CanStartNewCaneGrossAsync(vehicleNumber, now);
         if (eligibilityError != null) return Conflict(new { message = eligibilityError, soundEvent = "WEIGHING_ACTIVE" });
 
@@ -172,9 +229,10 @@ public class WeighmentController : ControllerBase
             GrossDateTime = now,
             GrossByUserId = _current.UserId!.Value,
             GrossByUserName = _current.Username ?? "",
-            CuttingPercent = WeightCalculator.R2(req.CuttingPercent),
+            CuttingPercent = WeightCalculator.R2(cuttingPercent),
             OtherDeductionPercent = WeightCalculator.R2(req.OtherDeductionPercent),
             Rate = rate.Rate,
+            MasterRateAtGross = rate.Rate,
             SeasonId = season.Id,
             GrossTareStatus = "GROSS_DONE",
             PaymentStatus = "NOT_ELIGIBLE",
@@ -183,6 +241,7 @@ public class WeighmentController : ControllerBase
             _db.Purchases.Add(purchase);
             await _db.SaveChangesAsync();
             await MarkPlatformClearRequiredAsync(liveKg);
+            await _scaleReadings.RecordSavedAsync(scaleReading);
             await _db.SaveChangesAsync();
         });
 
@@ -208,6 +267,7 @@ public class WeighmentController : ControllerBase
     public async Task<IActionResult> Tare(TareSaveRequest req)
     {
         if (Deny("Edit") is { } d) return d;
+        if (await WeightSaveAccessErrorAsync() is { } accessError) return StatusCode(403, new { message = accessError });
         if (IsDuplicateRequest(req.IdempotencyKey, out var dup)) return dup!;
 
         var p = await _db.Purchases.Include(x => x.Grower).FirstOrDefaultAsync(x => x.Id == req.PurchaseId);
@@ -215,8 +275,9 @@ public class WeighmentController : ControllerBase
         if (p.GrossTareStatus == "CANCELLED") return Conflict(new { message = "This purchase is CANCELLED." });
         if (p.GrossTareStatus == "TARE_DONE") return Conflict(new { message = "Tare is already completed for this purchase (duplicate save blocked)." });
         if (p.LockStatus == "LOCKED") return Conflict(new { message = "This purchase is LOCKED." });
-        if (!_weighing.TryGetUsableWeight(out var liveKg, out var liveWeightError))
-            return Conflict(new { message = liveWeightError });
+        var (scaleReading, liveWeightError) = await _scaleReadings.ResolveAsync(req);
+        if (scaleReading == null) return Conflict(new { message = liveWeightError });
+        var liveKg = scaleReading.WeightKg;
 
         var tareQuintal = WeightCalculator.KgToQuintal(liveKg);
         var minError = await MinimumWeightErrorAsync(tareQuintal, applyGross: false);
@@ -224,7 +285,7 @@ public class WeighmentController : ControllerBase
         if (tareQuintal >= p.GrossWeightQuintal)
             return Conflict(new { message = $"Tare weight ({tareQuintal:F2} Qtl) must be LESS than Gross weight ({p.GrossWeightQuintal:F2} Qtl)." });
 
-        var masterRate = p.Rate;
+        var masterRate = await ResolveMasterRateAtGrossAsync(p);
         decimal effectiveRate;
         try
         {
@@ -249,6 +310,7 @@ public class WeighmentController : ControllerBase
         p.CuttingWeightQuintal = cutting;
         p.OtherDeductionWeightQuintal = otherDeduction;
         p.FinalWeightQuintal = final;
+        if (p.MasterRateAtGross <= 0) p.MasterRateAtGross = masterRate;
         p.Rate = effectiveRate;
         p.PurchaseAmount = amount;
         p.GrossTareStatus = "TARE_DONE";
@@ -258,6 +320,7 @@ public class WeighmentController : ControllerBase
         p.UpdatedBy = _current.UserId;
         await _db.SaveChangesAsync();
         await MarkPlatformClearRequiredAsync(liveKg);
+        await _scaleReadings.RecordSavedAsync(scaleReading);
         await _db.SaveChangesAsync();
 
         await _audit.LogAsync("TareWeighment", "Weighment", "Purchase", p.Id.ToString(),

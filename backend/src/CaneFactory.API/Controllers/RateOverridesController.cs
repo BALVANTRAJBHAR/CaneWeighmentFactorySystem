@@ -24,8 +24,8 @@ public sealed class RateOverridesController(
     public async Task<IActionResult> Options(CancellationToken ct)
     {
         if (!CanUseRateOverride()) return Forbidden();
-        var admins = await db.Users.AsNoTracking()
-            .Where(u => !u.IsDeleted && u.Status && u.UserRoles.Any(ur => ur.Role.Name == "Admin" && ur.Role.Status && !ur.Role.IsDeleted))
+        var approvers = await db.Users.AsNoTracking()
+            .Where(u => !u.IsDeleted && u.Status && u.CanApproveRateOverrides)
             .OrderBy(u => u.FullName)
             .Select(u => new { u.Id, u.Username, u.FullName })
             .ToListAsync(ct);
@@ -33,12 +33,12 @@ public sealed class RateOverridesController(
             .Where(x => !x.IsDeleted && x.Status).OrderBy(x => x.ReasonName)
             .Select(x => new { x.Id, x.ReasonName }).ToListAsync(ct);
         var cameraSetting = await db.SystemSettings.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Key == "PaymentEvidenceCameraId", ct);
+            .FirstOrDefaultAsync(x => x.Key == "RateEvidenceCameraId", ct);
         var camera = int.TryParse(cameraSetting?.Value, out var cameraId)
-            ? await db.Cameras.AsNoTracking().Where(x => x.Id == cameraId && !x.IsDeleted && x.Status && x.LiveViewEnabled)
+            ? await db.Cameras.AsNoTracking().Where(x => x.Id == cameraId && !x.IsDeleted && x.Status && x.CaptureEnabled && x.LiveViewEnabled)
                 .Select(x => new { x.Id, x.CameraNumber, x.Vendor, x.Model }).FirstOrDefaultAsync(ct)
             : null;
-        return Ok(new { admins, reasons, configuredCamera = camera });
+        return Ok(new { approvers, reasons, configuredCamera = camera });
     }
 
     [HttpPost("evidence/upload")]
@@ -74,9 +74,13 @@ public sealed class RateOverridesController(
         var type = NormalizeType(request.TransactionType);
         if (type == null) return BadRequest(new { message = "Transaction Type must be CANE or SALE." });
         if (await ValidatePendingTargetAsync(type, request.TransactionId, ct) is { } error) return Conflict(new { message = error });
-        var setting = await db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(x => x.Key == "PaymentEvidenceCameraId", ct);
+        var setting = await db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(x => x.Key == "RateEvidenceCameraId", ct);
         if (!int.TryParse(setting?.Value, out var cameraId) || cameraId <= 0)
-            return Conflict(new { message = "Configure a Payment Evidence Camera in Developer > Cameras first." });
+            return Conflict(new { message = "Configure a Rate Edit Evidence Camera in Developer > Configuration > Cameras first." });
+        var configuredCamera = await db.Cameras.AsNoTracking().FirstOrDefaultAsync(x =>
+            x.Id == cameraId && !x.IsDeleted && x.Status && x.CaptureEnabled && x.LiveViewEnabled, ct);
+        if (configuredCamera == null)
+            return Conflict(new { message = "The configured Rate Edit Evidence Camera is inactive or Capture/Live View is disabled." });
         var frame = await capture.CaptureSingleAsync(cameraId, ct);
         if (!frame.Success || frame.ImageBytes == null)
             return Conflict(new { message = frame.Error ?? "Configured camera did not return an image." });

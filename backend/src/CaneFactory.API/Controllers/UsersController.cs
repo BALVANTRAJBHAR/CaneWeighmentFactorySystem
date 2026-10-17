@@ -89,12 +89,13 @@ public class UsersController : ControllerBase
             .Select(u => new
             {
                 u.Id, u.GrowerId, u.Username, u.FullName, u.FullNameHi, u.Mobile, u.Email, u.Status, u.MustChangePassword,
-                u.LastLoginAt,
+                u.LastLoginAt, u.CanApproveRateOverrides,
                 RoleAssignments = u.UserRoles.Select(r => new { r.RoleId, RoleName = r.Role.Name }).ToList()
             }).ToListAsync();
         var items = pageRows.Select(u => new
         {
             u.Id, u.GrowerId, u.Username, u.FullName, u.FullNameHi, u.Mobile, u.Email, u.Status, u.MustChangePassword, u.LastLoginAt,
+            u.CanApproveRateOverrides,
             Roles = u.RoleAssignments.Select(r => r.RoleName).ToList(),
             RoleIds = u.RoleAssignments.Select(r => r.RoleId).ToList()
         });
@@ -105,6 +106,8 @@ public class UsersController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create(CreateUserRequest req)
     {
+        if (req.CanApproveRateOverrides && !IsDeveloper)
+            return StatusCode(403, new { message = "Only a Developer can enable a user for rate approval." });
         var username = Validators.Norm(req.Username).ToLowerInvariant();
         if (username.Length < 3) return BadRequest(new { message = "Username must be at least 3 characters." });
         if (!Validators.IsMobile(req.Mobile)) return BadRequest(new { message = "Mobile must be exactly 10 digits." });
@@ -126,14 +129,15 @@ public class UsersController : ControllerBase
             FullNameHi = string.IsNullOrWhiteSpace(req.FullNameHi) ? null : req.FullNameHi.Trim(),
             Mobile = req.Mobile,
             Email = Validators.Norm(req.Email),
-            MustChangePassword = true
+            MustChangePassword = true,
+            CanApproveRateOverrides = IsDeveloper && req.CanApproveRateOverrides
         };
         user.PasswordHash = Hasher.HashPassword(user, req.TemporaryPassword);
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
         foreach (var r in validRoles) _db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = r.Id });
         await _db.SaveChangesAsync();
-        await _audit.LogAsync("Create", "User", "User", user.Id.ToString(), newValue: new { user.Username, Roles = validRoles.Select(x => x.Name) });
+        await _audit.LogAsync("Create", "User", "User", user.Id.ToString(), newValue: new { user.Username, Roles = validRoles.Select(x => x.Name), user.CanApproveRateOverrides });
         return Ok(new { message = $"User '{user.Username}' created successfully. Temporary password must be changed on first login.", id = user.Id });
     }
 
@@ -155,14 +159,18 @@ public class UsersController : ControllerBase
             return BadRequest(new { message = "Developer accounts and the Developer role cannot be managed from User Management." });
         if (validRoles.Any(r => r.Name == "Farmer"))
             return BadRequest(new { message = "Farmer role is assigned only by automatic Grower account provisioning." });
+        if (req.CanApproveRateOverrides.HasValue && !IsDeveloper)
+            return StatusCode(403, new { message = "Only a Developer can change rate-approval authority." });
 
-        var old = new { user.FullName, user.Mobile, user.Email, user.Status, Roles = user.UserRoles.Select(r => r.RoleId).ToList() };
+        var old = new { user.FullName, user.Mobile, user.Email, user.Status, user.CanApproveRateOverrides, Roles = user.UserRoles.Select(r => r.RoleId).ToList() };
         user.FullName = Validators.Norm(req.FullName);
         user.FullNameHi = string.IsNullOrWhiteSpace(req.FullNameHi) ? null : req.FullNameHi.Trim();
         user.Mobile = req.Mobile;
         user.Email = Validators.Norm(req.Email);
         var deactivated = user.Status && !req.Status;
         user.Status = req.Status;
+        if (req.CanApproveRateOverrides.HasValue)
+            user.CanApproveRateOverrides = req.CanApproveRateOverrides.Value;
         user.UpdatedAt = DateTime.UtcNow;
 
         _db.UserRoles.RemoveRange(user.UserRoles);
@@ -177,7 +185,7 @@ public class UsersController : ControllerBase
         }
         await _db.SaveChangesAsync();
         await _audit.LogAsync("Edit", "User", "User", id.ToString(), oldValue: old,
-            newValue: new { user.FullName, user.Mobile, user.Email, user.Status, Roles = req.RoleIds });
+            newValue: new { user.FullName, user.Mobile, user.Email, user.Status, user.CanApproveRateOverrides, Roles = req.RoleIds });
         return Ok(new { message = $"User '{user.Username}' updated successfully." + (deactivated ? " Active sessions revoked." : "") });
     }
 

@@ -53,13 +53,25 @@ public class GrowersController : ControllerBase
         _current.HasPermission($"Grower.{action}") ? null
             : StatusCode(403, new { message = $"You do not have 'Grower.{action}' permission." });
 
-    // Aadhaar is NEVER exposed in lists/reports - only masked last 4 for authorized viewers.
+    // Aadhaar is NEVER exposed in lists/reports - only masked last 4 is returned there.
     private object ToDto(Grower g, string villageName, string? bankName) => new
     {
         g.Id, g.VillageId, VillageName = villageName, g.GrowerSequence, g.GrowerCode,
         g.GrowerName, g.GrowerNameHi, g.FatherName, g.FatherNameHi, g.BankId, BankName = bankName,
-        AccountMasked = Mask(g.BankAccountNumber), g.AccountHolderName,
+        // The master list deliberately shows the bank account number as requested;
+        // Aadhaar remains masked outside the permission-protected Edit form.
+        g.BankAccountNumber, AccountMasked = Mask(g.BankAccountNumber), g.AccountHolderName,
         AadhaarMasked = g.AadhaarLast4 == null ? null : $"XXXX-XXXX-{g.AadhaarLast4}",
+        g.Mobile, g.Email, g.Status, g.CreatedAt
+    };
+
+    private object ToEditDto(Grower g) => new
+    {
+        g.Id, g.VillageId, VillageName = g.Village.VillageName, g.GrowerSequence, g.GrowerCode,
+        g.GrowerName, g.GrowerNameHi, g.FatherName, g.FatherNameHi, g.BankId, BankName = g.Bank?.BankName,
+        g.BankAccountNumber, g.AccountHolderName,
+        // Full Aadhaar is supplied only to a user who already has Grower.Edit.
+        AadhaarNumber = string.IsNullOrWhiteSpace(g.AadhaarEncrypted) ? null : _protector.Unprotect(g.AadhaarEncrypted),
         g.Mobile, g.Email, g.Status, g.CreatedAt
     };
 
@@ -131,10 +143,12 @@ public class GrowersController : ControllerBase
     [HttpGet("{id:int}")]
     public async Task<IActionResult> Get(int id)
     {
-        if (Deny("View") is { } d) return d;
+        // This endpoint is used exclusively to prefill the edit dialog and can
+        // include protected Aadhaar data. A simple View permission is not enough.
+        if (Deny("Edit") is { } d) return d;
         var g = await _db.Growers.Include(x => x.Village).Include(x => x.Bank)
             .FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
-        return g == null ? NotFound(new { message = "Grower not found." }) : Ok(ToDto(g, g.Village.VillageName, g.Bank?.BankName));
+        return g == null ? NotFound(new { message = "Grower not found." }) : Ok(ToEditDto(g));
     }
 
     [HttpPost]

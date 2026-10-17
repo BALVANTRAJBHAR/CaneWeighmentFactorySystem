@@ -87,11 +87,13 @@ builder.Services.AddSingleton<ICameraContinuousStreamProvider>(sp => sp.GetRequi
 builder.Services.AddSingleton<ICameraCaptureProvider, SimulatorCaptureProvider>();
 builder.Services.AddScoped<ICameraCaptureService, CameraCaptureService>();
 builder.Services.AddScoped<CaneFactory.API.Services.RateOverrideService>();
+builder.Services.AddScoped<CaneFactory.API.Services.ScaleReadingResolver>();
 
 // ---- Print engine (Phase 7): centralized A4/DotMatrix renderers + orchestration service ----
 builder.Services.AddSingleton<IPrintRenderer, A4PdfRenderer>();
 builder.Services.AddSingleton<IPrintRenderer, DotMatrixEscPRenderer>();
 builder.Services.AddScoped<IPrintEngineService, PrintEngineService>();
+builder.Services.AddScoped<ISaleInvoiceService, SaleInvoiceService>();
 QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
 QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneDevanagari", File.OpenRead(PrintFonts.PathFor("NotoSansDevanagari-Regular.ttf")));
 QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneDevanagari", File.OpenRead(PrintFonts.PathFor("NotoSansDevanagari-Bold.ttf")));

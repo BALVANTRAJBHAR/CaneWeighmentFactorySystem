@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using CaneFactory.API.Services;
+using CaneFactory.Application.Common;
 using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Interfaces;
 using CaneFactory.Application.Utilities;
@@ -119,13 +120,12 @@ public class ReportsController : ControllerBase
                 (x.ReferenceNumber != null && x.ReferenceNumber.Contains(term)));
         }
         var entries = await q.OrderBy(x => x.EntryDate).ThenBy(x => x.Id).Take(5000).ToListAsync();
-        var received = entries.Where(x => x.EntryType == "CASH_IN").Sum(x => x.Amount);
-        var paid = entries.Where(x => x.EntryType == "CASH_OUT").Sum(x => x.Amount);
-        var farmerCashPaid = entries.Where(x => x.EntryType == "CASH_OUT" && x.SourceType == "FARMER_PAYMENT").Sum(x => x.Amount);
-        var closingWithdrawal = entries.Where(x => x.EntryType == "CASH_OUT" &&
-            x.SourceType == CashBookDailyCalculator.DayClosingWithdrawal).Sum(x => x.Amount);
-        var otherCashPaid = entries.Where(x => x.EntryType == "CASH_OUT" &&
-            x.SourceType != "FARMER_PAYMENT" && x.SourceType != CashBookDailyCalculator.DayClosingWithdrawal).Sum(x => x.Amount);
+        var received = CashBookDailyCalculator.CashReceived(entries);
+        var farmerCashPaid = CashBookDailyCalculator.FarmerCashPaid(entries);
+        var otherCashPaid = CashBookDailyCalculator.OtherCashPaid(entries);
+        var closingWithdrawal = CashBookDailyCalculator.ClosingWithdrawal(entries);
+        var operatingCashPaid = farmerCashPaid + otherCashPaid;
+        var paid = operatingCashPaid + closingWithdrawal;
         var closingBalance = openingBalance + received - paid;
         var reportToDate = toDate?.AddDays(-1);
         var dailySummaries = CashBookDailyCalculator.Build(entries, openingBalance, fromDate, reportToDate);
@@ -156,10 +156,10 @@ public class ReportsController : ControllerBase
                     received,
                     farmerCashPaid,
                     otherCashPaid,
-                    operatingCashPaid = paid - closingWithdrawal,
+                    operatingCashPaid,
                     closingWithdrawal,
                     paid,
-                    availableBeforeClosing = openingBalance + received - (paid - closingWithdrawal),
+                    availableBeforeClosing = openingBalance + received - operatingCashPaid,
                     closingBalance
                 }
             });
@@ -185,7 +185,7 @@ public class ReportsController : ControllerBase
             ("Cash Received (Rs)", received.ToString("F2")),
             ("Cash Paid to Farmers (Rs)", farmerCashPaid.ToString("F2")),
             ("Other Cash Payments (Rs)", otherCashPaid.ToString("F2")),
-            ("Operating Cash Paid (Rs)", (paid - closingWithdrawal).ToString("F2")),
+            ("Operating Cash Paid (Rs)", operatingCashPaid.ToString("F2")),
             ("Day Closing Withdrawn (Rs)", closingWithdrawal.ToString("F2")),
             ("Cash Left at Factory (Rs)", closingBalance.ToString("F2"))
         };
@@ -197,6 +197,7 @@ public class ReportsController : ControllerBase
     }
 
     private static string CashEntryLabel(CaneFactory.Domain.Entities.CashBookEntry entry) =>
+        entry.SourceType == CashBookDailyCalculator.PaymentReversal ? "Payment Reversal" :
         entry.EntryType == "CASH_IN" ? "Received" :
         entry.SourceType == CashBookDailyCalculator.DayClosingWithdrawal ? "Day Closing Withdrawal" :
         entry.SourceType == "FARMER_PAYMENT" ? "Farmer Payment" : "Other Cash Payment";
@@ -302,7 +303,7 @@ public class ReportsController : ControllerBase
             expenses = expenses.Where(x => x.ExpenseDate < toDate.Value);
         }
 
-        var cashRows = await cash.Select(x => new { x.EntryDate, x.EntryType, x.SourceType, x.Amount }).ToListAsync();
+        var cashRows = await cash.ToListAsync();
         var purchaseRows = await purchases.Select(x => new { Date = x.TareDateTime!.Value, Amount = x.PurchaseAmount!.Value }).ToListAsync();
         var saleRows = await sales.Select(x => new { Date = x.GrossDateTime!.Value, Amount = x.Amount!.Value }).ToListAsync();
         var expenseRows = await expenses.Select(x => new { Date = x.ExpenseDate, Amount = x.TotalAmount }).ToListAsync();
@@ -320,14 +321,10 @@ public class ReportsController : ControllerBase
         var items = dates.OrderBy(x => x).Select(day =>
         {
             var dayCash = cashRows.Where(x => x.EntryDate.Date == day).ToList();
-            var cashReceivedBeforeWithdrawal = dayCash.Where(x => x.EntryType == "CASH_IN").Sum(x => x.Amount);
-            var closingWithdrawal = dayCash.Where(x => x.EntryType == "CASH_OUT" &&
-                x.SourceType == CashBookDailyCalculator.DayClosingWithdrawal).Sum(x => x.Amount);
-            var farmerCashPaid = dayCash.Where(x => x.EntryType == "CASH_OUT" && x.SourceType == "FARMER_PAYMENT")
-                .Sum(x => x.Amount);
-            var otherCashPaid = dayCash.Where(x => x.EntryType == "CASH_OUT" &&
-                x.SourceType != "FARMER_PAYMENT" && x.SourceType != CashBookDailyCalculator.DayClosingWithdrawal)
-                .Sum(x => x.Amount);
+            var cashReceivedBeforeWithdrawal = CashBookDailyCalculator.CashReceived(dayCash);
+            var closingWithdrawal = CashBookDailyCalculator.ClosingWithdrawal(dayCash);
+            var farmerCashPaid = CashBookDailyCalculator.FarmerCashPaid(dayCash);
+            var otherCashPaid = CashBookDailyCalculator.OtherCashPaid(dayCash);
             var cashBookExpense = farmerCashPaid + otherCashPaid;
             var canePurchaseAmount = purchaseRows.Where(x => x.Date.Date == day).Sum(x => x.Amount);
             var saleProductAmount = saleRows.Where(x => x.Date.Date == day).Sum(x => x.Amount);
@@ -437,11 +434,45 @@ public class ReportsController : ControllerBase
         var totalCount = await q.CountAsync();
         var totalFinalWeight = (await q.Where(p => p.FinalWeightQuintal != null).Select(p => p.FinalWeightQuintal).ToListAsync()).Sum(x => x ?? 0);
         var totalPurchaseAmount = (await q.Where(p => p.PurchaseAmount != null).Select(p => p.PurchaseAmount).ToListAsync()).Sum(x => x ?? 0);
+        var remainingDue = (await q.Where(p => p.PaymentStatus == "PENDING" && p.PurchaseAmount != null)
+            .Select(p => p.PurchaseAmount).ToListAsync()).Sum(x => x ?? 0);
+        var selectedPurchaseIds = await q.Select(p => p.Id).ToListAsync();
+        var selectedGrowerIds = await q.Select(p => p.GrowerId).Distinct().ToListAsync();
+        var selectedPaidLinks = await _db.PaymentPurchases.AsNoTracking()
+            .Where(x => selectedPurchaseIds.Contains(x.PurchaseId) && !x.Payment.IsDeleted
+                && x.Payment.PaymentStatus == "COMPLETED")
+            .Select(x => new { x.PaymentId, x.PurchaseAmountAtPayment,
+                x.Payment.TotalPurchaseAmount, x.Payment.LoanDeductedAmount, x.Payment.NetPayableAmount })
+            .ToListAsync();
+        // A payment may contain purchases outside the report's date/filter range. Allocate its
+        // paid and loan-deduction totals proportionally to only the selected purchase rows.
+        var selectedPaymentShares = selectedPaidLinks.GroupBy(x => x.PaymentId).Select(group =>
+        {
+            var payment = group.First();
+            var selectedAmount = group.Sum(x => x.PurchaseAmountAtPayment);
+            var share = payment.TotalPurchaseAmount <= 0 ? 0 : selectedAmount / payment.TotalPurchaseAmount;
+            return new
+            {
+                LoanDeducted = payment.LoanDeductedAmount * share,
+                Paid = payment.NetPayableAmount * share
+            };
+        }).ToList();
+        var totalLoanDeducted = WeightCalculator.R2(selectedPaymentShares.Sum(x => x.LoanDeducted));
+        var totalPaid = WeightCalculator.R2(selectedPaymentShares.Sum(x => x.Paid));
+        var totalOutstandingLoan = await _db.Loans.AsNoTracking()
+            .Where(x => selectedGrowerIds.Contains(x.GrowerId) && !x.IsDeleted && x.LoanStatus == "ACTIVE")
+            .SumAsync(x => (decimal?)x.OutstandingAmount) ?? 0;
 
         var projected = q.Select(p => new PurchaseReportRow
         {
             PurchaseId = p.Id, GrowerId = p.GrowerId, GrowerCode = p.GrowerCode, GrowerName = p.Grower.GrowerName,
-            VillageName = p.Grower.Village.VillageName, VehicleNumber = p.VehicleNumber, VarietyName = p.Variety.VarietyName,
+            FatherName = p.Grower.FatherName, VillageName = p.Grower.Village.VillageName,
+            AccountHolderName = p.Grower.AccountHolderName,
+            BankName = p.Grower.Bank != null ? p.Grower.Bank.BankName : null,
+            BankBranch = p.Grower.Bank != null ? p.Grower.Bank.BranchName : null,
+            BankIfsc = p.Grower.Bank != null ? p.Grower.Bank.IFSC : null,
+            BankAccountNumber = p.Grower.BankAccountNumber,
+            VehicleNumber = p.VehicleNumber, VarietyName = p.Variety.VarietyName,
             GrossWeightQuintal = p.GrossWeightQuintal, GrossDateTime = p.GrossDateTime,
             PurchaseDate = p.TareDateTime,
             TareWeightQuintal = p.TareWeightQuintal, CuttingWeightQuintal = p.CuttingWeightQuintal,
@@ -454,20 +485,30 @@ public class ReportsController : ControllerBase
         {
             ("Total Vehicles", totalCount.ToString()),
             ("Total Final Weight (Qtl)", totalFinalWeight.ToString("F2")),
-            ("Total Purchase Amount (Rs)", totalPurchaseAmount.ToString("F2"))
+            ("Total Purchase Amount (Rs)", totalPurchaseAmount.ToString("F2")),
+            ("Total Loan Deducted (Rs)", totalLoanDeducted.ToString("F2")),
+            ("Total Paid (Rs)", totalPaid.ToString("F2")),
+            ("Remaining Due (Rs)", remainingDue.ToString("F2")),
+            ("Current Loan Outstanding (Rs)", totalOutstandingLoan.ToString("F2"))
         };
 
         if (format == "json")
         {
             var items = await projected.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
-            return Ok(new { items, totalCount, page, pageSize, totals = new { totalCount, totalFinalWeight, totalPurchaseAmount } });
+            return Ok(new { items, totalCount, page, pageSize, totals = new {
+                totalCount, totalFinalWeight, totalPurchaseAmount, totalLoanDeducted,
+                totalPaid, remainingDue, totalOutstandingLoan
+            } });
         }
 
         var rows = await projected.Take(5000).ToListAsync();
-        var headers = new List<string> { "Purchase ID", "Grower ID", "Grower Name", "Village", "Vehicle No", "Variety",
+        var headers = new List<string> { "Purchase ID", "Grower ID", "Grower Name", "Father Name", "Village",
+            "Account Holder", "Bank", "Branch", "IFSC", "Account Number", "Vehicle No", "Variety",
             "Gross (Qtl)", "Tare (Qtl)", "Cutting Weight (Qtl)", "Net (Qtl)", "Final (Qtl)", "Rate", "Amount (Rs)", "Purchase Date (Tare)", "Weighment Status" };
         var tableRows = rows.Select(r => new List<string> {
-            r.PurchaseId.ToString(), r.GrowerId.ToString(), r.GrowerName, r.VillageName, r.VehicleNumber, r.VarietyName,
+            r.PurchaseId.ToString(), r.GrowerId.ToString(), r.GrowerName, r.FatherName, r.VillageName,
+            r.AccountHolderName ?? "-", r.BankName ?? "-", r.BankBranch ?? "-", r.BankIfsc ?? "-",
+            r.BankAccountNumber ?? "-", r.VehicleNumber, r.VarietyName,
             r.GrossWeightQuintal.ToString("F2"), r.TareWeightQuintal?.ToString("F2") ?? "-",
             r.CuttingWeightQuintal?.ToString("F2") ?? "-", r.NetWeightQuintal?.ToString("F2") ?? "-",
             r.FinalWeightQuintal?.ToString("F2") ?? "-", r.Rate.ToString("F2"), r.PurchaseAmount?.ToString("F2") ?? "-",
@@ -674,6 +715,7 @@ public class ReportsController : ControllerBase
     public async Task<IActionResult> Payments(
         [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate, [FromQuery] int? villageId,
         [FromQuery] int? growerId, [FromQuery] string? growerCode, [FromQuery] int? paymentModeId, [FromQuery] string? status,
+        [FromQuery] int? paymentId, [FromQuery] string? batchToken,
         [FromQuery] string format = "json", [FromQuery] int page = 1, [FromQuery] int pageSize = 100)
     {
         if (Deny(ActionFor(format)) is { } d) return d;
@@ -692,7 +734,13 @@ public class ReportsController : ControllerBase
         if (fromDate.HasValue) q = q.Where(p => p.PaymentDate >= fromDate);
         if (toDate.HasValue) q = q.Where(p => p.PaymentDate < toDate);
         if (paymentModeId.HasValue) q = q.Where(p => p.PaymentModeId == paymentModeId);
-        if (!string.IsNullOrWhiteSpace(status)) q = q.Where(p => p.PaymentStatus == status);
+        if (paymentId.HasValue) q = q.Where(p => p.Id == paymentId.Value);
+        if (!string.IsNullOrWhiteSpace(batchToken)) q = q.Where(p => p.BatchPrintToken == batchToken.Trim());
+        // Normal payment reporting excludes cancelled transactions. They remain
+        // available as a separate audit view by filtering with status=CANCELLED.
+        q = string.IsNullOrWhiteSpace(status)
+            ? q.Where(p => p.PaymentStatus == "COMPLETED")
+            : q.Where(p => p.PaymentStatus == status.Trim().ToUpperInvariant());
         q = q.OrderByDescending(p => p.Id);
 
         var pCount = await q.CountAsync();
@@ -839,28 +887,59 @@ public class ReportsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(status)) q = q.Where(x => x.WeighmentStatus == status.Trim().ToUpperInvariant());
         q = q.OrderByDescending(x => x.Id);
         var count = await q.CountAsync();
-        var totalsData = await q.Select(x => new { x.TareWeightQuintal, x.GrossWeightQuintal, x.FinalWeightQuintal, x.Amount }).ToListAsync();
+        var totalsData = await q.Select(x => new { x.TareWeightQuintal, x.GrossWeightQuintal, x.FinalWeightQuintal, x.Amount, x.GstAmount, x.FinalAmount }).ToListAsync();
         var totalFinal = totalsData.Sum(x => x.FinalWeightQuintal ?? 0); var totalAmount = totalsData.Sum(x => x.Amount ?? 0);
+        var totalGst = totalsData.Sum(x => x.GstAmount ?? 0); var totalFinalAmount = totalsData.Sum(x => x.FinalAmount ?? 0);
         var projection = q.Select(x => new
         {
             salePurchaseId = x.Id, item = x.Item.ItemName, party = x.Party.PartyName, vehicleType = x.VehicleType.VehicleTypeName,
             x.VehicleNumber, driver = x.DriverName, x.TareWeightQuintal, x.GrossWeightQuintal, x.FinalWeightQuintal,
-            x.Rate, x.Amount, tareOperator = x.TareByUserName, grossOperator = x.GrossByUserName,
+            x.Rate, x.Amount, x.GstPercent, x.GstAmount, x.FinalAmount, tareOperator = x.TareByUserName, grossOperator = x.GrossByUserName,
             x.TareDateTime, x.GrossDateTime, status = x.WeighmentStatus
         });
-        var totals = new List<(string, string)> { ("Total Records", count.ToString()), ("Total Final Weight (Qtl)", totalFinal.ToString("F2")), ("Total Amount (Rs)", totalAmount.ToString("F2")) };
+        var totals = new List<(string, string)> { ("Total Records", count.ToString()), ("Total Final Weight (Qtl)", totalFinal.ToString("F2")), ("Total Base Amount (Rs)", totalAmount.ToString("F2")), ("Total GST (Rs)", totalGst.ToString("F2")), ("Total Final Amount (Rs)", totalFinalAmount.ToString("F2")) };
         if (format == "json")
         {
             var items = await projection.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
-            return Ok(new { items, totalCount = count, page, pageSize, totals = new { count, totalFinal, totalAmount } });
+            return Ok(new { items, totalCount = count, page, pageSize, totals = new { count, totalFinal, totalAmount, totalGst, totalFinalAmount } });
         }
         var rows = await projection.Take(5000).ToListAsync();
-        var headers = new List<string> { "SalePurchase ID", "Item", "Party", "Vehicle Type", "Vehicle Number", "Driver", "Tare (Qtl)", "Gross (Qtl)", "Final (Qtl)", "Rate", "Amount", "Tare Operator", "Gross Operator", "Tare Date/Time", "Gross Date/Time", "Status" };
+        var headers = new List<string> { "SalePurchase ID", "Item", "Party", "Vehicle Type", "Vehicle Number", "Driver", "Tare (Qtl)", "Gross (Qtl)", "Final (Qtl)", "Rate", "Base Amount", "GST %", "GST Amount", "Final Amount", "Tare Operator", "Gross Operator", "Tare Date/Time", "Gross Date/Time", "Status" };
         var tableRows = rows.Select(x => new List<string> { x.salePurchaseId.ToString(), x.item, x.party, x.vehicleType, x.VehicleNumber, x.driver,
             x.TareWeightQuintal.ToString("F2"), x.GrossWeightQuintal?.ToString("F2") ?? "-", x.FinalWeightQuintal?.ToString("F2") ?? "-",
-            x.Rate?.ToString("F2") ?? "-", x.Amount?.ToString("F2") ?? "-", x.tareOperator, x.grossOperator ?? "-",
+            x.Rate?.ToString("F2") ?? "-", x.Amount?.ToString("F2") ?? "-", x.GstPercent.ToString("F2"), x.GstAmount?.ToString("F2") ?? "-", x.FinalAmount?.ToString("F2") ?? "-", x.tareOperator, x.grossOperator ?? "-",
             IndiaTime.Format(x.TareDateTime), x.GrossDateTime.HasValue ? IndiaTime.Format(x.GrossDateTime.Value) : "-", x.status }).ToList();
         return ExportFile("Sale-Product-Report", format, "Sale Product Report", GeneratedSubtitle(), headers, tableRows, totals);
+    }
+
+    /// <summary>Date-wise completed sale invoices with the immutable GST split captured at final weighment.</summary>
+    [HttpGet("sale-purchase-tax")]
+    public async Task<IActionResult> SalePurchaseTax([FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate,
+        [FromQuery] string format = "json")
+    {
+        if (!_current.HasPermission("SalePurchase.View") || Deny(ActionFor(format)) is { } denied)
+            return StatusCode(403, new { message = "You do not have permission to view or export SalePurchase tax reports." });
+        if (ValidateFormat(format) is { } formatError) return formatError;
+        if (ValidateDates(ref fromDate, ref toDate) is { } dateError) return dateError;
+        var query = _db.SalePurchases.AsNoTracking().Where(x => !x.IsDeleted && x.WeighmentStatus == "COMPLETED" && x.GrossDateTime != null);
+        if (fromDate.HasValue) query = query.Where(x => x.GrossDateTime >= fromDate.Value);
+        if (toDate.HasValue) query = query.Where(x => x.GrossDateTime < toDate.Value);
+        var rows = await query.OrderBy(x => x.GrossDateTime).ThenBy(x => x.Id).Select(x => new SaleTaxReportRow
+        {
+            Date = x.GrossDateTime!.Value, SalePurchaseId = x.Id, VehicleNumber = x.VehicleNumber,
+            PartyName = x.Party.PartyName, PartyAmount = x.Amount ?? 0m,
+            SalesPercent = x.SalesPercent, SalesAmount = x.SalesAmount ?? 0m,
+            TaxSupplyType = x.TaxSupplyType, GstPercent = x.GstPercent,
+            SgstAmount = x.SgstAmount ?? 0m, CgstAmount = x.CgstAmount ?? 0m, IgstAmount = x.IgstAmount ?? 0m
+        }).ToListAsync();
+        var totals = new { count = rows.Count, partyAmount = rows.Sum(x => x.PartyAmount), salesAmount = rows.Sum(x => x.SalesAmount), sgstAmount = rows.Sum(x => x.SgstAmount), cgstAmount = rows.Sum(x => x.CgstAmount), igstAmount = rows.Sum(x => x.IgstAmount) };
+        if (format == "json") return Ok(new { items = rows, totals });
+        if (format == "excel")
+            return File(_export.ToSaleTaxExcel(rows, GeneratedSubtitle()), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Sale-Purchase-Tax-Report.xlsx");
+        var headers = new List<string> { "Date", "Voucher No", "Vehicle Number", "Party", "Party Amount", "Sales %", "Sales Amount", "Tax Type", "SGST", "CGST", "IGST" };
+        var pdfRows = rows.Select(x => new List<string> { IndiaTime.Format(x.Date), x.SalePurchaseId.ToString(), x.VehicleNumber, x.PartyName, x.PartyAmount.ToString("F2"), x.SalesPercent.ToString("F2"), x.SalesAmount.ToString("F2"), x.TaxSupplyType == "INTER_STATE" ? "Inter-state" : "Intra-state", x.SgstAmount.ToString("F2"), x.CgstAmount.ToString("F2"), x.IgstAmount.ToString("F2") }).ToList();
+        return ExportFile("Sale-Purchase-Tax-Report", format, "Sale Purchase Tax Report", GeneratedSubtitle(), headers, pdfRows,
+            new() { ("Party Amount (Rs)", totals.partyAmount.ToString("F2")), ("Sales Amount (Rs)", totals.salesAmount.ToString("F2")), ("SGST (Rs)", totals.sgstAmount.ToString("F2")), ("CGST (Rs)", totals.cgstAmount.ToString("F2")), ("IGST (Rs)", totals.igstAmount.ToString("F2")) });
     }
 
     // ---------------------------------------------------------------- DAILY COLLECTION

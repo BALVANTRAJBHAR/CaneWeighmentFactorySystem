@@ -31,11 +31,11 @@ public sealed class RateOverrideService(AppDbContext db)
 
         var approver = await db.Users.AsNoTracking()
             .Where(u => u.Id == approvedByUserId && !u.IsDeleted && u.Status &&
-                u.UserRoles.Any(ur => ur.Role.Name == "Admin" && !ur.Role.IsDeleted && ur.Role.Status))
+                u.CanApproveRateOverrides)
             .Select(u => new { u.Id, u.FullName, u.Username })
             .FirstOrDefaultAsync(ct);
         if (approver == null)
-            throw new RateOverrideValidationException("Selected approver is not an active Admin user.");
+            throw new RateOverrideValidationException("Selected approver is inactive or is not enabled for rate approval.");
 
         var reason = await db.RateReasons.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == rateReasonId && !x.IsDeleted && x.Status, ct);
