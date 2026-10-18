@@ -34,6 +34,7 @@ public class CreateUserRequest
     public string? Email { get; set; }
     public string TemporaryPassword { get; set; } = string.Empty;
     public List<int> RoleIds { get; set; } = new();
+    public bool CanApproveRateOverrides { get; set; }
 }
 
 public class UpdateUserRequest
@@ -44,6 +45,8 @@ public class UpdateUserRequest
     public string? Email { get; set; }
     public bool Status { get; set; } = true;
     public List<int> RoleIds { get; set; } = new();
+    /// <summary>Only a Developer may set this explicit rate-approval authority.</summary>
+    public bool? CanApproveRateOverrides { get; set; }
 }
 
 public class SessionDto

@@ -24,6 +24,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     'rate-overrides': 'Rate Change Approval Report',
     'payments': 'Payment Report',
     'sale-purchases': 'Sale Product Report',
+    'sale-purchase-tax': 'Sale Product GST Report',
     'loans': 'Loan Report',
     'daily-collection': 'Daily Collection Report',
     'cash-book': 'Cash Book Report',
@@ -244,7 +245,25 @@ class _ReportsScreenState extends State<ReportsScreen> {
           'finalWeightQuintal',
           'rate',
           'amount',
+          'gstPercent',
+          'gstAmount',
+          'finalAmount',
           'status'
+        ];
+      case 'sale-purchase-tax':
+        return [
+          'date',
+          'salePurchaseId',
+          'vehicleNumber',
+          'partyName',
+          'partyAmount',
+          'salesPercent',
+          'salesAmount',
+          'taxSupplyType',
+          'gstPercent',
+          'sgstAmount',
+          'cgstAmount',
+          'igstAmount',
         ];
       case 'daily-collection':
         return ['date', 'vehicleCount', 'finalWeightQuintal', 'purchaseAmount'];
@@ -292,7 +311,13 @@ class _ReportsScreenState extends State<ReportsScreen> {
           'purchaseDate',
           'growerId',
           'growerName',
+          'fatherName',
           'villageName',
+          'accountHolderName',
+          'bankName',
+          'bankBranch',
+          'bankIfsc',
+          'bankAccountNumber',
           'vehicleNumber',
           'cuttingWeightQuintal',
           'finalWeightQuintal',
@@ -372,7 +397,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 if (_reportType != 'daily-collection' &&
                     _reportType != 'profit-loss' &&
                     _reportType != 'cash-book' &&
-                    _reportType != 'daily-cash-profit-loss')
+                    _reportType != 'daily-cash-profit-loss' &&
+                    _reportType != 'sale-purchase-tax')
                   SizedBox(
                       width: 160,
                       child: TextField(
@@ -391,7 +417,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 if (_reportType != 'daily-collection' &&
                     _reportType != 'profit-loss' &&
                     _reportType != 'cash-book' &&
-                    _reportType != 'daily-cash-profit-loss')
+                    _reportType != 'daily-cash-profit-loss' &&
+                    _reportType != 'sale-purchase-tax')
                   SizedBox(
                       width: 160,
                       child: TextField(

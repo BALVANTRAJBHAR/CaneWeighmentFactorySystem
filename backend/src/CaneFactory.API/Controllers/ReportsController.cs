@@ -29,12 +29,14 @@ public class ReportsController : ControllerBase
     private readonly AppDbContext _db;
     private readonly ICurrentUser _current;
     private readonly IReportExportService _export;
+    private readonly IImageStorageService _storage;
     private readonly IConfiguration? _configuration;
 
     public ReportsController(AppDbContext db, ICurrentUser current, IReportExportService export,
+        IImageStorageService storage,
         IConfiguration? configuration = null)
     {
-        _db = db; _current = current; _export = export; _configuration = configuration;
+        _db = db; _current = current; _export = export; _storage = storage; _configuration = configuration;
     }
 
     private IActionResult? Deny(string action) =>
@@ -688,16 +690,16 @@ public class ReportsController : ControllerBase
             ? WeighmentImagePathResolver.NormalizeConfiguredPath(@"C:\WeighmentImage\Payment")
             : WeighmentImagePathResolver.NormalizeConfiguredPath(paymentRootSetting.Value);
         var legacyRoot = Path.Combine(paymentRoot, "Rate Overrides");
-        var fullPath = Path.GetFullPath(record.Evidence.FilePath);
-        if (!RateEditImagePathResolver.IsUnderRoot(fullPath, currentRoot) &&
-            !RateEditImagePathResolver.IsUnderRoot(fullPath, legacyRoot))
+        var locator = record.Evidence.FilePath;
+        if (!_storage.IsCloudLocator(locator) &&
+            !RateEditImagePathResolver.IsUnderRoot(locator, currentRoot) &&
+            !RateEditImagePathResolver.IsUnderRoot(locator, legacyRoot))
             return Conflict(new { message = "Attachment path failed the security check." });
-        if (!System.IO.File.Exists(fullPath))
+        var bytes = await _storage.ReadAsync(locator);
+        if (bytes == null)
             return NotFound(new { message = "The attachment file is missing from storage." });
-        var fileInfo = new FileInfo(fullPath);
-        if (fileInfo.Length is <= 0 or > 6_000_000)
+        if (bytes.Length is <= 0 or > 6_000_000)
             return Conflict(new { message = "Attachment size failed the security check." });
-        var bytes = await System.IO.File.ReadAllBytesAsync(fullPath);
         byte[] expectedHash;
         try { expectedHash = Convert.FromHexString(record.Evidence.FileHash); }
         catch (FormatException) { return Conflict(new { message = "Attachment integrity metadata is invalid." }); }

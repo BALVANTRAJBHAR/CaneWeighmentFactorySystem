@@ -9,6 +9,7 @@ public class CameraCaptureResult
     public string? Error { get; set; }
     public int? ImageId { get; set; }
     public string? ImageName { get; set; }
+    public bool EdgeCaptureRequired { get; set; }
 
     /// <summary>Populated only for the single-camera developer preview endpoint - never persisted twice.</summary>
     public byte[]? ImageBytes { get; set; }

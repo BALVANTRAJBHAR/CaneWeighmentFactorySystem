@@ -21,7 +21,7 @@ internal static class ExportBrandingChecks
         var connection = Environment.GetEnvironmentVariable("CANE_CONNECTION_STRING")!;
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connection).Options);
         var company = await db.CompanyConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
-        var controller = new ReportsController(db, new Reader(), new ReportExportService(db));
+        var controller = new ReportsController(db, new Reader(), new ReportExportService(db), null!);
         var output = Path.Combine(Path.GetTempPath(), "CaneReportBrandingSamples");
         Directory.CreateDirectory(output);
         foreach (var name in new[] { "Purchases", "Payments", "SalePurchases", "Loans", "DailyCollection" })

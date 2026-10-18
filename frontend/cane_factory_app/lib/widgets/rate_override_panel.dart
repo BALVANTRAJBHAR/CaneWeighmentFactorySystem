@@ -10,12 +10,14 @@ import '../core/api_client.dart';
 /// the API first; the returned opaque token is consumed only by the final save.
 class RateOverridePanel extends StatefulWidget {
   final double? masterRate;
+  final double? initialRate;
   final String transactionType;
   final int? transactionId;
 
   const RateOverridePanel({
     super.key,
     required this.masterRate,
+    this.initialRate,
     required this.transactionType,
     required this.transactionId,
   });
@@ -27,7 +29,7 @@ class RateOverridePanel extends StatefulWidget {
 class RateOverridePanelState extends State<RateOverridePanel> {
   final _rate = TextEditingController();
   final _remark = TextEditingController();
-  List<Map<String, dynamic>> _admins = [];
+  List<Map<String, dynamic>> _approvers = [];
   List<Map<String, dynamic>> _reasons = [];
   Map<String, dynamic>? _configuredCamera;
   int? _approvedByUserId;
@@ -49,6 +51,7 @@ class RateOverridePanelState extends State<RateOverridePanel> {
   void didUpdateWidget(covariant RateOverridePanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.masterRate != widget.masterRate ||
+        oldWidget.initialRate != widget.initialRate ||
         oldWidget.transactionId != widget.transactionId ||
         oldWidget.transactionType != widget.transactionType) {
       _setMasterRate(resetApproval: true);
@@ -64,7 +67,8 @@ class RateOverridePanelState extends State<RateOverridePanel> {
   }
 
   void _setMasterRate({bool resetApproval = false}) {
-    _rate.text = widget.masterRate?.toStringAsFixed(2) ?? '';
+    _rate.text =
+        (widget.initialRate ?? widget.masterRate)?.toStringAsFixed(2) ?? '';
     if (resetApproval) {
       _approvedByUserId = null;
       _rateReasonId = null;
@@ -100,8 +104,8 @@ class RateOverridePanelState extends State<RateOverridePanel> {
       if (!mounted || response.statusCode != 200 || response.data is! Map)
         return;
       setState(() {
-        _admins = List<Map<String, dynamic>>.from(
-            (response.data['admins'] as List? ?? [])
+        _approvers = List<Map<String, dynamic>>.from(
+            (response.data['approvers'] as List? ?? [])
                 .map((x) => Map<String, dynamic>.from(x)));
         _reasons = List<Map<String, dynamic>>.from(
             (response.data['reasons'] as List? ?? [])
@@ -182,7 +186,7 @@ class RateOverridePanelState extends State<RateOverridePanel> {
       _error = null;
     });
     try {
-      final response = await ApiClient.instance.dio
+      final response = await ApiClient.instance.cameraDio
           .post('/api/rate-overrides/evidence/capture-configured', data: {
         'transactionType': widget.transactionType,
         'transactionId': widget.transactionId,
@@ -286,11 +290,11 @@ class RateOverridePanelState extends State<RateOverridePanel> {
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Approved By *'),
                   items: [
-                    for (final admin in _admins)
+                    for (final approver in _approvers)
                       DropdownMenuItem(
-                        value: admin['id'] as int,
+                        value: approver['id'] as int,
                         child: Text(
-                            '${admin['fullName']} (${admin['username']})',
+                            '${approver['fullName']} (${approver['username']})',
                             overflow: TextOverflow.ellipsis),
                       )
                   ],

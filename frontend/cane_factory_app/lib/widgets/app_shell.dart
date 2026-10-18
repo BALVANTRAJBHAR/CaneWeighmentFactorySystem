@@ -159,7 +159,12 @@ class _AppShellState extends State<AppShell> {
             (!auth.hasRole('Farmer') || i.roleOnly == 'Farmer') &&
             (auth.can(i.permission) || i.anyPermissions.any(auth.can)) &&
             (i.roleOnly == null || auth.hasRole(i.roleOnly!)) &&
-            !i.excludedRoles.any(auth.hasRole) &&
+            // A restriction such as Cash Book/Expenses for Operator applies only
+            // to an operator-only account. A user with Operator plus Accountant,
+            // SubAdmin or Admin must retain the union of every assigned role.
+            !(i.excludedRoles.isNotEmpty &&
+                auth.roles.isNotEmpty &&
+                auth.roles.every(i.excludedRoles.contains)) &&
             (!i.androidOnly ||
                 (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)) &&
             (i.anyRoles.isEmpty || i.anyRoles.any(auth.hasRole)))
@@ -184,7 +189,7 @@ class _AppShellState extends State<AppShell> {
           Flexible(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(_header?['companyName'] ?? 'Cane Factory',
+              Text(_header?['companyName'] ?? 'Sugarcane Factory',
                   style: const TextStyle(
                       fontSize: 15, fontWeight: FontWeight.w700),
                   overflow: TextOverflow.ellipsis),

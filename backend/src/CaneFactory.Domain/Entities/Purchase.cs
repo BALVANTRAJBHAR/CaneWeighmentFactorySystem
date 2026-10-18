@@ -12,6 +12,7 @@ public class Purchase : BaseEntity
     public VehicleType VehicleType { get; set; } = null!;
     public string VehicleNumber { get; set; } = string.Empty;
     public int VarietyTypeId { get; set; }
+    public VarietyType VarietyType { get; set; } = null!;
     public int VarietyId { get; set; }
     public Variety Variety { get; set; } = null!;
     public int? CropId { get; set; }
@@ -37,6 +38,9 @@ public class Purchase : BaseEntity
     public decimal? FinalWeightQuintal { get; set; }
 
     public decimal Rate { get; set; }
+    /// <summary>Immutable Rate Master value captured when Gross was saved. It keeps a
+    /// transaction-level Rate edit separate from the master rate used for approval.</summary>
+    public decimal MasterRateAtGross { get; set; }
     public decimal? PurchaseAmount { get; set; }
 
     public string PaymentFlag { get; set; } = "N";
@@ -98,7 +102,20 @@ public class SalePurchase : BaseEntity
     public string? GrossByUserName { get; set; }
 
     public decimal? Rate { get; set; }
+    /// <summary>GST selected when the sale is finally gross-weighed.</summary>
+    public decimal GstPercent { get; set; }
     public decimal? Amount { get; set; }
+    public decimal? GstAmount { get; set; }
+    /// <summary>Separate reporting percentage entered at final sale weighment. It does not alter the tax invoice total.</summary>
+    public decimal SalesPercent { get; set; }
+    public decimal? SalesAmount { get; set; }
+    /// <summary>INTRA_STATE stores CGST + SGST; INTER_STATE stores IGST.</summary>
+    public string TaxSupplyType { get; set; } = "INTRA_STATE";
+    public decimal? SgstAmount { get; set; }
+    public decimal? CgstAmount { get; set; }
+    public decimal? IgstAmount { get; set; }
+    /// <summary>Base amount plus GST; this is the customer-facing sale total.</summary>
+    public decimal? FinalAmount { get; set; }
     public string WeighmentStatus { get; set; } = "TARE_PENDING_GROSS";
     public string? CancelReason { get; set; }
     public int TarePrintCount { get; set; }

@@ -62,6 +62,7 @@ public class VehicleType : BaseEntity
 public class VarietyType : BaseEntity
 {
     public string VarietyTypeName { get; set; } = string.Empty;
+    public string? VarietyTypeNameHi { get; set; }
 }
 
 public class Variety : BaseEntity
@@ -95,6 +96,8 @@ public class Item : BaseEntity
 {
     public string ItemName { get; set; } = string.Empty;
     public string? ItemNameHi { get; set; }
+    /// <summary>HSN/SAC shown on a Sale Weighment tax invoice.</summary>
+    public string? HsnSacCode { get; set; }
 }
 
 /// <summary>Cane crop cycle selected at gross weighment (Plant / Ratoon cycle).</summary>
@@ -137,4 +140,18 @@ public class CompanyConfig : BaseEntity
     public string? LogoPath { get; set; }
     public string DefaultLanguage { get; set; } = "en";
     public string? ThemeColor { get; set; }
+
+    // Tax-invoice address/contact fields are intentionally separate from the
+    // compact Address used by ordinary slips and reports.
+    public string? InvoiceRoadStreet { get; set; }
+    public string? InvoiceNearbyLandmark { get; set; }
+    public string? InvoiceLocality { get; set; }
+    public string? InvoiceCity { get; set; }
+    public string? InvoiceDistrict { get; set; }
+    public string? InvoiceState { get; set; }
+    public string? InvoicePinCode { get; set; }
+    public string? InvoicePhone { get; set; }
+    public string? InvoiceEmail { get; set; }
+    public string? InvoiceGstin { get; set; }
+    public string? InvoiceTermsAndConditions { get; set; }
 }

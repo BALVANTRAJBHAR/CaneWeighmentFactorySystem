@@ -69,7 +69,7 @@ class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
       while (mounted && !cancelToken.isCancelled) {
         try {
           _setError(id, _frames[id] == null ? 'Connecting…' : 'Reconnecting…');
-          final response = await ApiClient.instance.dio.get<ResponseBody>(
+          final response = await ApiClient.instance.cameraDio.get<ResponseBody>(
             '/api/config/cameras/$id/live',
             cancelToken: cancelToken,
             options: Options(
@@ -222,7 +222,8 @@ class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
     final frame = _frames[id];
     final error = _errors[id];
     final cameraNo = '${camera['cameraNumber'] ?? '-'}'.padLeft(2, '0');
-    final configuredName = camera['cameraName'] ?? camera['name'] ?? camera['displayName'];
+    final configuredName =
+        camera['cameraName'] ?? camera['name'] ?? camera['displayName'];
     return DecoratedBox(
       decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
@@ -237,7 +238,8 @@ class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
                 ? Container(
                     color: Colors.black,
                     alignment: Alignment.center,
-                    child: Image.memory(frame, fit: BoxFit.contain, gaplessPlayback: true))
+                    child: Image.memory(frame,
+                        fit: BoxFit.contain, gaplessPlayback: true))
                 : Container(
                     color: Colors.black87,
                     alignment: Alignment.center,

@@ -25,14 +25,19 @@ void Check(bool condition, string message)
 }
 
 var adminRole = new Role { Name = "Admin", IsSystem = true };
-var admin = new User { Username = "admin", FullName = "Approval Admin", Mobile = "9999999999", PasswordHash = "test" };
+var admin = new User
+{
+    Username = "admin", FullName = "Approval Admin", Mobile = "9999999999", PasswordHash = "test",
+    CanApproveRateOverrides = true
+};
 var reason = new RateReasonMaster { ReasonName = "Quality deduction" };
 db.AddRange(adminRole, admin, reason);
 await db.SaveChangesAsync();
 db.UserRoles.Add(new UserRole { UserId = admin.Id, RoleId = adminRole.Id });
 await db.SaveChangesAsync();
 
-var service = new RateOverrideService(db);
+var imageStorage = new LocalImageStorage();
+var service = new RateOverrideService(db, imageStorage);
 var configuredStorage = Path.Combine(Path.GetTempPath(), $"rate-edit-storage-{Guid.NewGuid():N}");
 var resolvedRoot = RateEditImagePathResolver.ResolveRoot(configuredStorage);
 Check(resolvedRoot.EndsWith(Path.Combine("WeighmentImage", "RateEditImage"), StringComparison.OrdinalIgnoreCase),
@@ -97,7 +102,7 @@ try
     {
         ["Storage:ImageRoot"] = configuredStorage
     }).Build();
-    var images = new ImagesController(db, new ImageReader(), configuration)
+    var images = new ImagesController(db, new ImageReader(), imageStorage, configuration)
     {
         ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
     };
@@ -121,4 +126,23 @@ sealed class ImageReader : ICurrentUser
     public string? Ip => "127.0.0.1";
     public string? Device => "Regression";
     public bool HasPermission(string code) => code == "Image.View";
+}
+
+sealed class LocalImageStorage : IImageStorageService
+{
+    public bool IsCloudLocator(string? locator) => false;
+    public Task<string> GetModeAsync(CancellationToken ct = default) => Task.FromResult("LOCAL");
+    public Task EnsureCloudReadyAsync(string container, CancellationToken ct = default) => Task.CompletedTask;
+    public async Task<string> SaveAsync(string localFullPath, string cloudRelativePath, byte[] bytes,
+        bool overwrite = true, CancellationToken ct = default)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(localFullPath)!);
+        await File.WriteAllBytesAsync(localFullPath, bytes, ct);
+        return localFullPath;
+    }
+    public async Task<byte[]?> ReadAsync(string? locator, CancellationToken ct = default) =>
+        !string.IsNullOrWhiteSpace(locator) && File.Exists(locator)
+            ? await File.ReadAllBytesAsync(locator, ct) : null;
+    public Task<bool> ExistsAsync(string? locator, CancellationToken ct = default) =>
+        Task.FromResult(!string.IsNullOrWhiteSpace(locator) && File.Exists(locator));
 }

@@ -24,14 +24,15 @@ public class CameraCaptureService : ICameraCaptureService
     private readonly IConfiguration _config;
     private readonly IHostEnvironment _environment;
     private readonly IEnumerable<ICameraCaptureProvider> _providers;
+    private readonly IImageStorageService _storage;
     private readonly ILogger<CameraCaptureService> _log;
 
     public CameraCaptureService(AppDbContext db, ISecretProtector protector, IAuditService audit,
         IConfiguration config, IHostEnvironment environment, IEnumerable<ICameraCaptureProvider> providers,
-        ILogger<CameraCaptureService> log)
+        IImageStorageService storage, ILogger<CameraCaptureService> log)
     {
         _db = db; _protector = protector; _audit = audit; _config = config; _environment = environment;
-        _providers = providers; _log = log;
+        _providers = providers; _storage = storage; _log = log;
     }
 
     // A placeholder image is useful only for a developer's no-camera demo.
@@ -39,6 +40,12 @@ public class CameraCaptureService : ICameraCaptureService
     // CANE_CAMERA_SIMULATOR environment variable was accidentally retained.
     private bool SimulatorMode => _environment.IsDevelopment()
         && string.Equals(_config["Camera:SimulatorMode"], "true", StringComparison.OrdinalIgnoreCase);
+
+    private bool EdgePcMode => string.Equals(_config["Camera:CaptureExecutionMode"], "EDGE_PC",
+        StringComparison.OrdinalIgnoreCase);
+
+    private static List<CameraCaptureResult> EdgeCaptureMarker() =>
+        new() { new CameraCaptureResult { EdgeCaptureRequired = true } };
 
     private ICameraCaptureProvider? ResolveProvider(string protocol) =>
         SimulatorMode
@@ -50,12 +57,14 @@ public class CameraCaptureService : ICameraCaptureService
         var results = new List<CameraCaptureResult>();
         if (!await SettingTrueAsync("CameraSystemEnabled") || !await SettingTrueAsync("ImageCaptureEnabled"))
             return results;
+        if (EdgePcMode) return EdgeCaptureMarker();
 
         var purchase = await _db.Purchases.Include(p => p.Season).AsNoTracking().FirstOrDefaultAsync(p => p.Id == purchaseId, ct);
         if (purchase == null) return results;
 
         var cameras = await _db.Cameras.AsNoTracking()
-            .Where(c => !c.IsDeleted && c.Status && c.CaptureEnabled).OrderBy(c => c.CameraNumber).ToListAsync(ct);
+            .Where(c => !c.IsDeleted && c.Status && c.CaptureEnabled && c.WeighmentCaptureEnabled)
+            .OrderBy(c => c.CameraNumber).ToListAsync(ct);
 
         foreach (var cam in cameras)
         {
@@ -113,6 +122,7 @@ public class CameraCaptureService : ICameraCaptureService
         var results = new List<CameraCaptureResult>();
         if (!await SettingTrueAsync("CameraSystemEnabled") || !await SettingTrueAsync("ImageCaptureEnabled"))
             return results;
+        if (EdgePcMode) return EdgeCaptureMarker();
 
         var payment = await _db.Payments.Include(p => p.Season).AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == paymentId && !p.IsDeleted, ct);
@@ -255,9 +265,10 @@ public class CameraCaptureService : ICameraCaptureService
     {
         var results = new List<CameraCaptureResult>();
         if (!await SettingTrueAsync("CameraSystemEnabled") || !await SettingTrueAsync("ImageCaptureEnabled")) return results;
+        if (EdgePcMode) return EdgeCaptureMarker();
         var sale = await _db.SalePurchases.AsNoTracking().FirstOrDefaultAsync(x => x.Id == salePurchaseId, ct);
         if (sale == null) return results;
-        var cameras = await _db.Cameras.AsNoTracking().Where(c => !c.IsDeleted && c.Status && c.CaptureEnabled)
+        var cameras = await _db.Cameras.AsNoTracking().Where(c => !c.IsDeleted && c.Status && c.CaptureEnabled && c.WeighmentCaptureEnabled)
             .OrderBy(c => c.CameraNumber).ToListAsync(ct);
         foreach (var cam in cameras)
         {
@@ -299,8 +310,14 @@ public class CameraCaptureService : ICameraCaptureService
 
     public async Task<CameraCaptureResult> CaptureSingleAsync(int cameraConfigId, CancellationToken ct = default)
     {
-        var cam = await _db.Cameras.AsNoTracking().FirstOrDefaultAsync(c => c.Id == cameraConfigId && !c.IsDeleted, ct);
         var result = new CameraCaptureResult { CameraConfigId = cameraConfigId };
+        if (EdgePcMode)
+        {
+            result.EdgeCaptureRequired = true;
+            result.Error = "Camera access is assigned to the factory-PC edge API.";
+            return result;
+        }
+        var cam = await _db.Cameras.AsNoTracking().FirstOrDefaultAsync(c => c.Id == cameraConfigId && !c.IsDeleted, ct);
         if (cam == null) { result.Error = "Camera not found."; return result; }
         result.CameraNumber = cam.CameraNumber;
 
@@ -360,14 +377,14 @@ public class CameraCaptureService : ICameraCaptureService
         var stageTag = stage.ToUpperInvariant();
         var now = DateTime.Now;
         var folder = Path.Combine(root, "Cane Weighment", now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"PUR-{purchase.Id}");
-        Directory.CreateDirectory(folder);
 
         var existingCount = await _db.PurchaseImages.CountAsync(i =>
             i.PurchaseId == purchase.Id && i.CameraId == cam.Id && i.CaptureStage == stageTag, ct);
         var seq = existingCount + 1;
         var fileName = $"{stageTag}-{now:yyyyMMdd-HHmmssfff}-CAM{cam.CameraNumber:D2}-{seq:D2}.jpg";
         var fullPath = Path.Combine(folder, fileName);
-        await File.WriteAllBytesAsync(fullPath, bytes, ct);
+        var cloudPath = $"Cane Weighment/{now:yyyy}/{now:MM}/{now:dd}/PUR-{purchase.Id}/{fileName}";
+        var storedAt = await _storage.SaveAsync(fullPath, cloudPath, bytes, ct: ct);
         var hash = Convert.ToHexString(SHA256.HashData(bytes));
 
         var image = new PurchaseImage
@@ -378,7 +395,7 @@ public class CameraCaptureService : ICameraCaptureService
             CameraId = cam.Id,
             CaptureStage = stageTag,
             ImageName = fileName,
-            FilePath = fullPath,
+            FilePath = storedAt,
             FileHash = hash,
             CapturedAt = DateTime.UtcNow,
             CapturedBy = capturedByUserId,
@@ -400,7 +417,6 @@ public class CameraCaptureService : ICameraCaptureService
         var root = await ResolvePaymentEvidenceRootAsync(ct);
         var now = DateTime.Now;
         var folder = Path.Combine(root, now.ToString("yyyy-MM-dd"));
-        Directory.CreateDirectory(folder);
 
         var existing = await _db.PaymentImages.Where(i => i.PaymentId == payment.Id && i.PurchaseId == purchaseId &&
             i.CameraId == cam.Id).OrderBy(i => i.Id).ToListAsync(ct);
@@ -411,7 +427,7 @@ public class CameraCaptureService : ICameraCaptureService
         var stem = $"{payment.GrowerId}-{payment.AdviceNumber}-{purchaseId}-{payment.Id}";
         var fileName = existing.Count == 0 ? $"{stem}.jpg" : $"{stem}-R{existing.Count + 1:D2}.jpg";
         var fullPath = Path.Combine(folder, fileName);
-        await File.WriteAllBytesAsync(fullPath, bytes, ct);
+        var storedAt = await _storage.SaveAsync(fullPath, $"Payment/{now:yyyy-MM-dd}/{fileName}", bytes, ct: ct);
         var hash = Convert.ToHexString(SHA256.HashData(bytes));
 
         var image = new PaymentImage
@@ -420,7 +436,7 @@ public class CameraCaptureService : ICameraCaptureService
             PurchaseId = purchaseId,
             CameraId = cam.Id,
             ImageName = fileName,
-            FilePath = fullPath,
+            FilePath = storedAt,
             FileHash = hash,
             CapturedAt = DateTime.UtcNow,
             CapturedBy = capturedByUserId,
@@ -439,12 +455,12 @@ public class CameraCaptureService : ICameraCaptureService
         var root = await ResolveWeighmentImageRootAsync(ct);
         var now = DateTime.Now; var stageTag = stage.ToUpperInvariant();
         var folder = Path.Combine(root, "SalePurchase Weighment", now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"SP-{salePurchaseId}");
-        Directory.CreateDirectory(folder);
         var seq = await _db.SalePurchaseImages.CountAsync(i => i.SalePurchaseId == salePurchaseId && i.CameraId == cam.Id && i.CaptureStage == stageTag, ct) + 1;
         var fileName = $"{stageTag}-{now:yyyyMMdd-HHmmssfff}-CAM{cam.CameraNumber:D2}-{seq:D2}.jpg"; var fullPath = Path.Combine(folder, fileName);
-        await File.WriteAllBytesAsync(fullPath, bytes, ct);
+        var storedAt = await _storage.SaveAsync(fullPath,
+            $"SalePurchase Weighment/{now:yyyy}/{now:MM}/{now:dd}/SP-{salePurchaseId}/{fileName}", bytes, ct: ct);
         var image = new SalePurchaseImage { SalePurchaseId = salePurchaseId, CameraId = cam.Id, CaptureStage = stageTag,
-            ImageName = fileName, FilePath = fullPath, FileHash = Convert.ToHexString(SHA256.HashData(bytes)), CapturedAt = DateTime.UtcNow, CapturedBy = capturedByUserId };
+            ImageName = fileName, FilePath = storedAt, FileHash = Convert.ToHexString(SHA256.HashData(bytes)), CapturedAt = DateTime.UtcNow, CapturedBy = capturedByUserId };
         _db.SalePurchaseImages.Add(image); await _db.SaveChangesAsync(ct);
         await _audit.LogAsync("ImageCaptured", "Image", "SalePurchaseImage", image.Id.ToString(), newValue: new { salePurchaseId, cam.CameraNumber, stageTag, fileName });
         return (image.Id, fileName);

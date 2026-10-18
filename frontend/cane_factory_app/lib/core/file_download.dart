@@ -34,6 +34,19 @@ Future<void> downloadAndNotify(
   }
 }
 
+/// Downloads an authenticated file and returns its final local path. Callers
+/// can use the path for a follow-up action such as opening or sharing it.
+Future<String> downloadFile(String path, String filename,
+    {Map<String, dynamic>? queryParameters}) async {
+  final res = await ApiClient.instance.dio.get<List<int>>(path,
+      queryParameters: queryParameters,
+      options: Options(responseType: ResponseType.bytes));
+  if (res.statusCode != 200 || res.data == null) {
+    throw StateError(_downloadFailureMessage(res.data, res.statusCode));
+  }
+  return saveDownloadedBytes(res.data!, filename);
+}
+
 String _downloadFailureMessage(dynamic data, int? statusCode) {
   dynamic decoded = data;
   if (data is List<int>) {
@@ -147,6 +160,40 @@ Future<void> openPdfAfterSave(
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('$failurePrefix $e'),
+          backgroundColor: Theme.of(context).colorScheme.error));
+    }
+  }
+}
+
+/// Fetches the server-generated Sale Weighment invoice workbook, saves it on
+/// this PC and opens it in the user's registered spreadsheet application.
+Future<void> openExcelAfterSave(
+    BuildContext context, String path, String filename) async {
+  try {
+    final res = await ApiClient.instance.dio.get<List<int>>(path,
+        options: Options(responseType: ResponseType.bytes));
+    if (res.statusCode != 200 || res.data == null) {
+      throw StateError(_downloadFailureMessage(res.data, res.statusCode));
+    }
+    final bytes = res.data!;
+    if (bytes.length < 4 || bytes[0] != 0x50 || bytes[1] != 0x4B) {
+      throw const FormatException(
+          'Server response is not a valid Excel workbook.');
+    }
+    if (!await saveAndOpenSpreadsheet(bytes, filename)) {
+      throw StateError(
+          'No spreadsheet application is associated with Excel files.');
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Sale invoice opened in Excel.'),
+          backgroundColor: Color(0xFF2E7D32)));
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              'Weighment was saved, but the Excel invoice could not be opened: $e'),
           backgroundColor: Theme.of(context).colorScheme.error));
     }
   }

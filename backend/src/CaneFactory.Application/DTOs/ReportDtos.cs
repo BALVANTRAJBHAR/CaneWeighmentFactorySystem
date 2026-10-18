@@ -7,7 +7,13 @@ public class PurchaseReportRow
     public int GrowerId { get; set; }
     public string GrowerCode { get; set; } = string.Empty;
     public string GrowerName { get; set; } = string.Empty;
+    public string FatherName { get; set; } = string.Empty;
     public string VillageName { get; set; } = string.Empty;
+    public string? AccountHolderName { get; set; }
+    public string? BankName { get; set; }
+    public string? BankBranch { get; set; }
+    public string? BankIfsc { get; set; }
+    public string? BankAccountNumber { get; set; }
     public string VehicleNumber { get; set; } = string.Empty;
     public string VarietyName { get; set; } = string.Empty;
     public decimal GrossWeightQuintal { get; set; }
@@ -71,6 +77,23 @@ public class DailyCollectionRow
     public int VehicleCount { get; set; }
     public decimal FinalWeightQuintal { get; set; }
     public decimal PurchaseAmount { get; set; }
+}
+
+/// <summary>One completed sale invoice, with the tax split captured at final gross time.</summary>
+public class SaleTaxReportRow
+{
+    public DateTime Date { get; set; }
+    public int SalePurchaseId { get; set; }
+    public string VehicleNumber { get; set; } = string.Empty;
+    public string PartyName { get; set; } = string.Empty;
+    public decimal PartyAmount { get; set; }
+    public decimal SalesPercent { get; set; }
+    public decimal SalesAmount { get; set; }
+    public string TaxSupplyType { get; set; } = "INTRA_STATE";
+    public decimal GstPercent { get; set; }
+    public decimal SgstAmount { get; set; }
+    public decimal CgstAmount { get; set; }
+    public decimal IgstAmount { get; set; }
 }
 
 /// <summary>Immutable audit view of a rate reduction approved during Cane Tare or Sale Gross.</summary>

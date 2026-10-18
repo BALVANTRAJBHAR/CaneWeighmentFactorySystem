@@ -81,6 +81,11 @@ public class WeightRuleConfig : BaseEntity
     public bool ApplyToTare { get; set; } = true;
     public decimal DefaultCuttingPercent { get; set; }
     public decimal DefaultOtherDeductionPercent { get; set; }
+    /// <summary>When enabled, only the LAN host currently running the Scale Bridge may save a weighment.</summary>
+    public bool RestrictWeighmentSaveToBridgeHost { get; set; }
+    /// <summary>When enabled, continuous readings stay on the digitizer PC. The Scale Bridge
+    /// exposes them only through loopback and sends a signed reading to the API at save time.</summary>
+    public bool LiveWeightOnlyOnDigitizerPc { get; set; }
     /// <summary>Minimum time after a completed transaction before the same normalized vehicle
     /// can begin another cane gross or sale/purchase tare. 0 disables only this cooldown;
     /// active/pending transaction and platform-clear protection remain mandatory.</summary>

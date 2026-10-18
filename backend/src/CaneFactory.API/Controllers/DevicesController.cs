@@ -7,6 +7,7 @@ using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
 using CaneFactory.Infrastructure.Weighing;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace CaneFactory.API.Controllers;
@@ -191,12 +192,17 @@ public class DevicesController : ControllerBase
         return Ok(new { message = "Reading stopped." });
     }
 
-    // Technical users who can view device configuration must be able to read its current
-    // operational state too; saves remain protected by Device.Configure.
-    [HasPermission("Device.View")]
+    // This is operational weighment data, not device-configuration data. Operators and
+    // SalePurchase users need it even though they must not receive Device.View/Configure.
+    // Keep the OR authorization here because stacking permission attributes would require
+    // every permission instead of any one of them.
+    [Authorize]
     [HttpGet("live-weight")]
     public async Task<IActionResult> LiveWeight()
     {
+        if (!_current.HasPermission("Device.View") && !_current.HasPermission("Weighment.View") &&
+            !_current.HasPermission("SalePurchase.View"))
+            return Forbid();
         var state = _weighing.Current;
         var mode = await _db.WeightRules.AsNoTracking().Where(r => !r.IsDeleted)
             .Select(r => new { r.RestrictWeighmentSaveToBridgeHost, r.LiveWeightOnlyOnDigitizerPc }).FirstOrDefaultAsync();

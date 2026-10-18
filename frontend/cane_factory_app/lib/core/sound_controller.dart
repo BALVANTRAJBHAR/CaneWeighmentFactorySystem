@@ -193,7 +193,10 @@ class SoundController {
 
   Future<void> onWeighmentSaved() async {
     await loadConfig();
-    if (!enabled || repeatMode == 'OFF') return;
+    // OFF means no repeating live-weight announcement. A successful save is
+    // still a one-time mandatory confirmation and must be spoken whenever
+    // Sound Enabled is on.
+    if (!enabled) return;
 
     // A save is an explicit event, not merely another state transition. At
     // zero weight there may be no new live-weight frame/change between two
@@ -237,7 +240,10 @@ class SoundController {
     _stopRepeat();
     _speechGeneration++;
     _speaking = false;
-    if (repeatMode != 'OFF') await _speakEvent(event);
+    // Explicit events (for example camera captured) are one-time events, not
+    // live-weight repetitions. They must remain audible when repeat mode is
+    // OFF as long as Sound Enabled is on.
+    await _speakEvent(event);
     if (resumeVehicleRemoval && state == SoundState.completed) {
       _startEvent('WEIGHMENT_COMPLETED');
     }

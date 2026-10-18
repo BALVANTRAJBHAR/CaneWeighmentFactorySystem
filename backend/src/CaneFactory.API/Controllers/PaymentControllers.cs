@@ -1016,7 +1016,8 @@ public class PaymentController : ControllerBase
 
     [HttpPost("{id:int}/images/upload")]
     [RequestSizeLimit(10_000_000)]
-    public async Task<IActionResult> UploadImage(int id, IFormFile image, CancellationToken ct)
+    public async Task<IActionResult> UploadImage(int id, IFormFile image,
+        [FromServices] IImageStorageService storage, CancellationToken ct)
     {
         if (!_current.HasPermission("CashEvidence.Create"))
             return StatusCode(403, new { message = "You do not have 'CashEvidence.Create' permission." });
@@ -1035,12 +1036,13 @@ public class PaymentController : ControllerBase
         var root = string.IsNullOrWhiteSpace(setting?.Value) ? @"C:\WeighmentImage\Payment" : Path.GetFullPath(setting.Value);
         var now = DateTime.Now;
         var folder = Path.Combine(root, now.ToString("yyyy-MM-dd"));
-        Directory.CreateDirectory(folder);
         var imageName = $"{payment.GrowerId}-{payment.AdviceNumber}-UPLOAD-{id}-{now:HHmmssfff}{extension}";
         var filePath = Path.Combine(folder, imageName);
-        await using (var output = System.IO.File.Create(filePath))
-            await image.CopyToAsync(output, ct);
-        var bytes = await System.IO.File.ReadAllBytesAsync(filePath, ct);
+        await using var input = image.OpenReadStream();
+        using var memory = new MemoryStream();
+        await input.CopyToAsync(memory, ct);
+        var bytes = memory.ToArray();
+        filePath = await storage.SaveAsync(filePath, $"Payment/{now:yyyy-MM-dd}/{imageName}", bytes, ct: ct);
         var record = new PaymentImage { PaymentId = id, CameraId = 0, ImageName = imageName, FilePath = filePath,
             FileHash = Convert.ToHexString(SHA256.HashData(bytes)), CapturedAt = DateTime.UtcNow, CapturedBy = _current.UserId };
         _db.PaymentImages.Add(record);

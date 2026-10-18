@@ -307,6 +307,9 @@ namespace CaneFactory.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<bool>("WeighmentCaptureEnabled")
+                        .HasColumnType("bit");
+
                     b.HasKey("Id");
 
                     b.ToTable("Cameras");
@@ -379,6 +382,39 @@ namespace CaneFactory.Infrastructure.Migrations
                         .HasColumnType("bit");
 
                     b.Property<string>("LogoPath")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoiceCity")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoiceDistrict")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoiceEmail")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoiceGstin")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoiceLocality")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoiceNearbyLandmark")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoicePhone")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoicePinCode")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoiceRoadStreet")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoiceState")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoiceTermsAndConditions")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("Status")
@@ -567,6 +603,10 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<string>("ItemName")
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("HsnSacCode")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
 
                     b.Property<bool>("Status")
                         .HasColumnType("bit");
@@ -1273,6 +1313,9 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<bool>("PrintImages")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("SalePurchaseInvoiceEnabled")
+                        .HasColumnType("bit");
+
                     b.Property<int>("SalePurchaseCopies")
                         .HasColumnType("int");
 
@@ -1383,6 +1426,10 @@ namespace CaneFactory.Infrastructure.Migrations
                         .HasColumnType("decimal(14,2)");
 
                     b.Property<decimal>("Rate")
+                        .HasPrecision(12, 2)
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<decimal>("MasterRateAtGross")
                         .HasPrecision(12, 2)
                         .HasColumnType("decimal(12,2)");
 
@@ -2364,6 +2411,9 @@ namespace CaneFactory.Infrastructure.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<bool>("CanApproveRateOverrides")
+                        .HasColumnType("bit");
+
                     b.Property<int>("FailedLoginCount")
                         .HasColumnType("int");
 
@@ -2573,6 +2623,10 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<string>("VarietyTypeName")
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("VarietyTypeNameHi")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
                     b.HasKey("Id");
 
@@ -2826,6 +2880,12 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("LiveWeightOnlyOnDigitizerPc")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("RestrictWeighmentSaveToBridgeHost")
+                        .HasColumnType("bit");
+
                     b.Property<decimal>("MinimumWeightQuintal")
                         .HasPrecision(12, 2)
                         .HasColumnType("decimal(12,2)");
@@ -3015,6 +3075,12 @@ namespace CaneFactory.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("CaneFactory.Domain.Entities.VarietyType", "VarietyType")
+                        .WithMany()
+                        .HasForeignKey("VarietyTypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("CaneFactory.Domain.Entities.Variety", "Variety")
                         .WithMany()
                         .HasForeignKey("VarietyId")
@@ -3030,6 +3096,8 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Navigation("Grower");
 
                     b.Navigation("Season");
+
+                    b.Navigation("VarietyType");
 
                     b.Navigation("Variety");
 

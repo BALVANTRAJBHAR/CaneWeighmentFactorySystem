@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../core/api_client.dart';
 import '../../core/file_download.dart';
 import '../../core/print_service.dart';
@@ -188,6 +189,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
           await ApiClient.instance.dio.post('/api/payments', data: data);
       if (!mounted) return;
       if (res.statusCode == 200) {
+        final bankExcelUrl = res.data['bankExcelUrl']?.toString();
+        final isBatchPayment = res.data['isBatch'] == true;
         _toast(res.data['message']);
         setState(() {
           _preview = null;
@@ -216,6 +219,10 @@ class _PaymentScreenState extends State<PaymentScreen> {
         } else {
           await _handleAutoPrint(res.data['autoPrint'], res.data['paymentId']);
         }
+        if (bankExcelUrl != null && bankExcelUrl.isNotEmpty && mounted) {
+          await _downloadAndOfferBankExcel(bankExcelUrl,
+              isBatch: isBatchPayment);
+        }
       } else {
         _toast(ApiClient.errorMessage(res), error: true);
       }
@@ -223,6 +230,86 @@ class _PaymentScreenState extends State<PaymentScreen> {
       if (mounted) _toast(ApiClient.exceptionMessage(e), error: true);
     } finally {
       if (mounted) setState(() => _paying = false);
+    }
+  }
+
+  Future<void> _confirmAndPay() async {
+    if (_preview == null) {
+      _toast('Preview eligible purchases first.', error: true);
+      return;
+    }
+    if ((_preview!['eligiblePurchases'] as List).isEmpty) {
+      _toast('No eligible purchases to pay.', error: true);
+      return;
+    }
+    if (_paymentModeId == null) {
+      _toast('Select a Payment Mode.', error: true);
+      return;
+    }
+    final selectedMode = _paymentModes.cast<dynamic>().firstWhere(
+        (m) => m['id'] == _paymentModeId,
+        orElse: () => <String, dynamic>{});
+    final modeName = (selectedMode['modeName'] ?? 'Selected mode').toString();
+    final isBank =
+        (selectedMode['modeCode'] ?? '').toString().toUpperCase() == 'BANK' ||
+            modeName.toUpperCase().contains('BANK');
+    final total =
+        ((_preview!['estimatedNetPayable'] ?? 0) as num).toStringAsFixed(2);
+    final count = _preview!['purchaseCount'] ??
+        (_preview!['eligiblePurchases'] as List).length;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(isBank ? 'Confirm Bank Payment' : 'Confirm Payment'),
+        content: Text(
+            '$modeName से $count purchase(s) का Rs $total भुगतान किया जाएगा.\n\n'
+            '${isBank ? 'Confirm करने के बाद bank-transfer Excel अपने आप download होगी.' : 'कृपया preview और amount जाँचकर ही Confirm करें.'}'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Back')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('CONFIRM & PAY')),
+        ],
+      ),
+    );
+    if (ok == true && mounted) await _pay();
+  }
+
+  Future<void> _downloadAndOfferBankExcel(String url,
+      {required bool isBatch}) async {
+    final stamp = DateFormat('dd-MM-yyyy-HHmmss').format(DateTime.now());
+    final filename = 'Bank-Payment-${isBatch ? 'Batch-' : ''}$stamp.xlsx';
+    try {
+      final savedPath = await downloadFile(url, filename);
+      if (!mounted) return;
+      final share = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Bank Payment Excel Ready'),
+          content: Text(
+              'Excel download हो गई है:\n$savedPath\n\nWhatsApp या किसी अन्य app पर भेजने के लिए Share दबाएँ.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Close')),
+            FilledButton.icon(
+                onPressed: () => Navigator.pop(ctx, true),
+                icon: const Icon(Icons.share_outlined),
+                label: const Text('SHARE / WHATSAPP')),
+          ],
+        ),
+      );
+      if (share == true) {
+        await Share.shareXFiles([XFile(savedPath)],
+            subject: 'Bank Payment Excel', text: 'Bank payment transfer list');
+      }
+    } catch (error) {
+      if (mounted) {
+        _toast('Payment saved, but Bank Excel download failed: $error',
+            error: true);
+      }
     }
   }
 
@@ -599,7 +686,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 ]),
             const SizedBox(height: 14),
             FilledButton.icon(
-              onPressed: _paying ? null : _pay,
+              onPressed: _paying ? null : _confirmAndPay,
               icon: const Icon(Icons.payments_outlined),
               label: Text(_paying ? 'Processing...' : 'COMPLETE PAYMENT'),
               style: FilledButton.styleFrom(
@@ -642,9 +729,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
               Text('Name: ${_preview!['growerName'] ?? '-'}'),
               Text('Father Name: ${_preview!['fatherName'] ?? '-'}'),
               Text('Village: ${_preview!['villageName'] ?? '-'}'),
+              Text('Account Holder: ${_preview!['accountHolderName'] ?? '-'}'),
+              Text('Bank: ${_preview!['bankName'] ?? '-'}'),
+              Text('Branch: ${_preview!['bankBranch'] ?? '-'}'),
+              Text('IFSC: ${_preview!['bankIfsc'] ?? '-'}'),
+              Text('Account No: ${_preview!['bankAccountNumber'] ?? '-'}'),
               if (selectedPurchase != null) ...[
                 Text('Purchase ID: ${selectedPurchase['purchaseId']}'),
                 Text('Vehicle: ${selectedPurchase['vehicleNumber'] ?? '-'}'),
+                Text(
+                    'Variety Type: ${selectedPurchase['varietyTypeName'] ?? '-'}${(selectedPurchase['varietyTypeNameHi'] ?? '').toString().isEmpty ? '' : ' • ${selectedPurchase['varietyTypeNameHi']}'}'),
                 Text(
                     'Final Weight: ${((selectedPurchase['finalWeightQuintal'] ?? 0) as num).toStringAsFixed(2)} Qtl'),
                 Text(
@@ -666,7 +760,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 final g = Map<String, dynamic>.from(raw as Map);
                 return Text(
                     '${g['growerId']} • ${g['growerName']} — ${g['purchaseCount']} purchase(s), '
-                    'Rs ${(g['estimatedNetPayable'] as num).toStringAsFixed(2)} net',
+                    'Rs ${(g['estimatedNetPayable'] as num).toStringAsFixed(2)} net\n'
+                    'Bank: ${g['bankName'] ?? '-'} • ${g['bankBranch'] ?? '-'} • '
+                    'IFSC: ${g['bankIfsc'] ?? '-'} • A/c: ${g['bankAccountNumber'] ?? '-'}',
                     style: const TextStyle(fontSize: 12));
               }),
           ],
@@ -867,7 +963,7 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
     if (!silent && mounted) setState(() => _previewLoading = true);
     _previewLoading = true;
     try {
-      final res = await ApiClient.instance.dio.get(
+      final res = await ApiClient.instance.cameraDio.get(
           '/api/payments/${widget.paymentId}/evidence/preview',
           options: Options(
               responseType: ResponseType.bytes,
@@ -911,7 +1007,7 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
     final retake = evidence != null;
     setState(() => _capturing = true);
     try {
-      final res = await ApiClient.instance.dio
+      final res = await ApiClient.instance.cameraDio
           .post('/api/payments/${widget.paymentId}/images/capture', data: {
         'purchaseId': _purchaseId,
         'replaceExisting': retake,

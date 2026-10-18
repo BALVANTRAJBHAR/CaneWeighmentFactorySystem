@@ -42,3 +42,24 @@ Future<bool> saveAndOpenPdf(List<int> bytes, String filename) async {
   if (!opened && lastOpenError != null) throw lastOpenError;
   return opened;
 }
+
+/// Saves an XLSX tax invoice locally and asks Windows to open it through the
+/// registered spreadsheet application.  Excel itself remains responsible for
+/// any operator edits or manual print settings.
+Future<bool> saveAndOpenSpreadsheet(List<int> bytes, String filename) async {
+  final path = await saveDownloadedBytes(bytes, filename, applicationDocuments: true);
+  final file = File(path);
+  var opened = false;
+  try {
+    opened = await launchUrl(file.uri,
+        mode: LaunchMode.externalApplication, webOnlyWindowName: '_blank');
+  } catch (_) {}
+  if (!opened && Platform.isWindows) {
+    try {
+      await Process.start('explorer.exe', <String>[file.path],
+          mode: ProcessStartMode.detached);
+      opened = true;
+    } catch (_) {}
+  }
+  return opened;
+}

@@ -23,6 +23,11 @@ public class User : BaseEntity
     public string? PreferredLanguage { get; set; }
     public string? ThemeMode { get; set; }
     public string? ThemeColor { get; set; }
+    /// <summary>
+    /// Explicit developer-controlled authority for approving a downward rate
+    /// override.  A role alone must never make a user an approver.
+    /// </summary>
+    public bool CanApproveRateOverrides { get; set; }
     public ICollection<UserRole> UserRoles { get; set; } = new List<UserRole>();
 }
 

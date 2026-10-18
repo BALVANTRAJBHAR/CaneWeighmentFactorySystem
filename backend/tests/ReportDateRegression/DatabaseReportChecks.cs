@@ -15,7 +15,7 @@ internal static class DatabaseReportChecks
             ?? throw new InvalidOperationException("CANE_CONNECTION_STRING is required.");
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connection).Options);
         var export = new CountingExport();
-        var controller = new ReportsController(db, new ReportReader(), export);
+        var controller = new ReportsController(db, new ReportReader(), export, null!);
         foreach (var day in new[] { new DateTime(2026, 9, 7), new DateTime(2026, 9, 8) })
         foreach (var name in new[] { "Purchases", "Payments", "Loans", "SalePurchases", "DailyCollection" })
         {
@@ -61,6 +61,9 @@ internal static class DatabaseReportChecks
         public byte[] ToPdf(string title, string? subtitle, List<string> headers, List<List<string>> rows, List<(string Label, string Value)>? totals = null)
         { RowCount = rows.Count; return []; }
         public byte[] ToExcel(string title, List<string> headers, List<List<string>> rows, List<(string Label, string Value)>? totals = null)
+        { RowCount = rows.Count; return []; }
+        public byte[] ToSaleTaxExcel(
+            IReadOnlyList<CaneFactory.Application.DTOs.SaleTaxReportRow> rows, string subtitle)
         { RowCount = rows.Count; return []; }
     }
 }

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using CaneFactory.Application.Interfaces;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -8,7 +9,7 @@ namespace CaneFactory.API.Services;
 public sealed class RateOverrideValidationException(string message) : Exception(message);
 
 /// <summary>Single server-side policy for Cane Tare and Sale Gross rate reductions.</summary>
-public sealed class RateOverrideService(AppDbContext db)
+public sealed class RateOverrideService(AppDbContext db, IImageStorageService imageStorage)
 {
     public async Task<decimal> ValidateAndStageAsync(string transactionType, int transactionId,
         decimal masterRate, decimal? requestedRate, int? approvedByUserId, int? rateReasonId,
@@ -48,9 +49,10 @@ public sealed class RateOverrideService(AppDbContext db)
             x.ConsumedAt == null && x.ExpiresAt >= DateTime.UtcNow && !x.IsDeleted, ct);
         if (evidence == null)
             throw new RateOverrideValidationException("Rate evidence is invalid, expired, belongs to another transaction, or was already used. Capture/upload it again.");
-        if (!File.Exists(evidence.FilePath))
+        var evidenceBytes = await imageStorage.ReadAsync(evidence.FilePath, ct);
+        if (evidenceBytes is null)
             throw new RateOverrideValidationException("Rate evidence file is missing. Capture/upload it again.");
-        var actualHash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(evidence.FilePath, ct)));
+        var actualHash = Convert.ToHexString(SHA256.HashData(evidenceBytes));
         if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(actualHash), Convert.FromHexString(evidence.FileHash)))
             throw new RateOverrideValidationException("Rate evidence integrity check failed. Capture/upload it again.");
         if (await db.WeighmentRateOverrides.AnyAsync(x => x.TransactionType == transactionType && x.TransactionId == transactionId, ct))

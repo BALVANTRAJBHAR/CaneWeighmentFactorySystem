@@ -1,4 +1,5 @@
 using CaneFactory.Application.Interfaces;
+using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Utilities;
 using ClosedXML.Excel;
 using QuestPDF.Fluent;
@@ -188,5 +189,86 @@ public class ReportExportService : IReportExportService
         using var stream = new MemoryStream();
         wb.SaveAs(stream);
         return stream.ToArray();
+    }
+
+    /// <summary>Excel layout for the date-wise Sale Product GST report. Percentages are data columns because a range may contain different rates.</summary>
+    public byte[] ToSaleTaxExcel(IReadOnlyList<SaleTaxReportRow> rows, string subtitle)
+    {
+        using var workbook = new XLWorkbook();
+        var ws = workbook.Worksheets.Add("Sale GST Report");
+        ws.Style.Font.FontName = "Arial";
+        ws.Style.Font.FontSize = 10;
+        const string navy = "#102A4A";
+        const int headerRow = 5;
+        var widths = new[] { 8d, 13d, 13d, 16d, 26d, 17d, 11d, 17d, 14d, 11d, 16d, 11d, 16d, 11d, 16d };
+        for (var column = 1; column <= widths.Length; column++) ws.Column(column).Width = widths[column - 1];
+        ws.Range(1, 1, 1, widths.Length).Merge().Value = "SALE PURCHASE TAX REPORT";
+        ws.Range(1, 1, 1, widths.Length).Style.Font.SetBold().Font.SetFontSize(14);
+        ws.Range(1, 1, 2, widths.Length).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        ws.Range(2, 1, 2, widths.Length).Merge().Value = subtitle;
+        MergeGroup(ws, 3, 1, 4, "Voucher Details", navy);
+        MergeGroup(ws, 3, 5, 6, "Billed to Party & Invoice Amount", "#FCE4D6");
+        MergeGroup(ws, 3, 7, 8, "Sales Percentage", "#FFF2CC");
+        MergeGroup(ws, 3, 9, 15, "GST Output", "#E2F0D9");
+        var headers = new[] { "S No", "Date", "Voucher No", "Vehicle Number", "Party Name", "Party Amount (Dr+/Cr-)", "Sales %", "Sales Amount (Dr+/Cr-)", "Tax Type", "SGST %", "SGST Amount (Dr+/Cr-)", "CGST %", "CGST Amount (Dr+/Cr-)", "IGST %", "IGST Amount (Dr+/Cr-)" };
+        for (var column = 1; column <= headers.Length; column++)
+        {
+            var cell = ws.Cell(headerRow, column);
+            cell.Value = headers[column - 1];
+            cell.Style.Font.Bold = true;
+            cell.Style.Font.FontColor = XLColor.White;
+            cell.Style.Fill.BackgroundColor = XLColor.FromHtml(navy);
+            cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            cell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+            cell.Style.Alignment.WrapText = true;
+        }
+        ws.Row(headerRow).Height = 34;
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var x = rows[i]; var row = headerRow + i + 1; var intra = x.TaxSupplyType == "INTRA_STATE";
+            var values = new object[] { i + 1, x.Date, x.SalePurchaseId, x.VehicleNumber, x.PartyName, x.PartyAmount, x.SalesPercent / 100m, x.SalesAmount, intra ? "Intra-state" : "Inter-state", intra ? x.GstPercent / 200m : 0m, intra ? x.SgstAmount : 0m, intra ? x.GstPercent / 200m : 0m, intra ? x.CgstAmount : 0m, intra ? 0m : x.GstPercent / 100m, intra ? 0m : x.IgstAmount };
+            for (var column = 1; column <= values.Length; column++)
+            {
+                var cell = ws.Cell(row, column);
+                switch (values[column - 1])
+                {
+                    case int value: cell.Value = value; break;
+                    case decimal value: cell.Value = value; break;
+                    case DateTime value: cell.Value = value; break;
+                    default: cell.Value = values[column - 1]?.ToString() ?? string.Empty; break;
+                }
+            }
+            if (i % 2 == 0) ws.Range(row, 1, row, headers.Length).Style.Fill.BackgroundColor = XLColor.FromHtml("#D9E7F5");
+        }
+        var lastRow = headerRow + Math.Max(rows.Count, 1);
+        ws.Range(headerRow, 1, lastRow, headers.Length).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        ws.Range(headerRow, 1, lastRow, headers.Length).Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+        ws.Range(headerRow + 1, 2, lastRow, 2).Style.DateFormat.Format = "dd-mmm-yy";
+        foreach (var column in new[] { 7, 10, 12, 14 }) ws.Range(headerRow + 1, column, lastRow, column).Style.NumberFormat.Format = "0.00%";
+        foreach (var column in new[] { 6, 8, 11, 13, 15 }) ws.Range(headerRow + 1, column, lastRow, column).Style.NumberFormat.Format = "0.00";
+        if (rows.Count > 0) ws.Range(headerRow, 1, lastRow, headers.Length).SetAutoFilter();
+        var totalRow = lastRow + 2;
+        ws.Cell(totalRow, 5).Value = "TOTAL"; ws.Cell(totalRow, 5).Style.Font.Bold = true;
+        foreach (var column in new[] { 6, 8, 11, 13, 15 })
+        {
+            ws.Cell(totalRow, column).FormulaA1 = $"SUM({ws.Cell(headerRow + 1, column).Address}:{ws.Cell(lastRow, column).Address})";
+            ws.Cell(totalRow, column).Style.NumberFormat.Format = "0.00"; ws.Cell(totalRow, column).Style.Font.Bold = true;
+        }
+        ws.Range(totalRow, 5, totalRow, headers.Length).Style.Fill.BackgroundColor = XLColor.FromHtml("#E2F0D9");
+        ws.Range(totalRow, 5, totalRow, headers.Length).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        ws.Range(totalRow, 5, totalRow, headers.Length).Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+        ws.Range(totalRow + 2, 1, totalRow + 2, headers.Length).Merge().Value = "POWERED BY WARRIOR SOFTECH";
+        ws.Range(totalRow + 2, 1, totalRow + 2, headers.Length).Style.Font.SetBold().Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
+        ws.SheetView.FreezeRows(headerRow); ws.PageSetup.PageOrientation = XLPageOrientation.Landscape; ws.PageSetup.FitToPages(1, 0); ws.PageSetup.SetRowsToRepeatAtTop(1, headerRow);
+        using var stream = new MemoryStream(); workbook.SaveAs(stream); return stream.ToArray();
+    }
+
+    private static void MergeGroup(IXLWorksheet ws, int row, int firstColumn, int lastColumn, string title, string color)
+    {
+        var range = ws.Range(row, firstColumn, row, lastColumn);
+        range.Merge().Value = title; range.Style.Font.Bold = true;
+        range.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        range.Style.Fill.BackgroundColor = XLColor.FromHtml(color);
+        range.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
     }
 }

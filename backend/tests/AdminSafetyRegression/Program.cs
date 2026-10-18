@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 // Isolated SQLite only: no factory database, hardware or external service operations.
 await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -47,7 +48,7 @@ var userController = new UsersController(db, null!, null!)
 {
     ControllerContext = DeveloperControllerContext(developer.Id)
 };
-var list = (OkObjectResult)await userController.List(null, true, 1, 50);
+var list = (OkObjectResult)await userController.List(null, null, null, true, 1, 50);
 var listJson = JsonSerializer.Serialize(list.Value);
 Check(listJson.Contains("developer", StringComparison.OrdinalIgnoreCase),
     "Developer identity must appear for a Developer caller");
@@ -55,7 +56,7 @@ Check(listJson.Contains("admin1", StringComparison.OrdinalIgnoreCase),
     "Normal users must remain visible in User Management list");
 
 userController.ControllerContext = AdminControllerContext(admin.Id);
-var adminList = (OkObjectResult)await userController.List(null, true, 1, 50);
+var adminList = (OkObjectResult)await userController.List(null, null, null, true, 1, 50);
 var adminListJson = JsonSerializer.Serialize(adminList.Value);
 Check(!adminListJson.Contains("developer", StringComparison.OrdinalIgnoreCase),
     "Developer identity must remain hidden from an Admin caller");
@@ -76,7 +77,8 @@ Check(createDeveloper is BadRequestObjectResult,
     "Developer role assignment must be blocked even for a Developer caller");
 
 var audit = new RecordingAudit();
-var configController = new ConfigController(db, audit, new CurrentDeveloper(developer.Id), null!)
+var configController = new ConfigController(db, audit, new CurrentDeveloper(developer.Id), null!, null!,
+    new ConfigurationBuilder().Build())
 {
     ControllerContext = DeveloperControllerContext(developer.Id)
 };

@@ -75,6 +75,29 @@ public class SalePurchaseWeighmentController : ControllerBase
         return Ok(images);
     }
 
+    /// <summary>Capture on the factory-PC API after the cloud API commits the transaction.</summary>
+    [HttpPost("{id:int}/images/capture")]
+    public async Task<IActionResult> CaptureImages(int id, [FromBody] Dictionary<string, string> body,
+        CancellationToken ct)
+    {
+        var stage = (body.GetValueOrDefault("stage") ?? "TARE").Trim().ToUpperInvariant();
+        if (stage is not ("TARE" or "GROSS"))
+            return BadRequest(new { message = "Stage must be TARE or GROSS." });
+        if (Deny(stage == "TARE" ? "Create" : "Edit") is { } denied) return denied;
+        if (!await _db.SalePurchases.AnyAsync(x => x.Id == id && !x.IsDeleted, ct))
+            return NotFound(new { message = "SalePurchase not found." });
+        var results = await _capture.CaptureForSalePurchaseAsync(id, stage, _current.UserId, ct);
+        var saved = results.Count(x => x.Success);
+        return Ok(new
+        {
+            message = results.Count == 0
+                ? "Camera capture is disabled system-wide, or no cameras are enabled for weighment capture."
+                : $"Captured {saved} of {results.Count} camera(s) for {stage}.",
+            saved,
+            results
+        });
+    }
+
     [HttpGet("pending")]
     public async Task<IActionResult> Pending()
     {

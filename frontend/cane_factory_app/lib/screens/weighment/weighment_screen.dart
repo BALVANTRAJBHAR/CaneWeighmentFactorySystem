@@ -257,6 +257,35 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     return saved > 0;
   }
 
+  bool _edgeCaptureRequired(dynamic response) {
+    final capture = response is Map ? response['capture'] : null;
+    final results = capture is Map ? capture['results'] : null;
+    return results is List &&
+        results.any((x) => x is Map && x['edgeCaptureRequired'] == true);
+  }
+
+  Future<bool> _captureWeighmentAtEdge(int purchaseId, String stage) async {
+    try {
+      final response = await ApiClient.instance.cameraDio.post(
+          '/api/purchases/$purchaseId/images/capture',
+          data: {'stage': stage});
+      if (response.statusCode == 200) {
+        final results = response.data is Map ? response.data['results'] : null;
+        return results is List &&
+            results.any((x) => x is Map && x['success'] == true);
+      }
+      if (mounted)
+        _toast(
+            'Weight saved, but local camera capture failed: ${ApiClient.errorMessage(response)}',
+            error: true);
+    } catch (error) {
+      if (mounted)
+        _toast('Weight saved, but the factory camera service is not reachable.',
+            error: true);
+    }
+    return false;
+  }
+
   Future<void> _lookupGrower() async {
     setState(() {
       _grower = null;
@@ -307,6 +336,11 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
 
   Future<void> _saveGross() async {
     final live = context.read<LiveWeightProvider>().current;
+    if (!live.canSaveWeighment) {
+      return _toast(
+          'Saving is allowed only on the digitizer / Scale Bridge PC.',
+          error: true);
+    }
     if (_grower == null)
       return _toast('Lookup a valid 6-digit Grower ID first (press ENTER).',
           error: true);
@@ -329,7 +363,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         'cropId': _cropId,
         'cuttingPercent': double.tryParse(_cutting.text) ?? 0,
         'otherDeductionPercent': double.tryParse(_otherDeduction.text) ?? 0,
-        'scaleReadingKg': live.weightKg,
+        ...live.saveProof,
         'idempotencyKey':
             'gross-${_grower!['growerId']}-${DateTime.now().microsecondsSinceEpoch}',
       });
@@ -350,7 +384,11 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         // Normal weighment-camera evidence is optional and must never turn a
         // successful save into a red warning. Rate-change evidence is a
         // separate, synchronous required field validated by RateOverridePanel.
-        if (_hasCapturedWeighmentEvidence(res.data)) {
+        var evidenceCaptured = _hasCapturedWeighmentEvidence(res.data);
+        if (_edgeCaptureRequired(res.data)) {
+          evidenceCaptured = await _captureWeighmentAtEdge(purchaseId, 'GROSS');
+        }
+        if (evidenceCaptured) {
           unawaited(_loadCapturedImages(purchaseId, 'GROSS'));
         }
       } else {
@@ -368,6 +406,11 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
 
   Future<void> _saveTare() async {
     final live = context.read<LiveWeightProvider>().current;
+    if (!live.canSaveWeighment) {
+      return _toast(
+          'Saving is allowed only on the digitizer / Scale Bridge PC.',
+          error: true);
+    }
     if (_selectedPurchase == null)
       return _toast(
           'Select a pending purchase (double-click a row or enter Purchase ID).',
@@ -383,7 +426,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       final res =
           await ApiClient.instance.dio.post('/api/weighment/tare', data: {
         'purchaseId': _selectedPurchase!['purchaseId'],
-        'scaleReadingKg': live.weightKg,
+        ...live.saveProof,
         ...rateOverride,
         // A failed validation must be retryable; each distinct user click gets a new request key.
         'idempotencyKey':
@@ -401,7 +444,11 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         });
         _loadPending();
         await _autoPrint(res.data['autoPrint']);
-        if (_hasCapturedWeighmentEvidence(res.data)) {
+        var evidenceCaptured = _hasCapturedWeighmentEvidence(res.data);
+        if (_edgeCaptureRequired(res.data)) {
+          evidenceCaptured = await _captureWeighmentAtEdge(purchaseId, 'TARE');
+        }
+        if (evidenceCaptured) {
           unawaited(_loadCapturedImages(purchaseId, 'TARE'));
         }
       } else {
@@ -605,6 +652,13 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       );
 
   Widget _grossPanel() {
+    // A standard operator must use the configured default.  Management users
+    // retain the existing controlled override workflow.
+    final auth = context.watch<AuthProvider>();
+    final cuttingReadOnly = auth.hasRole('Operator') &&
+        !auth.hasRole('Admin') &&
+        !auth.hasRole('SubAdmin') &&
+        !auth.hasRole('Developer');
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -718,7 +772,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                     for (final v in _varietyTypes)
                       DropdownMenuItem(
                           value: v['id'] as int,
-                          child: Text(v['varietyTypeName'],
+                          child: Text(
+                              '${v['varietyTypeName']}${(v['varietyTypeNameHi'] ?? '').toString().isEmpty ? '' : ' • ${v['varietyTypeNameHi']}'}',
                               overflow: TextOverflow.ellipsis))
                   ],
                   onChanged: (v) {
@@ -768,14 +823,18 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                   Expanded(
                     child: TextField(
                       controller: _cutting,
+                      readOnly: cuttingReadOnly,
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
                       inputFormatters: [
                         FilteringTextInputFormatter.allow(
                             RegExp(r'^\d*\.?\d{0,2}'))
                       ],
-                      decoration: const InputDecoration(
-                          labelText: 'Cutting %', hintText: '2.00'),
+                      decoration: InputDecoration(
+                          labelText: 'Cutting %',
+                          hintText: '2.00',
+                          helperText:
+                              cuttingReadOnly ? 'Configured default' : null),
                     ),
                   ),
                 ]),
@@ -783,7 +842,13 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
             ]),
             const SizedBox(height: 16),
             FilledButton.icon(
-              onPressed: _saving ? null : _saveGross,
+              onPressed: _saving ||
+                      !context
+                          .watch<LiveWeightProvider>()
+                          .current
+                          .canSaveWeighment
+                  ? null
+                  : _saveGross,
               icon: const Icon(Icons.save_outlined),
               label: Text(_saving ? 'Saving...' : 'SAVE GROSS'),
               style: FilledButton.styleFrom(
@@ -879,13 +944,20 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
               const SizedBox(height: 12),
               RateOverridePanel(
                 key: _rateOverrideKey,
-                masterRate: (p['rate'] as num?)?.toDouble(),
+                masterRate: (p['masterRate'] as num?)?.toDouble(),
+                initialRate: (p['rate'] as num?)?.toDouble(),
                 transactionType: 'CANE',
                 transactionId: p['purchaseId'] as int?,
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: _saving ? null : _saveTare,
+                onPressed: _saving ||
+                        !context
+                            .watch<LiveWeightProvider>()
+                            .current
+                            .canSaveWeighment
+                    ? null
+                    : _saveTare,
                 icon: const Icon(Icons.save_outlined),
                 label: Text(_saving ? 'Saving...' : 'SAVE TARE'),
                 style: FilledButton.styleFrom(

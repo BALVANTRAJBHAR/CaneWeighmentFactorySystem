@@ -14,13 +14,15 @@ public class PrintEngineService : IPrintEngineService
 {
     private readonly AppDbContext _db;
     private readonly IEnumerable<IPrintRenderer> _renderers;
+    private readonly IImageStorageService _storage;
 
-    public PrintEngineService(AppDbContext db, IEnumerable<IPrintRenderer> renderers)
+    public PrintEngineService(AppDbContext db, IEnumerable<IPrintRenderer> renderers,
+        IImageStorageService storage)
     {
-        _db = db; _renderers = renderers;
+        _db = db; _renderers = renderers; _storage = storage;
     }
 
-    public async Task<PrintDocument> BuildGrossSlipAsync(int purchaseId, string generatedByUserName)
+    public async Task<PrintDocument> BuildGrossSlipAsync(int purchaseId, string generatedByUserName, bool includeImages = true)
     {
         var p = await LoadPurchaseAsync(purchaseId);
         var doc = await BaseDocAsync(p.Season?.SeasonName, generatedByUserName);
@@ -29,11 +31,11 @@ public class PrintEngineService : IPrintEngineService
         doc.UseHalfPageDotMatrixLayout = true;
         doc.QrValue = p.Id;
         doc.Rows = GrossRows(p, doc.Language);
-        doc.Images = doc.PrintImages ? await LoadPurchaseImagesForPrintAsync(p.Id, "GROSS") : new();
+        doc.Images = doc.PrintImages && includeImages ? await LoadPurchaseImagesForPrintAsync(p.Id, "GROSS") : new();
         return doc;
     }
 
-    public async Task<PrintDocument> BuildTareSlipAsync(int purchaseId, string generatedByUserName)
+    public async Task<PrintDocument> BuildTareSlipAsync(int purchaseId, string generatedByUserName, bool includeImages = true)
     {
         var p = await LoadPurchaseAsync(purchaseId);
         var doc = await BaseDocAsync(p.Season?.SeasonName, generatedByUserName);
@@ -42,7 +44,7 @@ public class PrintEngineService : IPrintEngineService
         doc.UseHalfPageDotMatrixLayout = true;
         doc.QrValue = p.Id;
         doc.Rows = GrossRows(p, doc.Language).Concat(TareRows(p)).ToList();
-        doc.Images = doc.PrintImages ? await LoadPurchaseImagesForPrintAsync(p.Id, "GROSS", "TARE") : new();
+        doc.Images = doc.PrintImages && includeImages ? await LoadPurchaseImagesForPrintAsync(p.Id, "GROSS", "TARE") : new();
         return doc;
     }
 
@@ -145,7 +147,7 @@ public class PrintEngineService : IPrintEngineService
         return doc;
     }
 
-    public async Task<PrintDocument> BuildSalePurchaseSlipAsync(int salePurchaseId, string stage, string generatedByUserName)
+    public async Task<PrintDocument> BuildSalePurchaseSlipAsync(int salePurchaseId, string stage, string generatedByUserName, bool includeImages = true)
     {
         var p = await _db.SalePurchases.AsNoTracking().Include(x => x.Item).Include(x => x.Party)
             .Include(x => x.VehicleType).FirstOrDefaultAsync(x => x.Id == salePurchaseId);
@@ -171,7 +173,7 @@ public class PrintEngineService : IPrintEngineService
                 rate?.ToString("F2") ?? "Sale Rate Master not configured"));
             doc.Rows.Add(new PrintRow("राशि (₹)", "Amount (Rs)", "Calculated after Final Gross"));
         }
-        doc.Images = !doc.PrintImages ? new() : stage == "TARE"
+        doc.Images = !doc.PrintImages || !includeImages ? new() : stage == "TARE"
             ? await LoadSalePurchaseImagesForPrintAsync(p.Id, "TARE")
             : await LoadSalePurchaseImagesForPrintAsync(p.Id, "GROSS", "TARE");
         return doc;
@@ -220,7 +222,7 @@ public class PrintEngineService : IPrintEngineService
     private async Task<Purchase> LoadPurchaseAsync(int purchaseId)
     {
         var p = await _db.Purchases.Include(x => x.Grower).ThenInclude(g => g.Village)
-            .Include(x => x.VehicleType).Include(x => x.Variety).Include(x => x.Crop).Include(x => x.Season)
+            .Include(x => x.VehicleType).Include(x => x.VarietyType).Include(x => x.Variety).Include(x => x.Crop).Include(x => x.Season)
             .AsNoTracking().FirstOrDefaultAsync(x => x.Id == purchaseId);
         if (p == null) throw new KeyNotFoundException($"Purchase {purchaseId} not found.");
         return p;
@@ -284,7 +286,7 @@ public class PrintEngineService : IPrintEngineService
     private async Task<List<PrintImage>> LoadPurchaseImagesForPrintAsync(int purchaseId, params string[] stages)
     {
         var expectedCameras = await _db.Cameras.AsNoTracking()
-            .CountAsync(c => !c.IsDeleted && c.Status && c.CaptureEnabled);
+            .CountAsync(c => !c.IsDeleted && c.Status && c.CaptureEnabled && c.WeighmentCaptureEnabled);
         var deadline = DateTime.UtcNow.AddSeconds(10);
 
         while (true)
@@ -293,11 +295,17 @@ public class PrintEngineService : IPrintEngineService
                 .Where(i => i.PurchaseId == purchaseId && i.Status && stages.Contains(i.CaptureStage))
                 .OrderBy(i => i.CapturedAt)
                 .ToListAsync();
-            var existing = images.Where(i => File.Exists(i.FilePath)).ToList();
+            var existing = new List<PrintImage>();
+            foreach (var image in images)
+            {
+                var bytes = await _storage.ReadAsync(image.FilePath);
+                if (bytes is { Length: > 0 })
+                    existing.Add(new PrintImage($"{image.CaptureStage} • {Path.GetFileNameWithoutExtension(image.ImageName)}",
+                        image.FilePath, bytes));
+            }
             var expected = expectedCameras * stages.Length;
             if (expected == 0 || existing.Count >= expected || DateTime.UtcNow >= deadline)
-                return OrderPrintImages(existing.Select(i => new PrintImage(
-                    $"{i.CaptureStage} • {Path.GetFileNameWithoutExtension(i.FilePath)}", i.FilePath)), stages);
+                return OrderPrintImages(existing, stages);
             await Task.Delay(250);
         }
     }
@@ -305,7 +313,7 @@ public class PrintEngineService : IPrintEngineService
     private async Task<List<PrintImage>> LoadSalePurchaseImagesForPrintAsync(int salePurchaseId, params string[] stages)
     {
         var expectedCameras = await _db.Cameras.AsNoTracking()
-            .CountAsync(c => !c.IsDeleted && c.Status && c.CaptureEnabled);
+            .CountAsync(c => !c.IsDeleted && c.Status && c.CaptureEnabled && c.WeighmentCaptureEnabled);
         var deadline = DateTime.UtcNow.AddSeconds(10);
 
         while (true)
@@ -314,11 +322,17 @@ public class PrintEngineService : IPrintEngineService
                 .Where(i => i.SalePurchaseId == salePurchaseId && i.Status && stages.Contains(i.CaptureStage))
                 .OrderBy(i => i.CapturedAt)
                 .ToListAsync();
-            var existing = images.Where(i => File.Exists(i.FilePath)).ToList();
+            var existing = new List<PrintImage>();
+            foreach (var image in images)
+            {
+                var bytes = await _storage.ReadAsync(image.FilePath);
+                if (bytes is { Length: > 0 })
+                    existing.Add(new PrintImage($"{image.CaptureStage} • {Path.GetFileNameWithoutExtension(image.ImageName)}",
+                        image.FilePath, bytes));
+            }
             var expected = expectedCameras * stages.Length;
             if (expected == 0 || existing.Count >= expected || DateTime.UtcNow >= deadline)
-                return OrderPrintImages(existing.Select(i => new PrintImage(
-                    $"{i.CaptureStage} • {Path.GetFileNameWithoutExtension(i.FilePath)}", i.FilePath)), stages);
+                return OrderPrintImages(existing, stages);
             await Task.Delay(250);
         }
     }
@@ -348,6 +362,7 @@ public class PrintEngineService : IPrintEngineService
         new("पिता का नाम", "Father's Name", Text(p.Grower.FatherName, p.Grower.FatherNameHi, language)),
         new("गाँव", "Village", Text(p.Grower.Village.VillageName, p.Grower.Village.VillageNameHi, language)),
         new("वाहन", "Vehicle", $"{Text(p.VehicleType.VehicleTypeName, p.VehicleType.VehicleTypeNameHi, language)} / {p.VehicleNumber}"),
+        new("प्रजाति प्रकार", "Variety Type", Text(p.VarietyType.VarietyTypeName, p.VarietyType.VarietyTypeNameHi, language)),
         new("प्रजाति", "Variety", $"{Text(p.Crop?.CropName, p.Crop?.CropNameHi, language)} / {p.Variety.VarietyName}"),
         new("सकल वजन (क्विंटल)", "Gross Weight (Qtl)", p.GrossWeightQuintal.ToString("F2")),
         new("दर (प्रति क्विंटल)", "Rate (per Qtl)", p.Rate.ToString("F2")),
@@ -552,7 +567,10 @@ public class PrintEngineService : IPrintEngineService
             new PrintRow("सकल वजन (क्विंटल)", "Gross Weight (Qtl)", p.GrossWeightQuintal?.ToString("F2") ?? "-"),
             new PrintRow("अंतिम वजन (क्विंटल)", "Final Weight (Qtl)", p.FinalWeightQuintal?.ToString("F2") ?? "-"),
             new PrintRow("दर", "Rate", p.Rate?.ToString("F2") ?? "-"),
-            new PrintRow("राशि (₹)", "Amount (Rs)", p.Amount?.ToString("F2") ?? "-"),
+            new PrintRow("मूल राशि (₹)", "Base Amount (Rs)", p.Amount?.ToString("F2") ?? "-"),
+            new PrintRow("जीएसटी (%)", "GST (%)", p.GstPercent.ToString("F2")),
+            new PrintRow("जीएसटी राशि (₹)", "GST Amount (Rs)", p.GstAmount?.ToString("F2") ?? "-"),
+            new PrintRow("अंतिम राशि (₹)", "Final Amount (Rs)", p.FinalAmount?.ToString("F2") ?? "-"),
             new PrintRow("सकल तिथि/समय", "Gross Date/Time", p.GrossDateTime?.ToLocalTime().ToString("dd-MM-yyyy HH:mm") ?? "-"),
             new PrintRow("सकल ऑपरेटर", "Gross Operator", p.GrossByUserName ?? "-")
         });

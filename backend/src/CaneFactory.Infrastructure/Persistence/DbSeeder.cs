@@ -65,7 +65,7 @@ public static class DbSeeder
         var subAdmin = Codes(Modules.Masters, "View", "Create", "Edit");
         subAdmin.AddRange(Codes(new[] { "Purchase", "Weighment", "Report" }, "View"));
         subAdmin.AddRange(Codes(new[] { "Expense" }, "View", "Create", "Edit", "Delete"));
-        subAdmin.AddRange(new[] { "Report.Export", "Report.Print", "Dashboard.View", "Health.View", "UserGuide.View", "Camera.ViewCamera", "Backup.View" });
+        subAdmin.AddRange(new[] { "Report.Export", "Report.Print", "Dashboard.View", "Health.View", "UserGuide.View", "Camera.ViewCamera", "Backup.View", "Image.View", "CashEvidence.View" });
 
         var accountant = Codes(new[] { "Loan", "LoanRecovery" }, "View", "Create", "Cancel", "Reverse", "Export", "Print");
         accountant.AddRange(Codes(new[] { "Payment" }, "View", "Create", "Pay", "Cancel", "Reverse", "Export", "Print"));
@@ -74,7 +74,7 @@ public static class DbSeeder
         accountant.AddRange(Codes(new[] { "Expense" }, "View", "Create", "Edit", "Delete", "Export", "Print"));
         accountant.AddRange(Codes(new[] { "CashBook" }, "View", "Create", "Export", "Print"));
         accountant.AddRange(new[] { "Purchase.View", "Grower.View", "Village.View", "Bank.View", "LoanType.View",
-            "Dashboard.View", "Health.View", "UserGuide.View" });
+            "Dashboard.View", "Health.View", "UserGuide.View", "Image.View" });
 
         var op = new List<string>
         {
@@ -84,7 +84,7 @@ public static class DbSeeder
             "Grower.View", "Village.View", "Zone.View", "Vehicle.View", "Vehicle.Create",
             "VarietyType.View", "Variety.View", "Rate.View", "RateReason.View",
             "Item.View", "Party.View", "PaymentMode.View", "LoanType.View", "ExpenseType.View",
-            "WeightRule.View", "Camera.ViewCamera", "Image.Create",
+            "WeightRule.View", "Camera.ViewCamera", "Image.Create", "Image.View",
             "Dashboard.View", "Health.View", "UserGuide.View", "Print.Print"
         };
 
@@ -173,9 +173,9 @@ public static class DbSeeder
 
         if (!await db.VarietyTypes.AnyAsync())
         {
-            var early = new VarietyType { VarietyTypeName = "Early" };
-            var general = new VarietyType { VarietyTypeName = "General" };
-            var midLate = new VarietyType { VarietyTypeName = "Mid Late" };
+            var early = new VarietyType { VarietyTypeName = "Early", VarietyTypeNameHi = "अगेती" };
+            var general = new VarietyType { VarietyTypeName = "General", VarietyTypeNameHi = "सामान्य" };
+            var midLate = new VarietyType { VarietyTypeName = "Mid Late", VarietyTypeNameHi = "मध्यम देर" };
             db.VarietyTypes.AddRange(early, general, midLate);
             await db.SaveChangesAsync();
             db.Varieties.AddRange(new[] { "CO 18", "CO 32", "SO 30", "SO 40" }
@@ -335,6 +335,11 @@ public static class DbSeeder
             // Blank means the capture service selects the ready C:/D:/E: drive
             // with the most free space and creates WeighmentImage there.
             ["ImageStorageRoot"] = "",
+            // LOCAL writes to the configured LAN/server folder. AZURE_BLOB writes new evidence
+            // to the private container while legacy local locators remain readable.
+            ["ImageStorageMode"] = "LOCAL",
+            ["AzureBlobContainer"] = "canefactory-images",
+            ["AzureBlobPrefix"] = "authentic-food-farm",
             // Set to 1 immediately after any saved weight; cleared only when the live
             // indicator reports an empty (zero) platform.
             ["WeighbridgePlatformClearRequired"] = "0",

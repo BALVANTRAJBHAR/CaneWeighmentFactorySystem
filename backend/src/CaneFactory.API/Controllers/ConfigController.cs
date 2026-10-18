@@ -4,6 +4,7 @@ using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
 using CaneFactory.Infrastructure.Camera;
 using CaneFactory.API.Services;
+using CaneFactory.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -21,10 +22,14 @@ public class ConfigController : ControllerBase
     private readonly IAuditService _audit;
     private readonly ICurrentUser _current;
     private readonly ISecretProtector _protector;
+    private readonly IImageStorageService _imageStorage;
+    private readonly IConfiguration _configuration;
 
-    public ConfigController(AppDbContext db, IAuditService audit, ICurrentUser current, ISecretProtector protector)
+    public ConfigController(AppDbContext db, IAuditService audit, ICurrentUser current, ISecretProtector protector,
+        IImageStorageService imageStorage, IConfiguration configuration)
     {
         _db = db; _audit = audit; _current = current; _protector = protector;
+        _imageStorage = imageStorage; _configuration = configuration;
     }
 
     // ---------------------------------------------------------------- WEIGHT RULES
@@ -247,31 +252,57 @@ public class ConfigController : ControllerBase
         return Ok(new { message = $"Camera {cam.CameraNumber:D2} ({cam.Vendor}) saved successfully.", id = cam.Id });
     }
 
-    /// <summary>Returns the configured image base path plus the effective auto-detected path.</summary>
+    /// <summary>Returns the active local/LAN or private Azure Blob evidence-storage configuration.</summary>
     [HasPermission("Camera.Configure")]
+    [Authorize(Roles = "Developer")]
     [HttpGet("image-storage")]
     public async Task<IActionResult> GetImageStorage()
     {
-        var setting = await _db.SystemSettings.AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot");
-        var configured = setting?.Value ?? string.Empty;
+        var settings = await _db.SystemSettings.AsNoTracking().Where(s =>
+            s.Key == "ImageStorageRoot" || s.Key == "ImageStorageMode" ||
+            s.Key == "AzureBlobContainer" || s.Key == "AzureBlobPrefix")
+            .ToDictionaryAsync(x => x.Key, x => x.Value);
+        var configured = settings.GetValueOrDefault("ImageStorageRoot") ?? string.Empty;
+        var mode = string.Equals(settings.GetValueOrDefault("ImageStorageMode"), ImageStorageService.CloudMode,
+            StringComparison.OrdinalIgnoreCase) ? ImageStorageService.CloudMode : ImageStorageService.LocalMode;
+        var container = settings.GetValueOrDefault("AzureBlobContainer") ?? "canefactory-images";
+        var prefix = settings.GetValueOrDefault("AzureBlobPrefix") ?? "authentic-food-farm";
         var detected = WeighmentImagePathResolver.DetectDefaultDrive();
         var effective = WeighmentImagePathResolver.ResolveRoot(configured);
+        var hasConnectionString = !string.IsNullOrWhiteSpace(_configuration["Storage:AzureBlob:ConnectionString"]);
+        var serviceUri = _configuration["Storage:AzureBlob:ServiceUri"];
         return Ok(new
         {
+            mode,
             configuredPath = configured,
             detectedDrive = detected,
             effectiveRoot = effective,
-            availableDrives = WeighmentImagePathResolver.GetAvailableDrives()
+            availableDrives = WeighmentImagePathResolver.GetAvailableDrives(),
+            azureContainer = container,
+            azurePrefix = prefix,
+            azureConfigured = hasConnectionString || Uri.TryCreate(serviceUri, UriKind.Absolute, out _),
+            azureAuthentication = hasConnectionString ? "SERVER_CONNECTION_STRING" : "MANAGED_IDENTITY",
+            azureServiceUri = hasConnectionString ? null : serviceUri,
+            cloudRoot = $"azureblob://{container}/{prefix.Trim().Trim('/', '\\')}"
         });
     }
 
-    /// <summary>Changes only the user-configurable base path; blank restores automatic drive selection.</summary>
+    /// <summary>Switches new evidence writes between a LAN folder and private Azure Blob storage.</summary>
     [HasPermission("Camera.Configure")]
+    [Authorize(Roles = "Developer")]
     [HttpPut("image-storage")]
-    public async Task<IActionResult> UpdateImageStorage([FromBody] Dictionary<string, string> body)
+    public async Task<IActionResult> UpdateImageStorage([FromBody] ImageStorageConfigRequest req)
     {
-        var path = body.GetValueOrDefault("path") ?? body.GetValueOrDefault("value") ?? string.Empty;
+        var old = await _db.SystemSettings.AsNoTracking().Where(x =>
+            x.Key == "ImageStorageRoot" || x.Key == "ImageStorageMode" ||
+            x.Key == "AzureBlobContainer" || x.Key == "AzureBlobPrefix")
+            .ToDictionaryAsync(x => x.Key, x => x.Value);
+        var existingMode = old.GetValueOrDefault("ImageStorageMode");
+        var mode = string.IsNullOrWhiteSpace(req.Mode) ? existingMode ?? ImageStorageService.LocalMode : req.Mode;
+        mode = mode.Trim().ToUpperInvariant();
+        if (mode is not (ImageStorageService.LocalMode or ImageStorageService.CloudMode))
+            return BadRequest(new { message = "Image storage mode must be LOCAL or AZURE_BLOB." });
+        var path = (req.Path ?? old.GetValueOrDefault("ImageStorageRoot") ?? string.Empty).Trim();
         if (path.Length > 512) return BadRequest(new { message = "Image path must be 512 characters or fewer." });
         if (!string.IsNullOrWhiteSpace(path))
         {
@@ -279,32 +310,61 @@ public class ConfigController : ControllerBase
             catch (Exception ex) { return BadRequest(new { message = $"Invalid image path: {ex.Message}" }); }
         }
         var effectiveRoot = WeighmentImagePathResolver.ResolveRoot(path);
-        try { Directory.CreateDirectory(effectiveRoot); }
-        catch (Exception ex) { return BadRequest(new { message = $"Image folder cannot be created: {ex.Message}" }); }
-
-        var setting = await _db.SystemSettings.FirstOrDefaultAsync(s => s.Key == "ImageStorageRoot");
-        if (setting == null)
+        var container = req.AzureContainer ?? old.GetValueOrDefault("AzureBlobContainer") ?? "canefactory-images";
+        var prefix = (req.AzurePrefix ?? old.GetValueOrDefault("AzureBlobPrefix") ?? "authentic-food-farm")
+            .Trim().Trim('/', '\\');
+        if (prefix.Length > 256 || prefix.Split('/', '\\').Any(x => x is "." or ".."))
+            return BadRequest(new { message = "Azure folder prefix is invalid or longer than 256 characters." });
+        try
         {
-            setting = new SystemSetting { Key = "ImageStorageRoot", Value = path };
-            _db.SystemSettings.Add(setting);
+            if (mode == ImageStorageService.LocalMode) Directory.CreateDirectory(effectiveRoot);
+            else
+            {
+                container = ImageStorageService.NormalizeContainer(container);
+                await _imageStorage.EnsureCloudReadyAsync(container, HttpContext.RequestAborted);
+            }
         }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = mode == ImageStorageService.LocalMode
+                ? $"Image folder cannot be created: {ex.Message}"
+                : $"Azure Blob storage could not be verified: {ex.Message}" });
+        }
+
+        await UpsertSettingAsync("ImageStorageRoot", path);
+        await UpsertSettingAsync("ImageStorageMode", mode);
+        await UpsertSettingAsync("AzureBlobContainer", container);
+        await UpsertSettingAsync("AzureBlobPrefix", prefix);
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("SystemSettingChange", "SystemSetting", "SystemSetting", "ImageStorage",
+            oldValue: old, newValue: new { mode, configuredPath = path, azureContainer = container, azurePrefix = prefix });
+        return Ok(new
+        {
+            message = mode == ImageStorageService.CloudMode
+                ? "Cloud image storage enabled and the private Azure Blob container was verified."
+                : string.IsNullOrWhiteSpace(path)
+                    ? "Local API-host image storage enabled. The drive with the most free space will be selected automatically."
+                    : "Local API-host image storage path saved successfully.",
+            mode,
+            configuredPath = path,
+            effectiveRoot,
+            azureContainer = container,
+            azurePrefix = prefix,
+            cloudRoot = $"azureblob://{container}/{prefix}"
+        });
+    }
+
+    private async Task UpsertSettingAsync(string key, string value)
+    {
+        var setting = await _db.SystemSettings.FirstOrDefaultAsync(x => x.Key == key);
+        if (setting == null)
+            _db.SystemSettings.Add(new SystemSetting { Key = key, Value = value, UpdatedBy = _current.UserId });
         else
         {
-            setting.Value = path;
+            setting.Value = value;
             setting.UpdatedAt = DateTime.UtcNow;
             setting.UpdatedBy = _current.UserId;
         }
-        await _db.SaveChangesAsync();
-        await _audit.LogAsync("SystemSettingChange", "SystemSetting", "SystemSetting", "ImageStorageRoot",
-            newValue: new { configuredPath = path });
-        return Ok(new
-        {
-            message = string.IsNullOrWhiteSpace(path)
-                ? "Image path reset. The drive with the most free space will be selected automatically."
-                : "Image path saved successfully.",
-            configuredPath = path,
-            effectiveRoot
-        });
     }
 
     // ----------------------------------------------------------- PAYMENT EVIDENCE CAMERA
@@ -953,6 +1013,14 @@ public class PaymentEvidenceConfigRequest
 {
     public int CameraId { get; set; }
     public string? Path { get; set; }
+}
+
+public class ImageStorageConfigRequest
+{
+    public string? Mode { get; set; }
+    public string? Path { get; set; }
+    public string? AzureContainer { get; set; }
+    public string? AzurePrefix { get; set; }
 }
 
 public class RateEvidenceConfigRequest

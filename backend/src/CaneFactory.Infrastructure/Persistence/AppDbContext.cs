@@ -131,7 +131,11 @@ public class AppDbContext : DbContext
             e.HasOne(x => x.Bank).WithMany().HasForeignKey(x => x.BankId).OnDelete(DeleteBehavior.Restrict);
         });
         b.Entity<VehicleType>(e => { e.HasIndex(x => x.VehicleTypeName).IsUnique(); e.Property(x => x.VehicleTypeNameHi).HasMaxLength(50); });
-        b.Entity<VarietyType>().HasIndex(x => x.VarietyTypeName).IsUnique();
+        b.Entity<VarietyType>(e =>
+        {
+            e.HasIndex(x => x.VarietyTypeName).IsUnique();
+            e.Property(x => x.VarietyTypeNameHi).HasMaxLength(50);
+        });
         b.Entity<Variety>().HasIndex(x => new { x.VarietyTypeId, x.VarietyName }).IsUnique();
         b.Entity<RateMaster>(e =>
         {
@@ -168,7 +172,12 @@ public class AppDbContext : DbContext
             e.HasOne<User>().WithMany().HasForeignKey(x => x.ApprovedByUserId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne<RateReasonMaster>().WithMany().HasForeignKey(x => x.RateReasonId).OnDelete(DeleteBehavior.Restrict);
         });
-        b.Entity<Item>(e => { e.HasIndex(x => x.ItemName).IsUnique(); e.Property(x => x.ItemNameHi).HasMaxLength(50); });
+        b.Entity<Item>(e =>
+        {
+            e.HasIndex(x => x.ItemName).IsUnique();
+            e.Property(x => x.ItemNameHi).HasMaxLength(50);
+            e.Property(x => x.HsnSacCode).HasMaxLength(32);
+        });
         b.Entity<Crop>(e =>
         {
             e.HasIndex(x => x.CropName).IsUnique();
@@ -209,6 +218,7 @@ public class AppDbContext : DbContext
             // single, farmer and date-range payments. Uses existing columns (no schema change).
             e.Property(x => x.UpdatedAt).IsConcurrencyToken();
             e.Property(x => x.PaymentFlag).IsConcurrencyToken();
+            e.HasOne(x => x.VarietyType).WithMany().HasForeignKey(x => x.VarietyTypeId).OnDelete(DeleteBehavior.Restrict);
             e.Property(x => x.PaymentStatus).IsConcurrencyToken();
             e.Property(x => x.VehicleNumber).HasMaxLength(15).IsRequired();
             e.HasIndex(x => x.GrowerCode);
@@ -223,7 +233,7 @@ public class AppDbContext : DbContext
                 .IsUnique().HasFilter("[IsDeleted] = 0 AND [GrossTareStatus] = 'GROSS_DONE'");
             foreach (var p in new[] { "ScaleReadingGrossKg", "GrossWeightQuintal", "ScaleReadingTareKg", "TareWeightQuintal",
                 "NetWeightQuintal", "CuttingPercent", "CuttingWeightQuintal", "OtherDeductionPercent", "OtherDeductionWeightQuintal",
-                "FinalWeightQuintal", "Rate" })
+                "FinalWeightQuintal", "Rate", "MasterRateAtGross" })
                 e.Property(p).HasPrecision(12, 2);
             e.Property(x => x.PurchaseAmount).HasPrecision(14, 2);
             e.HasOne(x => x.Grower).WithMany().HasForeignKey(x => x.GrowerId).OnDelete(DeleteBehavior.Restrict);
@@ -251,9 +261,16 @@ public class AppDbContext : DbContext
             // One sale/purchase tare per normalized vehicle may remain pending gross at a time.
             e.HasIndex(x => x.VehicleNumber).HasDatabaseName("UX_SalePurchases_ActiveVehicle")
                 .IsUnique().HasFilter("[IsDeleted] = 0 AND [WeighmentStatus] = 'TARE_PENDING_GROSS'");
-            foreach (var p in new[] { "ScaleReadingTareKg", "TareWeightQuintal", "ScaleReadingGrossKg", "GrossWeightQuintal", "FinalWeightQuintal", "Rate" })
+            foreach (var p in new[] { "ScaleReadingTareKg", "TareWeightQuintal", "ScaleReadingGrossKg", "GrossWeightQuintal", "FinalWeightQuintal", "Rate", "GstPercent", "SalesPercent" })
                 e.Property(p).HasPrecision(12, 2);
             e.Property(x => x.Amount).HasPrecision(14, 2);
+            e.Property(x => x.GstAmount).HasPrecision(14, 2);
+            e.Property(x => x.FinalAmount).HasPrecision(14, 2);
+            e.Property(x => x.SalesAmount).HasPrecision(14, 2);
+            e.Property(x => x.SgstAmount).HasPrecision(14, 2);
+            e.Property(x => x.CgstAmount).HasPrecision(14, 2);
+            e.Property(x => x.IgstAmount).HasPrecision(14, 2);
+            e.Property(x => x.TaxSupplyType).HasMaxLength(16).IsRequired();
             e.HasOne(x => x.Item).WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Party).WithMany().HasForeignKey(x => x.PartyId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.VehicleType).WithMany().HasForeignKey(x => x.VehicleTypeId).OnDelete(DeleteBehavior.Restrict);

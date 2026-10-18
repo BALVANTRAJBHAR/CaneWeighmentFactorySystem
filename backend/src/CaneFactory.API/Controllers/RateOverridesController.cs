@@ -15,7 +15,7 @@ namespace CaneFactory.API.Controllers;
 [Route("api/rate-overrides")]
 public sealed class RateOverridesController(
     AppDbContext db, ICurrentUser current, ICameraCaptureService capture, IAuditService audit,
-    ILogger<RateOverridesController> log, IConfiguration configuration) : ControllerBase
+    IImageStorageService storage, ILogger<RateOverridesController> log, IConfiguration configuration) : ControllerBase
 {
     private const long MaximumUploadBytes = 6_000_000;
     private const long MaximumDecodedPixels = 40_000_000;
@@ -137,7 +137,6 @@ public sealed class RateOverridesController(
         var now = DateTime.Now;
         var typeFolder = type == "CANE" ? "Cane" : "Sale";
         var folder = Path.Combine(root, typeFolder, now.ToString("yyyy-MM-dd"));
-        Directory.CreateDirectory(folder);
         var token = Guid.NewGuid().ToString("N");
         int relatedPartyId;
         string stage;
@@ -168,12 +167,12 @@ public sealed class RateOverridesController(
             filePath = Path.Combine(folder, imageName);
             try
             {
-                await using var output = new FileStream(filePath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                    bufferSize: 81920, useAsync: true);
-                await output.WriteAsync(safeBytes, ct);
+                var cloudPath = $"Rate Edit/{typeFolder}/{now:yyyy-MM-dd}/{imageName}";
+                filePath = await storage.SaveAsync(filePath, cloudPath, safeBytes, overwrite: false, ct);
                 break;
             }
-            catch (IOException) when (System.IO.File.Exists(filePath))
+            catch (IOException ex) when (System.IO.File.Exists(filePath) ||
+                ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
             {
                 revision++;
             }

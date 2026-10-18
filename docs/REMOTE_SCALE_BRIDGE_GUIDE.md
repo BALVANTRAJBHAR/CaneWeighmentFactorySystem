@@ -51,3 +51,15 @@ It opens only this PC's serial port, posts readings to the server, reconnects af
 - Unplug/replug USB converter: bridge retries; it does not cause the API server to attempt a COM connection.
 
 Do not share `appsettings.json` with the secret or commit a real key into source control.
+
+## Local-only live weight (cloud cost/privacy mode)
+
+After deploying the matching API, Windows app and Scale Bridge builds, Developer can enable
+**Configuration > Weight Rules > Live weight only on Digitizer PC**. In this mode the Bridge keeps
+the changing weight on `127.0.0.1:5158`, checks the server mode only every 30 seconds, and does not
+continuously POST readings to the API. Other desktop PCs, web clients and mobile clients receive no
+live weight and cannot save a weighment. At Save, the digitizer PC forwards one fresh HMAC-signed
+reading; the API validates it with `CANE_SCALE_AGENT_KEY` before persisting Gross/Tare.
+
+Deploy/restart the updated Scale Bridge before enabling this switch. An older Bridge has no local
+loopback endpoint, so the digitizer PC would correctly fail closed with Save disabled.

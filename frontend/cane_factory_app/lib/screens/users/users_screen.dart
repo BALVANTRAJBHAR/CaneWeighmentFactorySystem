@@ -197,6 +197,8 @@ class _UsersScreenState extends State<UsersScreen> {
     var fullNameHiEdited = false;
     final selectedRoles = <int>{...List<int>.from(existing?['roleIds'] ?? [])};
     bool status = existing?['status'] ?? true;
+    bool canApproveRateOverrides = existing?['canApproveRateOverrides'] == true;
+    final isDeveloper = context.read<AuthProvider>().hasRole('Developer');
 
     final ok = await showDialog<bool>(
       context: context,
@@ -279,6 +281,15 @@ class _UsersScreenState extends State<UsersScreen> {
                           'Active (deactivation revokes all sessions)'),
                       value: status,
                       onChanged: (v) => setD(() => status = v)),
+                if (isDeveloper)
+                  SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Rate approval authority'),
+                      subtitle: const Text(
+                          'Show this active user in Approved By for a reduced rate.'),
+                      value: canApproveRateOverrides,
+                      onChanged: (v) =>
+                          setD(() => canApproveRateOverrides = v)),
               ]),
             ),
           ),
@@ -303,6 +314,7 @@ class _UsersScreenState extends State<UsersScreen> {
             'email': c['email']!.text.isEmpty ? null : c['email']!.text,
             'temporaryPassword': c['password']!.text,
             'roleIds': selectedRoles.toList(),
+            if (isDeveloper) 'canApproveRateOverrides': canApproveRateOverrides,
           })
         : await ApiClient.instance.dio
             .put('/api/users/${existing['id']}', data: {
@@ -312,6 +324,7 @@ class _UsersScreenState extends State<UsersScreen> {
             'email': c['email']!.text.isEmpty ? null : c['email']!.text,
             'status': status,
             'roleIds': selectedRoles.toList(),
+            if (isDeveloper) 'canApproveRateOverrides': canApproveRateOverrides,
           });
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(

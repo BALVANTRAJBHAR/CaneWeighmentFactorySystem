@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
 
 // Isolated SQLite only: no factory database, hardware, SMS or print operations.
 await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -27,13 +28,15 @@ var weighing = new WeighingService(provider.GetRequiredService<IServiceScopeFact
     new NoBroadcast(), NullLogger<WeighingService>.Instance);
 using var cache = new MemoryCache(new MemoryCacheOptions());
 var current = new TestCurrentUser();
-var rateOverrides = new RateOverrideService(db);
+var rateOverrides = new RateOverrideService(db, null!);
+var scaleReadings = new ScaleReadingResolver(db, weighing,
+    new ConfigurationBuilder().Build(), cache);
 var controllers = new (object Controller, string Eligibility)[]
 {
     (new WeighmentController(db, null!, current, null!, cache, null!, null!, weighing,
-        NullLogger<WeighmentController>.Instance, rateOverrides), "CanStartNewCaneGrossAsync"),
+        NullLogger<WeighmentController>.Instance, rateOverrides, scaleReadings), "CanStartNewCaneGrossAsync"),
     (new SalePurchaseWeighmentController(db, current, null!, null!, weighing, null!, null!, cache,
-        NullLogger<SalePurchaseWeighmentController>.Instance, rateOverrides), "CanStartNewSaleTareAsync")
+        NullLogger<SalePurchaseWeighmentController>.Instance, rateOverrides, scaleReadings), "CanStartNewSaleTareAsync")
 };
 int checks = 0;
 void Check(bool ok, string label) { if (!ok) throw new Exception(label); checks++; }

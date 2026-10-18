@@ -52,7 +52,7 @@ class CaneFactoryApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeProvider>();
     return MaterialApp(
-      title: 'Cane Factory Management',
+      title: 'Sugarcane Factory Management',
       debugShowCheckedModeBanner: false,
       themeMode: theme.mode,
       theme: AppTheme.light(theme.seed),

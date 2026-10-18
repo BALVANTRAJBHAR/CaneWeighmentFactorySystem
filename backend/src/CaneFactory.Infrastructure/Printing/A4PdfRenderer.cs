@@ -98,7 +98,8 @@ public class A4PdfRenderer : IPrintRenderer
                     }
 
                     var printableImages = doc.PrintImages ? doc.Images
-                        .Where(image => !string.IsNullOrWhiteSpace(image.FilePath) && File.Exists(image.FilePath))
+                        .Where(image => image.Bytes is { Length: > 0 } ||
+                            (!string.IsNullOrWhiteSpace(image.FilePath) && File.Exists(image.FilePath)))
                         .ToList() : new List<PrintImage>();
                     if (printableImages.Count > 0)
                     {
@@ -122,7 +123,7 @@ public class A4PdfRenderer : IPrintRenderer
                                     imageCell.Item().AlignCenter().Text(image.Label).FontSize(8)
                                         .FontColor(Colors.Grey.Darken1);
                                     imageCell.Item().PaddingTop(2).Height(174).AlignCenter()
-                                        .Image(File.ReadAllBytes(image.FilePath)).FitArea();
+                                        .Image(image.Bytes ?? File.ReadAllBytes(image.FilePath)).FitArea();
                                 });
                             }
 

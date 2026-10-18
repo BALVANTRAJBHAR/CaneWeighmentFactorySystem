@@ -20,6 +20,9 @@ public class CameraConfig : BaseEntity
     public string? Resolution { get; set; }
     public int? Fps { get; set; }
     public bool CaptureEnabled { get; set; } = true;
+    /// <summary>Controls automatic Gross/Tare evidence for both cane-purchase and sale weighment.
+    /// Other camera uses such as Payment Evidence and Rate Edit remain independently selectable.</summary>
+    public bool WeighmentCaptureEnabled { get; set; } = true;
     public bool LiveViewEnabled { get; set; } = true;
     public int RetentionDays { get; set; } = 365;
 }
@@ -46,6 +49,9 @@ public class PrintConfig : BaseEntity
     /// <summary>Legacy combined Sale Weighment copy count retained only so older
     /// installations can upgrade without dropping their existing column.</summary>
     public int SalePurchaseCopies { get; set; } = 2;
+    /// <summary>When enabled, a completed Sale Weighment opens the configured tax-invoice
+    /// workbook and auto-prints the matching A4 invoice instead of the standard slip PDF.</summary>
+    public bool SalePurchaseInvoiceEnabled { get; set; }
     public string Language { get; set; } = "hi";
     /// <summary>Dot-matrix only. When false, the physical pre-printed header area is
     /// left blank while transaction rows keep the same vertical starting position.</summary>

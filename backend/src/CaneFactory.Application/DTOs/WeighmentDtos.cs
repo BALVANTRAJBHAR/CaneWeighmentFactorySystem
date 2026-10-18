@@ -1,6 +1,17 @@
 namespace CaneFactory.Application.DTOs;
 
-public class GrossSaveRequest
+public interface IScaleReadingProofRequest
+{
+    decimal ScaleReadingKg { get; set; }
+    bool ScaleReadingStable { get; set; }
+    DateTime? ScaleReadingCapturedAtUtc { get; set; }
+    string? ScaleBridgeSessionId { get; set; }
+    long ScaleBridgeZeroCounter { get; set; }
+    string? ScaleReadingNonce { get; set; }
+    string? ScaleReadingSignature { get; set; }
+}
+
+public class GrossSaveRequest : IScaleReadingProofRequest
 {
     public int GrowerId { get; set; }
     // Kept temporarily so an older desktop client can finish an in-progress
@@ -14,13 +25,25 @@ public class GrossSaveRequest
     public decimal CuttingPercent { get; set; }
     public decimal OtherDeductionPercent { get; set; }
     public decimal ScaleReadingKg { get; set; }
+    public bool ScaleReadingStable { get; set; }
+    public DateTime? ScaleReadingCapturedAtUtc { get; set; }
+    public string? ScaleBridgeSessionId { get; set; }
+    public long ScaleBridgeZeroCounter { get; set; }
+    public string? ScaleReadingNonce { get; set; }
+    public string? ScaleReadingSignature { get; set; }
     public string? IdempotencyKey { get; set; }
 }
 
-public class TareSaveRequest
+public class TareSaveRequest : IScaleReadingProofRequest
 {
     public int PurchaseId { get; set; }
     public decimal ScaleReadingKg { get; set; }
+    public bool ScaleReadingStable { get; set; }
+    public DateTime? ScaleReadingCapturedAtUtc { get; set; }
+    public string? ScaleBridgeSessionId { get; set; }
+    public long ScaleBridgeZeroCounter { get; set; }
+    public string? ScaleReadingNonce { get; set; }
+    public string? ScaleReadingSignature { get; set; }
     public decimal? Rate { get; set; }
     public int? ApprovedByUserId { get; set; }
     public int? RateReasonId { get; set; }
@@ -108,7 +131,7 @@ public class LiveWeightDto
     public string? Error { get; set; }
 }
 
-public class SalePurchaseTareSaveRequest
+public class SalePurchaseTareSaveRequest : IScaleReadingProofRequest
 {
     public int ItemId { get; set; }
     public int PartyId { get; set; }
@@ -116,13 +139,31 @@ public class SalePurchaseTareSaveRequest
     public string VehicleNumber { get; set; } = string.Empty;
     public string DriverName { get; set; } = string.Empty;
     public string? Remark { get; set; }
+    public decimal ScaleReadingKg { get; set; }
+    public bool ScaleReadingStable { get; set; }
+    public DateTime? ScaleReadingCapturedAtUtc { get; set; }
+    public string? ScaleBridgeSessionId { get; set; }
+    public long ScaleBridgeZeroCounter { get; set; }
+    public string? ScaleReadingNonce { get; set; }
+    public string? ScaleReadingSignature { get; set; }
     public string? IdempotencyKey { get; set; }
 }
 
-public class SalePurchaseGrossSaveRequest
+public class SalePurchaseGrossSaveRequest : IScaleReadingProofRequest
 {
     public int SalePurchaseId { get; set; }
+    public decimal ScaleReadingKg { get; set; }
+    public bool ScaleReadingStable { get; set; }
+    public DateTime? ScaleReadingCapturedAtUtc { get; set; }
+    public string? ScaleBridgeSessionId { get; set; }
+    public long ScaleBridgeZeroCounter { get; set; }
+    public string? ScaleReadingNonce { get; set; }
+    public string? ScaleReadingSignature { get; set; }
     public decimal? Rate { get; set; }
+    public decimal GstPercent { get; set; }
+    public decimal SalesPercent { get; set; }
+    /// <summary>INTRA_STATE (CGST + SGST) or INTER_STATE (IGST).</summary>
+    public string TaxSupplyType { get; set; } = "INTRA_STATE";
     public int? ApprovedByUserId { get; set; }
     public int? RateReasonId { get; set; }
     public string? RateOverrideRemark { get; set; }

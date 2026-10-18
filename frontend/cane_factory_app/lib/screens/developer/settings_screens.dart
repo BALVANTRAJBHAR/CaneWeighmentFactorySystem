@@ -270,7 +270,15 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
         ('applyToCanePurchase', 'Apply to Cane Purchase'),
         ('applyToSalePurchase', 'Apply to SalePurchase'),
         ('applyToGross', 'Apply to Gross'),
-        ('applyToTare', 'Apply to Tare')
+        ('applyToTare', 'Apply to Tare'),
+        (
+          'restrictWeighmentSaveToBridgeHost',
+          'Allow weighment save only on digitizer / Scale Bridge PC'
+        ),
+        (
+          'liveWeightOnlyOnDigitizerPc',
+          'Live weight only on Digitizer PC (stop continuous server streaming)'
+        )
       ])
         SwitchListTile(
             title: Text(e.$2),
@@ -580,9 +588,18 @@ class _CamerasTab extends StatefulWidget {
 class _CamerasTabState extends State<_CamerasTab> {
   List cams = [];
   final _imageRootController = TextEditingController();
+  final _azureContainerController =
+      TextEditingController(text: 'canefactory-images');
+  final _azurePrefixController =
+      TextEditingController(text: 'authentic-food-farm');
   final _paymentEvidenceRootController = TextEditingController();
   String? _effectiveImageRoot;
+  String _imageStorageMode = 'LOCAL';
+  bool _azureStorageConfigured = false;
+  String? _azureAuthentication;
+  String? _azureServiceUri;
   int? _paymentEvidenceCameraId;
+  int? _rateEvidenceCameraId;
 
   @override
   void initState() {
@@ -599,8 +616,20 @@ class _CamerasTabState extends State<_CamerasTab> {
       if (storage.statusCode == 200 && mounted) {
         _imageRootController.text =
             storage.data['configuredPath']?.toString() ?? '';
-        setState(() =>
-            _effectiveImageRoot = storage.data['effectiveRoot']?.toString());
+        _azureContainerController.text =
+            storage.data['azureContainer']?.toString() ?? 'canefactory-images';
+        _azurePrefixController.text =
+            storage.data['azurePrefix']?.toString() ?? 'authentic-food-farm';
+        setState(() {
+          _imageStorageMode = storage.data['mode']?.toString() == 'AZURE_BLOB'
+              ? 'AZURE_BLOB'
+              : 'LOCAL';
+          _effectiveImageRoot = storage.data['effectiveRoot']?.toString();
+          _azureStorageConfigured = storage.data['azureConfigured'] == true;
+          _azureAuthentication =
+              storage.data['azureAuthentication']?.toString();
+          _azureServiceUri = storage.data['azureServiceUri']?.toString();
+        });
       }
     } catch (_) {
       // Camera list remains usable when an older API has not exposed this endpoint yet.
@@ -619,11 +648,27 @@ class _CamerasTabState extends State<_CamerasTab> {
     } catch (_) {
       // The normal camera catalogue remains usable while an older API is deployed.
     }
+    try {
+      final rateEvidence =
+          await ApiClient.instance.dio.get('/api/config/rate-evidence');
+      if (rateEvidence.statusCode == 200 && mounted) {
+        final id = rateEvidence.data['selectedCameraId'];
+        setState(() => _rateEvidenceCameraId =
+            id is num ? id.toInt() : int.tryParse('$id'));
+      }
+    } catch (_) {
+      // Compatible with an older API until it is upgraded.
+    }
   }
 
   Future<void> _saveImageRoot() async {
-    final res = await ApiClient.instance.dio.put('/api/config/image-storage',
-        data: {'path': _imageRootController.text.trim()});
+    final res =
+        await ApiClient.instance.dio.put('/api/config/image-storage', data: {
+      'mode': _imageStorageMode,
+      'path': _imageRootController.text.trim(),
+      'azureContainer': _azureContainerController.text.trim(),
+      'azurePrefix': _azurePrefixController.text.trim(),
+    });
     if (mounted) showResult(context, res);
     if (res.statusCode == 200 && mounted) {
       setState(
@@ -650,9 +695,24 @@ class _CamerasTabState extends State<_CamerasTab> {
     }
   }
 
+  Future<void> _saveRateEvidence() async {
+    if (_rateEvidenceCameraId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Select an active camera for Rate Edit Evidence.')));
+      return;
+    }
+    final res =
+        await ApiClient.instance.dio.put('/api/config/rate-evidence', data: {
+      'cameraId': _rateEvidenceCameraId,
+    });
+    if (mounted) showResult(context, res);
+  }
+
   @override
   void dispose() {
     _imageRootController.dispose();
+    _azureContainerController.dispose();
+    _azurePrefixController.dispose();
     _paymentEvidenceRootController.dispose();
     super.dispose();
   }
@@ -688,6 +748,7 @@ class _CamerasTabState extends State<_CamerasTab> {
     int port = cam?['port'] ?? 554;
     final portController = TextEditingController(text: '$port');
     bool capture = cam?['captureEnabled'] ?? true;
+    bool weighmentCapture = cam?['weighmentCaptureEnabled'] ?? true;
     bool liveView = cam?['liveViewEnabled'] ?? true;
     final ok = await showDialog<bool>(
         context: context,
@@ -818,6 +879,15 @@ class _CamerasTabState extends State<_CamerasTab> {
                                 value: capture,
                                 onChanged: (v) => setD(() => capture = v)),
                             SwitchListTile(
+                                title: const Text(
+                                    'Weighment Image Capture Enabled'),
+                                subtitle: const Text(
+                                    'Use automatically on Purchase and Sale Gross/Tare save'),
+                                value: weighmentCapture,
+                                onChanged: capture
+                                    ? (v) => setD(() => weighmentCapture = v)
+                                    : null),
+                            SwitchListTile(
                                 title: const Text('Live View Enabled'),
                                 value: liveView,
                                 onChanged: (v) => setD(() => liveView = v)),
@@ -845,6 +915,7 @@ class _CamerasTabState extends State<_CamerasTab> {
       'streamType': cam?['streamType'] ?? 'Main',
       'rtspUrl': c['rtspUrl']!.text.isEmpty ? null : c['rtspUrl']!.text,
       'captureEnabled': capture,
+      'weighmentCaptureEnabled': weighmentCapture,
       'liveViewEnabled': liveView,
       'retentionDays': cam?['retentionDays'] ?? 365,
       'status': true,
@@ -864,6 +935,10 @@ class _CamerasTabState extends State<_CamerasTab> {
     final selectedPaymentCamera = paymentEvidenceCameras
             .any((camera) => camera['id'] == _paymentEvidenceCameraId)
         ? _paymentEvidenceCameraId
+        : null;
+    final selectedRateCamera = paymentEvidenceCameras
+            .any((camera) => camera['id'] == _rateEvidenceCameraId)
+        ? _rateEvidenceCameraId
         : null;
     return ListView(padding: const EdgeInsets.all(16), children: [
       Row(children: [
@@ -885,21 +960,65 @@ class _CamerasTabState extends State<_CamerasTab> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     SizedBox(
+                        width: 230,
+                        child: DropdownButtonFormField<String>(
+                            value: _imageStorageMode,
+                            decoration: const InputDecoration(
+                                labelText: 'Image Storage Mode'),
+                            items: const [
+                              DropdownMenuItem(
+                                  value: 'LOCAL',
+                                  child: Text('Local API Host / LAN Server')),
+                              DropdownMenuItem(
+                                  value: 'AZURE_BLOB',
+                                  child: Text('Azure Cloud (Blob)')),
+                            ],
+                            onChanged: (value) => setState(
+                                () => _imageStorageMode = value ?? 'LOCAL'))),
+                    SizedBox(
                         width: 420,
                         child: TextField(
                             controller: _imageRootController,
+                            enabled: _imageStorageMode == 'LOCAL',
                             decoration: const InputDecoration(
                                 labelText: 'Weighment Image Root (optional)',
                                 hintText: r'C:\ or D:\ or E:\CustomPath',
                                 helperText:
                                     'Blank = auto-select C:/D:/E: drive with the most free space'))),
+                    if (_imageStorageMode == 'AZURE_BLOB') ...[
+                      SizedBox(
+                          width: 260,
+                          child: TextField(
+                              controller: _azureContainerController,
+                              decoration: const InputDecoration(
+                                  labelText: 'Private Blob Container',
+                                  hintText: 'canefactory-images'))),
+                      SizedBox(
+                          width: 300,
+                          child: TextField(
+                              controller: _azurePrefixController,
+                              decoration: const InputDecoration(
+                                  labelText: 'Cloud Folder Prefix',
+                                  hintText: 'authentic-food-farm'))),
+                    ],
                     FilledButton.icon(
                         onPressed: _saveImageRoot,
                         icon: const Icon(Icons.save_outlined),
-                        label: const Text('Save Image Path')),
-                    if (_effectiveImageRoot != null)
-                      Text('Effective folder: $_effectiveImageRoot',
-                          style: const TextStyle(fontSize: 12)),
+                        label: const Text('Save Storage Mode')),
+                    SizedBox(
+                        width: 900,
+                        child: Text(
+                            _imageStorageMode == 'LOCAL'
+                                ? 'New Purchase, Sale, Payment and Rate Edit images save on the machine running the API (the LAN server when API is on LAN). Effective folder: ${_effectiveImageRoot ?? '-'}'
+                                : _azureStorageConfigured
+                                    ? 'New images save in the private Azure Blob container. Authentication: ${_azureAuthentication ?? 'Managed Identity'}${_azureServiceUri == null ? '' : ' • $_azureServiceUri'}'
+                                    : 'Azure server settings are missing. Configure CANE_AZURE_BLOB_SERVICE_URI (recommended with Managed Identity) or the server-only connection string before saving Cloud mode.',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: _imageStorageMode == 'AZURE_BLOB' &&
+                                        !_azureStorageConfigured
+                                    ? Theme.of(context).colorScheme.error
+                                    : null))),
                   ]))),
       const SizedBox(height: 8),
       Card(
@@ -950,6 +1069,47 @@ class _CamerasTabState extends State<_CamerasTab> {
                             'Set the selected camera IP, protocol and credentials from its Edit button above. Only this active camera is used in the Cash Payment live-view/capture dialog.',
                             style: TextStyle(fontSize: 12))),
                   ]))),
+      const SizedBox(height: 8),
+      Card(
+          child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    const SizedBox(
+                        width: 100,
+                        child: Text('Rate Edit\nEvidence',
+                            style: TextStyle(fontWeight: FontWeight.w700))),
+                    SizedBox(
+                        width: 270,
+                        child: DropdownButtonFormField<int>(
+                            value: selectedRateCamera,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                                labelText: 'Rate Edit Evidence Camera'),
+                            hint: const Text('Select configured camera'),
+                            items: [
+                              for (final camera in paymentEvidenceCameras)
+                                DropdownMenuItem<int>(
+                                    value: camera['id'] as int,
+                                    child: Text(
+                                        'Camera ${(camera['cameraNumber'] as num).toInt().toString().padLeft(2, '0')} • ${camera['vendor']}'))
+                            ],
+                            onChanged: (value) =>
+                                setState(() => _rateEvidenceCameraId = value))),
+                    FilledButton.icon(
+                        onPressed: _saveRateEvidence,
+                        icon: const Icon(Icons.save_outlined),
+                        label: const Text('Save Rate Edit Camera')),
+                    const SizedBox(
+                        width: 700,
+                        child: Text(
+                            'Only this camera captures Rate Edit evidence. Payment Evidence camera remains independent.',
+                            style: TextStyle(fontSize: 12))),
+                  ]))),
+      const SizedBox(height: 8),
       for (final cam in cams)
         Card(
             child: ListTile(
@@ -960,11 +1120,11 @@ class _CamerasTabState extends State<_CamerasTab> {
           title: Text(
               'Camera ${cam['cameraNumber'].toString().padLeft(2, '0')} • ${cam['vendor']} ${cam['model'] ?? ''}'),
           subtitle: Text(
-              '${cam['protocol']} • Capture: ${cam['captureEnabled'] == true ? 'ON' : 'OFF'} • Live: ${cam['liveViewEnabled'] == true ? 'ON' : 'OFF'}'),
+              '${cam['protocol']} • Capture: ${cam['captureEnabled'] == true ? 'ON' : 'OFF'} • Weighment: ${cam['weighmentCaptureEnabled'] == true ? 'ON' : 'OFF'} • Live: ${cam['liveViewEnabled'] == true ? 'ON' : 'OFF'}'),
           trailing: Wrap(children: [
             TextButton(
                 onPressed: () async {
-                  final res = await ApiClient.instance.dio
+                  final res = await ApiClient.instance.cameraDio
                       .post('/api/config/cameras/${cam['id']}/test');
                   if (context.mounted) showResult(context, res);
                 },
@@ -988,7 +1148,7 @@ class _CamerasTabState extends State<_CamerasTab> {
         barrierDismissible: false,
         builder: (_) => const Center(child: CircularProgressIndicator()));
     try {
-      final res = await ApiClient.instance.dio.get(
+      final res = await ApiClient.instance.cameraDio.get(
           '/api/config/cameras/$cameraId/snapshot',
           options: Options(
               responseType: ResponseType.bytes,
@@ -1157,6 +1317,13 @@ class _PrintTabState extends State<_PrintTab> {
               'When enabled, Gross/Tare camera images are included below the A4 weighment details.'),
           value: v!['printImages'] != false,
           onChanged: (x) => setState(() => v!['printImages'] = x)),
+      SwitchListTile(
+          title: const Text('Sale Weighment Tax Invoice (Excel)'),
+          subtitle: const Text(
+              'For completed Sale Weighment only: opens the Excel tax invoice and auto-prints its matching A4 layout. Tare and Dot Matrix continue with the standard configured format.'),
+          value: v!['salePurchaseInvoiceEnabled'] == true,
+          onChanged: (x) =>
+              setState(() => v!['salePurchaseInvoiceEnabled'] = x)),
       if (v!['printerType'] == 'DotMatrix') ...[
         const SizedBox(height: 8),
         Card(
@@ -1428,6 +1595,35 @@ class _PrintTabState extends State<_PrintTab> {
                   onChanged: (x) => setState(() => v![e.$1] = x))),
       ]),
       const SizedBox(height: 12),
+      const Text('Sale Invoice Details',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+      const Padding(
+          padding: EdgeInsets.only(top: 4, bottom: 12),
+          child: Text(
+              'These fields are used only by the Sale Weighment Excel tax invoice. The ordinary slip/report address above remains unchanged.',
+              style: TextStyle(fontSize: 12, color: Colors.grey))),
+      Wrap(spacing: 12, runSpacing: 12, children: [
+        _invoiceField('invoiceRoadStreet', 'Road / Street', 'Kodsa'),
+        _invoiceField('invoiceNearbyLandmark', 'Nearby Landmark', 'Kodsa'),
+        _invoiceField('invoiceLocality', 'Locality / Sub-locality', 'Kodsa'),
+        _invoiceField('invoiceCity', 'City / Town / Village', 'Khairi'),
+        _invoiceField('invoiceDistrict', 'District', 'Narsinghpur'),
+        _invoiceField('invoiceState', 'State', 'Madhya Pradesh'),
+        _invoiceField('invoicePinCode', 'PIN Code', '487221'),
+        _invoiceField('invoicePhone', 'Phone Number', '7987376722, 8828855999'),
+        _invoiceField('invoiceEmail', 'Email ID', 'afofarm91@gmail.com'),
+        _invoiceField('invoiceGstin', 'Company GSTIN', '23ACLFA2268H1ZH'),
+      ]),
+      const SizedBox(height: 12),
+      TextFormField(
+          initialValue: v!['invoiceTermsAndConditions']?.toString() ?? '',
+          decoration: const InputDecoration(
+              labelText: 'Invoice Terms and Conditions',
+              hintText: 'Terms printed at the bottom of every sale invoice'),
+          minLines: 3,
+          maxLines: 5,
+          onChanged: (x) => v!['invoiceTermsAndConditions'] = x),
+      const SizedBox(height: 12),
       FilledButton(
           onPressed: () async {
             final res =
@@ -1654,6 +1850,13 @@ class _PrintTabState extends State<_PrintTab> {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
   }
+
+  Widget _invoiceField(String key, String label, String hint) => SizedBox(
+      width: 280,
+      child: TextFormField(
+          initialValue: v![key]?.toString() ?? '',
+          decoration: InputDecoration(labelText: label, hintText: hint),
+          onChanged: (x) => v![key] = x));
 }
 
 class _SmsTab extends StatefulWidget {

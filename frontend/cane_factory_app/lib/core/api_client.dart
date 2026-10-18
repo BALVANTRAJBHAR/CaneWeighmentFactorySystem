@@ -13,6 +13,8 @@ class ApiClient {
   // generic for same-PC development only; production/LAN builds must pass API_BASE_URL.
   static const String baseUrl = String.fromEnvironment('API_BASE_URL',
       defaultValue: 'http://localhost:5000');
+  static const String cameraEdgeBaseUrl =
+      String.fromEnvironment('CAMERA_EDGE_API_BASE_URL', defaultValue: baseUrl);
   static Uri? get baseUri => Uri.tryParse(baseUrl);
   static String? get configurationError {
     final uri = baseUri;
@@ -27,6 +29,7 @@ class ApiClient {
 
   final _storage = const FlutterSecureStorage();
   late final Dio dio = _build();
+  late final Dio cameraDio = _buildCameraEdge();
   void Function()? onSessionExpired;
 
   Dio _build() {
@@ -62,6 +65,21 @@ class ApiClient {
         handler.next(response);
       },
     ));
+    return d;
+  }
+
+  Dio _buildCameraEdge() {
+    final d = Dio(BaseOptions(
+      baseUrl: cameraEdgeBaseUrl,
+      connectTimeout: const Duration(seconds: 5),
+      receiveTimeout: const Duration(seconds: 20),
+      validateStatus: (s) => s != null && s < 500,
+    ));
+    d.interceptors.add(InterceptorsWrapper(onRequest: (options, handler) async {
+      final token = await _storage.read(key: 'access_token');
+      if (token != null) options.headers['Authorization'] = 'Bearer $token';
+      handler.next(options);
+    }));
     return d;
   }
 

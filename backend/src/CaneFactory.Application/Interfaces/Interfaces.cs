@@ -76,6 +76,22 @@ public interface ICameraCaptureService
     Task<CameraCaptureResult> CaptureSingleAsync(int cameraConfigId, CancellationToken ct = default);
 }
 
+/// <summary>
+/// Stores transaction evidence either on the configured local/LAN filesystem or in a private
+/// Azure Blob container. Database rows keep the returned opaque locator, so records created in
+/// both modes remain readable after the Developer changes the active storage mode.
+/// </summary>
+public interface IImageStorageService
+{
+    bool IsCloudLocator(string? locator);
+    Task<string> GetModeAsync(CancellationToken ct = default);
+    Task EnsureCloudReadyAsync(string container, CancellationToken ct = default);
+    Task<string> SaveAsync(string localFullPath, string cloudRelativePath, byte[] bytes,
+        bool overwrite = true, CancellationToken ct = default);
+    Task<byte[]?> ReadAsync(string? locator, CancellationToken ct = default);
+    Task<bool> ExistsAsync(string? locator, CancellationToken ct = default);
+}
+
 /// <summary>One renderer per printer target ("A4" | "DotMatrix"). RenderPreview must be visually
 /// equivalent to RenderFinal (WYSIWYG) so the Flutter print-preview screen never lies to the user.</summary>
 public interface IPrintRenderer
@@ -89,16 +105,25 @@ public interface IPrintRenderer
 /// Single centralized engine reused by every future print-producing module.</summary>
 public interface IPrintEngineService
 {
-    Task<CaneFactory.Application.DTOs.PrintDocument> BuildGrossSlipAsync(int purchaseId, string generatedByUserName);
-    Task<CaneFactory.Application.DTOs.PrintDocument> BuildTareSlipAsync(int purchaseId, string generatedByUserName);
+    Task<CaneFactory.Application.DTOs.PrintDocument> BuildGrossSlipAsync(int purchaseId, string generatedByUserName, bool includeImages = true);
+    Task<CaneFactory.Application.DTOs.PrintDocument> BuildTareSlipAsync(int purchaseId, string generatedByUserName, bool includeImages = true);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildLoanSlipAsync(int loanId, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildLoanRecoverySlipAsync(int loanRecoveryId, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildPaymentSlipAsync(int paymentId, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildPaymentBatchSlipAsync(IReadOnlyCollection<int> paymentIds, string generatedByUserName);
-    Task<CaneFactory.Application.DTOs.PrintDocument> BuildSalePurchaseSlipAsync(int salePurchaseId, string stage, string generatedByUserName);
+    Task<CaneFactory.Application.DTOs.PrintDocument> BuildSalePurchaseSlipAsync(int salePurchaseId, string stage, string generatedByUserName, bool includeImages = true);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildTestDocumentAsync(string language, string generatedByUserName);
     Task<CaneFactory.Application.DTOs.PrintDocument> BuildDotMatrixCalibrationDocumentAsync(string generatedByUserName);
     (byte[] bytes, string contentType, string fileExtension) Render(CaneFactory.Application.DTOs.PrintDocument doc, string target, bool preview);
+}
+
+/// <summary>Builds the dedicated A4 tax invoice for a completed Sale Weighment.
+/// The Excel workbook is the operator-facing invoice; the PDF uses the exact
+/// same values for reliable unattended Windows printer spooling.</summary>
+public interface ISaleInvoiceService
+{
+    Task<byte[]> BuildExcelAsync(int salePurchaseId);
+    Task<byte[]> BuildPdfAsync(int salePurchaseId);
 }
 
 /// <summary>Generic HTTP SMS gateway client (Phase 10) - never tied to one named provider. Builds the
@@ -135,4 +160,6 @@ public interface IReportExportService
 
     byte[] ToExcel(string title, List<string> headers, List<List<string>> rows,
         List<(string Label, string Value)>? totals = null);
+
+    byte[] ToSaleTaxExcel(IReadOnlyList<SaleTaxReportRow> rows, string subtitle);
 }

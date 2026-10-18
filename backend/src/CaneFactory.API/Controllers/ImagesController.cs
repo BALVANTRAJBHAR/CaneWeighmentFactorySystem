@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CaneFactory.API.Controllers;
 
-/// <summary>Searches and serves captured weighment/payment evidence images. Image bytes remain on disk, never in the database.</summary>
+/// <summary>Searches and serves captured evidence from the configured local or private cloud store.</summary>
 [ApiController]
 [Authorize]
 [Route("api/images")]
@@ -18,10 +18,12 @@ public class ImagesController : ControllerBase
 
     private readonly AppDbContext _db;
     private readonly ICurrentUser _current;
+    private readonly IImageStorageService _storage;
     private readonly IConfiguration? _configuration;
-    public ImagesController(AppDbContext db, ICurrentUser current, IConfiguration? configuration = null)
+    public ImagesController(AppDbContext db, ICurrentUser current, IImageStorageService storage,
+        IConfiguration? configuration = null)
     {
-        _db = db; _current = current; _configuration = configuration;
+        _db = db; _current = current; _storage = storage; _configuration = configuration;
     }
 
     /// <summary>
@@ -53,7 +55,7 @@ public class ImagesController : ControllerBase
     {
         if (DenyImageView() is { } denied) return denied;
         var img = await _db.PurchaseImages.AsNoTracking().FirstOrDefaultAsync(i => i.Id == id && i.Status);
-        return await SendImageAsync(img?.FilePath, img?.ImageName);
+        return await SendImageAsync(img?.FilePath, img?.ImageName, img?.FileHash);
     }
 
     /// <summary>Serves cash evidence photos captured for a Payment.</summary>
@@ -62,7 +64,7 @@ public class ImagesController : ControllerBase
     {
         if (DenyCashEvidenceView() is { } denied) return denied;
         var img = await _db.PaymentImages.AsNoTracking().FirstOrDefaultAsync(i => i.Id == id && i.Status);
-        return await SendImageAsync(img?.FilePath, img?.ImageName);
+        return await SendImageAsync(img?.FilePath, img?.ImageName, img?.FileHash);
     }
 
     /// <summary>Serves images captured during a standalone sale/purchase weighment.</summary>
@@ -71,7 +73,7 @@ public class ImagesController : ControllerBase
     {
         if (DenyImageView() is { } denied) return denied;
         var img = await _db.SalePurchaseImages.AsNoTracking().FirstOrDefaultAsync(i => i.Id == id && i.Status);
-        return await SendImageAsync(img?.FilePath, img?.ImageName);
+        return await SendImageAsync(img?.FilePath, img?.ImageName, img?.FileHash);
     }
 
     /// <summary>Serves only evidence consumed by a committed Cane/Sale rate change.</summary>
@@ -250,34 +252,46 @@ public class ImagesController : ControllerBase
         ? null
         : StatusCode(StatusCodes.Status403Forbidden, new { message = "You do not have 'CashEvidence.View' permission." });
 
-    private async Task<IActionResult> SendImageAsync(string? filePath, string? imageName)
+    private async Task<IActionResult> SendImageAsync(string? filePath, string? imageName, string? fileHash)
     {
         if (string.IsNullOrWhiteSpace(filePath) || string.IsNullOrWhiteSpace(imageName))
             return NotFound(new { message = "Image record not found." });
-        if (!System.IO.File.Exists(filePath))
-            return NotFound(new { message = "Image metadata exists but the file is missing on disk." });
-        var bytes = await System.IO.File.ReadAllBytesAsync(filePath);
-        return File(bytes, "image/jpeg", imageName);
+        var bytes = await _storage.ReadAsync(filePath);
+        if (bytes == null)
+            return NotFound(new { message = "Image metadata exists but the object is missing from storage." });
+        if (!HashMatches(bytes, fileHash))
+            return Conflict(new { message = "Image integrity verification failed." });
+        return File(bytes, ContentType(imageName), imageName);
     }
 
     private async Task<IActionResult> SendRateEditImageAsync(string filePath, string imageName, string fileHash)
     {
         var (currentRoot, legacyRoot) = await ResolveRateEditRootsAsync();
-        if (!RateEditImagePathResolver.IsUnderRoot(filePath, currentRoot) &&
+        if (!_storage.IsCloudLocator(filePath) && !RateEditImagePathResolver.IsUnderRoot(filePath, currentRoot) &&
             !RateEditImagePathResolver.IsUnderRoot(filePath, legacyRoot))
             return Conflict(new { message = "Rate-update image path failed the security check." });
-        if (!System.IO.File.Exists(filePath))
-            return NotFound(new { message = "Image metadata exists but the file is missing on disk." });
-        var bytes = await System.IO.File.ReadAllBytesAsync(filePath);
-        byte[] expectedHash;
-        try { expectedHash = Convert.FromHexString(fileHash); }
-        catch (FormatException) { return Conflict(new { message = "Image integrity metadata is invalid." }); }
-        if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(bytes), expectedHash))
+        var bytes = await _storage.ReadAsync(filePath);
+        if (bytes == null)
+            return NotFound(new { message = "Image metadata exists but the object is missing from storage." });
+        if (!HashMatches(bytes, fileHash))
             return Conflict(new { message = "Image integrity verification failed." });
         Response.Headers.CacheControl = "no-store, private";
         Response.Headers.Append("X-Content-Type-Options", "nosniff");
         return File(bytes, "image/jpeg", imageName);
     }
+
+    private static bool HashMatches(byte[] bytes, string? fileHash)
+    {
+        if (string.IsNullOrWhiteSpace(fileHash)) return true; // legacy row created before hashes were introduced
+        try
+        {
+            return CryptographicOperations.FixedTimeEquals(SHA256.HashData(bytes), Convert.FromHexString(fileHash));
+        }
+        catch (FormatException) { return false; }
+    }
+
+    private static string ContentType(string imageName) =>
+        Path.GetExtension(imageName).Equals(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg";
 
     private async Task<(string CurrentRoot, string LegacyRoot)> ResolveRateEditRootsAsync()
     {

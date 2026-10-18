@@ -49,8 +49,31 @@ class _GrowerScreenState extends State<GrowerScreen> {
   }
 
   Future<void> _openForm({Map<String, dynamic>? existing}) async {
+    var formData = existing;
+    if (existing != null) {
+      try {
+        // The list intentionally contains a masked Aadhaar. Fetch the edit-only
+        // model so account number, holder name and Aadhaar prefill correctly.
+        final response =
+            await ApiClient.instance.dio.get('/api/growers/${existing['id']}');
+        if (response.statusCode != 200) {
+          throw ApiClient.errorMessage(
+              response, 'Grower details could not be loaded.');
+        }
+        formData = Map<String, dynamic>.from(response.data as Map);
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(ApiClient.exceptionMessage(
+              error, 'Grower details could not be loaded.')),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ));
+        return;
+      }
+    }
+    if (!mounted) return;
     final saved = await showDialog<bool>(
-        context: context, builder: (_) => _GrowerForm(existing: existing));
+        context: context, builder: (_) => _GrowerForm(existing: formData));
     if (saved == true) _load();
   }
 
@@ -125,7 +148,8 @@ class _GrowerScreenState extends State<GrowerScreen> {
                                   DateTime.parse(g['createdAt'].toString())
                                       .toLocal()))),
                           DataCell(Text('${g['bankName'] ?? '-'}')),
-                          DataCell(Text('${g['accountMasked'] ?? '-'}')),
+                          DataCell(Text(
+                              '${g['bankAccountNumber'] ?? g['accountMasked'] ?? '-'}')),
                           DataCell(Text('${g['aadhaarMasked'] ?? '-'}')),
                           DataCell(Chip(
                               label: Text(

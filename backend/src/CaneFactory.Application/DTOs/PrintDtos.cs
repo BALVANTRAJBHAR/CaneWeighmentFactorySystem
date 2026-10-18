@@ -80,6 +80,7 @@ public class PrintImage
 {
     public string Label { get; set; } = string.Empty;
     public string FilePath { get; set; } = string.Empty;
+    public byte[]? Bytes { get; set; }
 
     public PrintImage() { }
     public PrintImage(string label, string filePath)
@@ -87,6 +88,8 @@ public class PrintImage
         Label = label;
         FilePath = filePath;
     }
+
+    public PrintImage(string label, string filePath, byte[] bytes) : this(label, filePath) => Bytes = bytes;
 }
 
 public class PrintTable

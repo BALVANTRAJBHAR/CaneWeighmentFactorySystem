@@ -119,7 +119,9 @@ class MastersHubScreen extends StatelessWidget {
         endpoint: '/api/variety-types',
         fields: [
           FieldSpec('varietyTypeName', 'Variety Type Name',
-              hint: 'Example: Early', maxLength: 50)
+              hint: 'Example: Early',
+              maxLength: 50,
+              hindiKey: 'varietyTypeNameHi')
         ],
         columns: [
           ColumnSpec('id', 'ID'),
@@ -168,9 +170,15 @@ class MastersHubScreen extends StatelessWidget {
         endpoint: '/api/items',
         fields: [
           FieldSpec('itemName', 'Item Name',
-              hint: 'Example: Sugar', maxLength: 50, hindiKey: 'itemNameHi')
+              hint: 'Example: Sugar', maxLength: 50, hindiKey: 'itemNameHi'),
+          FieldSpec('hsnSacCode', 'HSN/SAC Code',
+              hint: 'Example: 1701', required: false, maxLength: 32),
         ],
-        columns: [ColumnSpec('id', 'ID'), ColumnSpec('itemName', 'Item')],
+        columns: [
+          ColumnSpec('id', 'ID'),
+          ColumnSpec('itemName', 'Item'),
+          ColumnSpec('hsnSacCode', 'HSN/SAC'),
+        ],
       ),
       'Crops': const MasterCrudScreen(
         title: 'Crop',
@@ -512,6 +520,7 @@ class _RateScreenState extends State<RateScreen> {
             width: 400,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               DropdownButtonFormField<int>(
+                value: typeId,
                 decoration: const InputDecoration(
                     labelText: 'Variety Type', hintText: 'Select Variety Type'),
                 items: [

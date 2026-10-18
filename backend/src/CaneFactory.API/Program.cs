@@ -11,6 +11,7 @@ using CaneFactory.Infrastructure.Weighing;
 using CaneFactory.Infrastructure.Camera;
 using CaneFactory.Infrastructure.Printing;
 using CaneFactory.Infrastructure.Sms;
+using CaneFactory.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -38,7 +39,10 @@ MapEnv("CANE_CONNECTION_STRING", "ConnectionStrings:Default");
 MapEnv("CANE_DB_PROVIDER", "Database:Provider");
 MapEnv("CANE_SEED_DEV_PASSWORD", "Seed:DeveloperPassword");
 MapEnv("CANE_IMAGE_STORAGE_ROOT", "Storage:ImageRoot");
+MapEnv("CANE_AZURE_BLOB_CONNECTION_STRING", "Storage:AzureBlob:ConnectionString");
+MapEnv("CANE_AZURE_BLOB_SERVICE_URI", "Storage:AzureBlob:ServiceUri");
 MapEnv("CANE_CAMERA_SIMULATOR", "Camera:SimulatorMode");
+MapEnv("CANE_CAMERA_CAPTURE_MODE", "Camera:CaptureExecutionMode");
 
 // ---- Database (SQL Server 2019 Express in production; SQLite fallback for dev containers) ----
 var provider = builder.Configuration["Database:Provider"] ?? "SqlServer";
@@ -86,6 +90,7 @@ builder.Services.AddSingleton<ICameraContinuousStreamProvider>(sp => sp.GetRequi
 builder.Services.AddSingleton<ICameraContinuousStreamProvider>(sp => sp.GetRequiredService<OnvifCaptureProvider>());
 builder.Services.AddSingleton<ICameraCaptureProvider, SimulatorCaptureProvider>();
 builder.Services.AddScoped<ICameraCaptureService, CameraCaptureService>();
+builder.Services.AddScoped<IImageStorageService, ImageStorageService>();
 builder.Services.AddScoped<CaneFactory.API.Services.RateOverrideService>();
 builder.Services.AddScoped<CaneFactory.API.Services.ScaleReadingResolver>();
 

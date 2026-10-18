@@ -25,11 +25,14 @@ class _SalePurchaseWeighmentScreenState
   final _driver = TextEditingController();
   final _remark = TextEditingController();
   final _id = TextEditingController();
+  final _gst = TextEditingController(text: '0.00');
+  final _salesPercent = TextEditingController(text: '0.00');
   List _items = [], _parties = [], _vehicles = [], _pending = [], _cameras = [];
   int? _itemId, _partyId, _vehicleTypeId;
   Map<String, dynamic>? _selected;
   Map<String, dynamic>? _itemRate;
   bool _gross = false, _saving = false;
+  String _taxSupplyType = 'INTRA_STATE';
   final _rateOverrideKey = GlobalKey<RateOverridePanelState>();
   late final LiveWeightProvider _liveWeightProvider;
 
@@ -51,6 +54,8 @@ class _SalePurchaseWeighmentScreenState
     _driver.dispose();
     _remark.dispose();
     _id.dispose();
+    _gst.dispose();
+    _salesPercent.dispose();
     super.dispose();
   }
 
@@ -112,6 +117,12 @@ class _SalePurchaseWeighmentScreenState
       _vehicle.text = data['vehicleNumber'] ?? '';
       _driver.text = data['driverName'] ?? '';
       _remark.text = data['remark'] ?? '';
+      _gst.text = ((data['gstPercent'] as num?) ?? 0).toStringAsFixed(2);
+      _salesPercent.text =
+          ((data['salesPercent'] as num?) ?? 0).toStringAsFixed(2);
+      _taxSupplyType = data['taxSupplyType']?.toString() == 'INTER_STATE'
+          ? 'INTER_STATE'
+          : 'INTRA_STATE';
     });
     await _loadItemRate(data['itemId'] as int?);
   }
@@ -145,7 +156,13 @@ class _SalePurchaseWeighmentScreenState
 
   Future<void> _print(dynamic print) async {
     if (print == null) return;
+    final invoice = print['invoice'] == true;
+    if (invoice && print['invoiceUrl'] != null) {
+      unawaited(openExcelAfterSave(context, print['invoiceUrl'].toString(),
+          'sale-invoice-${DateTime.now().millisecondsSinceEpoch}.xlsx'));
+    }
     if (print['shouldAutoPrint'] != true) {
+      if (invoice) return;
       final stage = print['stage']?.toString().toLowerCase() ?? 'weighment';
       await openPdfAfterSave(context, print['documentUrl'],
           'sale-purchase_$stage-${DateTime.now().millisecondsSinceEpoch}.pdf');
@@ -216,6 +233,37 @@ class _SalePurchaseWeighmentScreenState
     return saved > 0;
   }
 
+  bool _edgeCaptureRequired(dynamic response) {
+    final capture = response is Map ? response['capture'] : null;
+    final results = capture is Map ? capture['results'] : null;
+    return results is List &&
+        results.any((x) => x is Map && x['edgeCaptureRequired'] == true);
+  }
+
+  Future<bool> _captureWeighmentAtEdge(int salePurchaseId, String stage) async {
+    try {
+      final response = await ApiClient.instance.cameraDio.post(
+          '/api/sale-purchase-weighment/$salePurchaseId/images/capture',
+          data: {'stage': stage});
+      if (response.statusCode == 200) {
+        final results = response.data is Map ? response.data['results'] : null;
+        return results is List &&
+            results.any((x) => x is Map && x['success'] == true);
+      }
+      if (mounted) {
+        _toast(
+            'Weight saved, but local camera capture failed: ${ApiClient.errorMessage(response)}',
+            error: true);
+      }
+    } catch (_) {
+      if (mounted) {
+        _toast('Weight saved, but the factory camera service is not reachable.',
+            error: true);
+      }
+    }
+    return false;
+  }
+
   /// Saving the weighment and the optional print/sound/camera follow-up are
   /// deliberately separated. A Windows printer or speech-plugin issue after a
   /// successful API save must never tell the operator that the sale was not saved.
@@ -234,7 +282,11 @@ class _SalePurchaseWeighmentScreenState
             error: true);
       }
     }
-    if (_hasCapturedWeighmentEvidence(response)) {
+    var evidenceCaptured = _hasCapturedWeighmentEvidence(response);
+    if (_edgeCaptureRequired(response)) {
+      evidenceCaptured = await _captureWeighmentAtEdge(salePurchaseId, stage);
+    }
+    if (evidenceCaptured) {
       unawaited(_waitForCapturedImages(salePurchaseId, stage));
     }
   }
@@ -251,6 +303,12 @@ class _SalePurchaseWeighmentScreenState
   }
 
   Future<void> _saveTare() async {
+    final live = context.read<LiveWeightProvider>().current;
+    if (!live.canSaveWeighment) {
+      return _toast(
+          'Saving is allowed only on the digitizer / Scale Bridge PC.',
+          error: true);
+    }
     if (_saving) return;
     if (!_validLive()) return;
     if (_itemId == null ||
@@ -272,6 +330,7 @@ class _SalePurchaseWeighmentScreenState
         'vehicleNumber': _vehicle.text.trim(),
         'driverName': _driver.text.trim(),
         'remark': _remark.text.trim(),
+        ...live.saveProof,
         'idempotencyKey': 'sp-tare-${DateTime.now().microsecondsSinceEpoch}'
       });
       if (!mounted) return;
@@ -302,6 +361,12 @@ class _SalePurchaseWeighmentScreenState
   }
 
   Future<void> _saveGross() async {
+    final live = context.read<LiveWeightProvider>().current;
+    if (!live.canSaveWeighment) {
+      return _toast(
+          'Saving is allowed only on the digitizer / Scale Bridge PC.',
+          error: true);
+    }
     if (_saving) return;
     if (!_validLive()) return;
     if (_selected == null)
@@ -319,6 +384,10 @@ class _SalePurchaseWeighmentScreenState
       final res = await ApiClient.instance.dio
           .post('/api/sale-purchase-weighment/gross', data: {
         'salePurchaseId': _selected!['salePurchaseId'],
+        'gstPercent': double.tryParse(_gst.text.trim()) ?? 0,
+        'salesPercent': double.tryParse(_salesPercent.text.trim()) ?? 0,
+        'taxSupplyType': _taxSupplyType,
+        ...live.saveProof,
         ...rateOverride,
         'idempotencyKey':
             'sp-gross-${_selected!['salePurchaseId']}-${DateTime.now().microsecondsSinceEpoch}'
@@ -337,6 +406,9 @@ class _SalePurchaseWeighmentScreenState
         _selected = null;
         _id.clear();
         _itemRate = null;
+        _gst.text = '0.00';
+        _salesPercent.text = '0.00';
+        _taxSupplyType = 'INTRA_STATE';
         _gross = false;
       });
       unawaited(_load());
@@ -543,7 +615,13 @@ class _SalePurchaseWeighmentScreenState
               _calculationBox('Item Rate (automatic)', _rateText),
             ],
             FilledButton.icon(
-                onPressed: _saving ? null : _saveTare,
+                onPressed: _saving ||
+                        !context
+                            .watch<LiveWeightProvider>()
+                            .current
+                            .canSaveWeighment
+                    ? null
+                    : _saveTare,
                 icon: const Icon(Icons.save),
                 label: const Text('Save Tare'))
           ]);
@@ -575,7 +653,13 @@ class _SalePurchaseWeighmentScreenState
                   icon: const Icon(Icons.search),
                   label: const Text('Lookup')),
               FilledButton.icon(
-                  onPressed: _saving ? null : _saveGross,
+                  onPressed: _saving ||
+                          !context
+                              .watch<LiveWeightProvider>()
+                              .current
+                              .canSaveWeighment
+                      ? null
+                      : _saveGross,
                   icon: const Icon(Icons.save),
                   label: const Text('Save Gross')),
             ]),
@@ -605,8 +689,72 @@ class _SalePurchaseWeighmentScreenState
             transactionType: 'SALE',
             transactionId: _selected!['salePurchaseId'] as int?,
           ),
+          const SizedBox(height: 12),
+          Wrap(spacing: 12, runSpacing: 12, children: [
+            SizedBox(
+              width: 160,
+              child: TextField(
+                controller: _gst,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                    labelText: 'GST %', hintText: 'Example: 5.00'),
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            SizedBox(
+              width: 160,
+              child: TextField(
+                controller: _salesPercent,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                    labelText: 'Sales % (report)', hintText: 'Example: 5.00'),
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            SizedBox(
+              width: 220,
+              child: DropdownButtonFormField<String>(
+                value: _taxSupplyType,
+                decoration: const InputDecoration(labelText: 'Tax supply'),
+                items: const [
+                  DropdownMenuItem(
+                      value: 'INTRA_STATE',
+                      child: Text('Intra-state (CGST + SGST)')),
+                  DropdownMenuItem(
+                      value: 'INTER_STATE', child: Text('Inter-state (IGST)')),
+                ],
+                onChanged: (value) =>
+                    setState(() => _taxSupplyType = value ?? 'INTRA_STATE'),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          _saleAmountEstimate(finalWeight),
         ]
       ]);
+
+  Widget _saleAmountEstimate(double? finalWeight) {
+    final rate = (_itemRate?['rate'] as num?)?.toDouble();
+    final gst = double.tryParse(_gst.text.trim()) ?? 0;
+    final sales = double.tryParse(_salesPercent.text.trim()) ?? 0;
+    if (rate == null || finalWeight == null) return const SizedBox.shrink();
+    final base = finalWeight * rate;
+    final gstAmount = base * gst / 100;
+    final salesAmount = base * sales / 100;
+    final intra = _taxSupplyType == 'INTRA_STATE';
+    return Wrap(spacing: 16, children: [
+      Text('Base: ₹${base.toStringAsFixed(2)}'),
+      Text('GST: ₹${gstAmount.toStringAsFixed(2)}'),
+      Text(intra
+          ? 'CGST / SGST: ₹${(gstAmount / 2).toStringAsFixed(2)} each'
+          : 'IGST: ₹${gstAmount.toStringAsFixed(2)}'),
+      Text('Sales: ₹${salesAmount.toStringAsFixed(2)}'),
+      Text('Final: ₹${(base + gstAmount).toStringAsFixed(2)}',
+          style: const TextStyle(fontWeight: FontWeight.bold)),
+    ]);
+  }
 
   String get _rateText {
     final rate = (_itemRate?['rate'] as num?)?.toDouble();
