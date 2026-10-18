@@ -384,6 +384,12 @@ namespace CaneFactory.Infrastructure.Migrations
                     b.Property<string>("LogoPath")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<int>("ReportLogoHeight")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ReportLogoWidth")
+                        .HasColumnType("int");
+
                     b.Property<string>("InvoiceCity")
                         .HasColumnType("nvarchar(max)");
 

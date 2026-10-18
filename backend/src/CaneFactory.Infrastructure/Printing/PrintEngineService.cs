@@ -422,6 +422,7 @@ public class PrintEngineService : IPrintEngineService
             new("किसान आईडी", "Grower ID", p.GrowerId.ToString()),
             new("किसान का नाम", "Grower Name", Text(p.Grower?.GrowerName, p.Grower?.GrowerNameHi, language)),
             new("पिता का नाम", "Father's Name", Text(p.Grower?.FatherName, p.Grower?.FatherNameHi, language)),
+            new("मोबाइल नंबर", "Mobile Number", p.Grower?.Mobile ?? "-"),
             new("गाँव", "Village", Text(p.Grower?.Village?.VillageName, p.Grower?.Village?.VillageNameHi, language))
         };
 
@@ -473,6 +474,7 @@ public class PrintEngineService : IPrintEngineService
             new("अग्रिम क्रमांक", "Advice No"),
             new("किसान आईडी", "Grower ID"),
             new("किसान", "Grower"),
+            new("मोबाइल", "Mobile"),
             new("खाताधारक", "Account Holder"),
             new("बैंक", "Bank"),
             new("शाखा", "Branch"),
@@ -485,6 +487,7 @@ public class PrintEngineService : IPrintEngineService
             payment.AdviceNumber.ToString(),
             payment.GrowerId.ToString(),
             payment.Grower.GrowerName,
+            payment.Grower.Mobile,
             IsBankPayment(payment) ? SnapshotOrCurrent(payment.AccountHolderNameAtPayment, payment.Grower.AccountHolderName) : "-",
             IsBankPayment(payment) ? SnapshotOrCurrent(payment.BankNameAtPayment, payment.Grower.Bank?.BankName) : "-",
             IsBankPayment(payment) ? SnapshotOrCurrent(payment.BankBranchAtPayment, payment.Grower.Bank?.BranchName) : "-",
@@ -553,6 +556,7 @@ public class PrintEngineService : IPrintEngineService
             new("बिक्री/खरीद क्रमांक", "SalePurchase ID", p.Id.ToString()),
             new("वस्तु", "Item", Text(p.Item?.ItemName, p.Item?.ItemNameHi, language)),
             new("पार्टी", "Party", Text(p.Party?.PartyName, p.Party?.PartyNameHi, language)),
+            new("मोबाइल नंबर", "Mobile Number", p.Party?.Mobile ?? "-"),
             new("वाहन प्रकार", "Vehicle Type", Text(p.VehicleType?.VehicleTypeName, p.VehicleType?.VehicleTypeNameHi, language)),
             new("वाहन क्रमांक", "Vehicle Number", p.VehicleNumber),
             new("चालक", "Driver", p.DriverName),

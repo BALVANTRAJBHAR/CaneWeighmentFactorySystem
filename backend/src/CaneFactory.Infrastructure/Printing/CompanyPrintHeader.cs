@@ -10,11 +10,12 @@ public static class CompanyPrintHeader
     public static byte[]? ReadLogo(string? path) =>
         !string.IsNullOrWhiteSpace(path) && File.Exists(path) ? File.ReadAllBytes(path) : null;
 
-    public static void Compose(IContainer container, string companyName, string? address, byte[]? logo, byte[]? qr)
+    public static void Compose(IContainer container, string companyName, string? address, byte[]? logo, byte[]? qr,
+        float logoWidth = 70, float logoHeight = 60)
     {
         container.Row(row =>
         {
-            row.ConstantItem(70).Height(60).Element(e =>
+            row.ConstantItem(logoWidth).Height(logoHeight).Element(e =>
             {
                 if (logo != null) e.Image(logo).FitArea();
                 else e.Border(1).BorderColor(Colors.Grey.Medium).AlignCenter().AlignMiddle()

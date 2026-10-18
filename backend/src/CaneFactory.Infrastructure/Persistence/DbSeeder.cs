@@ -213,6 +213,8 @@ public static class DbSeeder
             {
                 CompanyName = "Shri Ganesh Khandsari Udyog",
                 Address = "Factory Road, District Headquarters, Uttar Pradesh",
+                ReportLogoWidth = 180,
+                ReportLogoHeight = 70,
                 DefaultLanguage = "en",
                 ThemeColor = "#1B5E20"
             });

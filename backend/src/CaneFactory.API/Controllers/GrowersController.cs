@@ -69,6 +69,7 @@ public class GrowersController : ControllerBase
     {
         g.Id, g.VillageId, VillageName = g.Village.VillageName, g.GrowerSequence, g.GrowerCode,
         g.GrowerName, g.GrowerNameHi, g.FatherName, g.FatherNameHi, g.BankId, BankName = g.Bank?.BankName,
+        BankIfsc = g.Bank?.IFSC,
         g.BankAccountNumber, g.AccountHolderName,
         // Full Aadhaar is supplied only to a user who already has Grower.Edit.
         AadhaarNumber = string.IsNullOrWhiteSpace(g.AadhaarEncrypted) ? null : _protector.Unprotect(g.AadhaarEncrypted),

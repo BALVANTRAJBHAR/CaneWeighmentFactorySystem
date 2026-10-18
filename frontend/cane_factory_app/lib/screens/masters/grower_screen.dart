@@ -190,6 +190,7 @@ class _GrowerForm extends StatefulWidget {
 class _GrowerFormState extends State<_GrowerForm> {
   final _formKey = GlobalKey<FormState>();
   final Map<String, TextEditingController> _c = {};
+  final _bankIfsc = TextEditingController();
   int? _villageId;
   int? _bankId;
   bool _status = true;
@@ -218,8 +219,24 @@ class _GrowerFormState extends State<_GrowerForm> {
     }
     _villageId = widget.existing?['villageId'];
     _bankId = widget.existing?['bankId'];
+    _bankIfsc.text = widget.existing?['bankIfsc']?.toString() ?? '';
     _status = widget.existing?['status'] ?? true;
     _loadRefs();
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _c.values) {
+      controller.dispose();
+    }
+    _bankIfsc.dispose();
+    super.dispose();
+  }
+
+  void _syncBankIfsc() {
+    final matches = _banks.where((bank) => bank['id'] == _bankId);
+    _bankIfsc.text =
+        matches.isEmpty ? '' : (matches.first['ifsc']?.toString() ?? '');
   }
 
   Future<void> _loadRefs() async {
@@ -228,6 +245,7 @@ class _GrowerFormState extends State<_GrowerForm> {
     setState(() {
       if (v.statusCode == 200) _villages = v.data['items'];
       if (b.statusCode == 200) _banks = b.data['items'];
+      _syncBankIfsc();
     });
   }
 
@@ -334,9 +352,25 @@ class _GrowerFormState extends State<_GrowerForm> {
                         value: b['id'] as int,
                         child: Text('${b['bankName']} - ${b['branchName']}'))
                 ],
-                onChanged: (v) => setState(() => _bankId = v),
+                onChanged: (v) => setState(() {
+                  _bankId = v;
+                  _syncBankIfsc();
+                }),
               ),
               const SizedBox(height: 10),
+              if (widget.existing != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: TextFormField(
+                    controller: _bankIfsc,
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'IFSC Code',
+                      hintText: 'Selected bank IFSC',
+                      prefixIcon: Icon(Icons.account_balance_outlined),
+                    ),
+                  ),
+                ),
               _text('bankAccountNumber', 'Bank Account Number (optional)',
                   'Example: 123456789012',
                   required: false, digits: true, maxLen: 18),

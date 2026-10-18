@@ -1,6 +1,6 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../core/api_client.dart';
@@ -2909,6 +2909,8 @@ class _CompanyTab extends StatefulWidget {
 class _CompanyTabState extends State<_CompanyTab> {
   Map<String, dynamic>? v;
   final _logoPath = TextEditingController();
+  final _reportLogoWidth = TextEditingController();
+  final _reportLogoHeight = TextEditingController();
   final _companyNameHi = TextEditingController();
   final _addressHi = TextEditingController();
   bool _companyNameHiManual = false;
@@ -2922,6 +2924,8 @@ class _CompanyTabState extends State<_CompanyTab> {
         setState(() {
           v = Map<String, dynamic>.from(res.data);
           _logoPath.text = v!['logoPath']?.toString() ?? '';
+          _reportLogoWidth.text = (v!['reportLogoWidth'] ?? 180).toString();
+          _reportLogoHeight.text = (v!['reportLogoHeight'] ?? 70).toString();
           _companyNameHi.text = v!['companyNameHi']?.toString() ?? '';
           _addressHi.text = v!['addressHi']?.toString() ?? '';
         });
@@ -2931,6 +2935,8 @@ class _CompanyTabState extends State<_CompanyTab> {
   @override
   void dispose() {
     _logoPath.dispose();
+    _reportLogoWidth.dispose();
+    _reportLogoHeight.dispose();
     _companyNameHi.dispose();
     _addressHi.dispose();
     super.dispose();
@@ -3005,6 +3011,35 @@ class _CompanyTabState extends State<_CompanyTab> {
           padding: EdgeInsets.only(top: 4),
           child: Text(
               'Select a PNG/JPG stored on this factory PC. It is used by A4/PDF and Dot Matrix slips.',
+              style: TextStyle(fontSize: 12, color: Colors.grey))),
+      const SizedBox(height: 12),
+      Row(children: [
+        Expanded(
+            child: TextField(
+                controller: _reportLogoWidth,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: const InputDecoration(
+                    labelText: 'Report Logo Width',
+                    hintText: '40 to 400 (default 180)'),
+                onChanged: (x) =>
+                    v!['reportLogoWidth'] = int.tryParse(x) ?? 180)),
+        const SizedBox(width: 12),
+        Expanded(
+            child: TextField(
+                controller: _reportLogoHeight,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: const InputDecoration(
+                    labelText: 'Report Logo Height',
+                    hintText: '20 to 200 (default 70)'),
+                onChanged: (x) =>
+                    v!['reportLogoHeight'] = int.tryParse(x) ?? 70)),
+      ]),
+      const Padding(
+          padding: EdgeInsets.only(top: 4),
+          child: Text(
+              'Controls the logo size in generated report PDF and Excel files.',
               style: TextStyle(fontSize: 12, color: Colors.grey))),
       const SizedBox(height: 8),
       Card(

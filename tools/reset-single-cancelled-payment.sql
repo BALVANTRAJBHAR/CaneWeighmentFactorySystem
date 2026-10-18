@@ -21,7 +21,7 @@ DECLARE @ImageFiles table (FilePath nvarchar(1000), ImageName nvarchar(260));
 SELECT Id, AdviceNumber, GrowerId, NetPayableAmount, PaymentStatus, PaymentDate
 FROM dbo.Payments WHERE Id = @PaymentId;
 
-SELECT 'PaymentPurchases' AS RelatedTable, COUNT_BIG(*) AS RowCount FROM dbo.PaymentPurchases WHERE PaymentId = @PaymentId
+SELECT 'PaymentPurchases' AS RelatedTable, COUNT_BIG(*) AS RowCounts FROM dbo.PaymentPurchases WHERE PaymentId = @PaymentId
 UNION ALL SELECT 'PaymentImages', COUNT_BIG(*) FROM dbo.PaymentImages WHERE PaymentId = @PaymentId
 UNION ALL SELECT 'CashBookEntries', COUNT_BIG(*) FROM dbo.CashBookEntries WHERE PaymentId = @PaymentId
 UNION ALL SELECT 'LoanRecoveries', COUNT_BIG(*) FROM dbo.LoanRecoveries WHERE PaymentId = @PaymentId

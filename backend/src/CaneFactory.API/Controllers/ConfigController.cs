@@ -957,8 +957,13 @@ public class ConfigController : ControllerBase
         if (!string.IsNullOrWhiteSpace(src.LogoPath) &&
             (!System.IO.File.Exists(src.LogoPath) || Path.GetExtension(src.LogoPath).ToLowerInvariant() is not (".png" or ".jpg" or ".jpeg")))
             return BadRequest(new { message = "Logo must be an existing PNG or JPG file on the factory server/PC." });
+        if (src.ReportLogoWidth is < 40 or > 400)
+            return BadRequest(new { message = "Report Logo Width must be between 40 and 400." });
+        if (src.ReportLogoHeight is < 20 or > 200)
+            return BadRequest(new { message = "Report Logo Height must be between 20 and 200." });
         var c = await _db.CompanyConfigs.FirstAsync(x => !x.IsDeleted);
         var old = new { c.CompanyName, c.CompanyNameHi, c.Address, c.AddressHi, c.DefaultLanguage, c.ThemeColor,
+            c.ReportLogoWidth, c.ReportLogoHeight,
             c.InvoiceRoadStreet, c.InvoiceNearbyLandmark, c.InvoiceLocality, c.InvoiceCity, c.InvoiceDistrict,
             c.InvoiceState, c.InvoicePinCode, c.InvoicePhone, c.InvoiceEmail, c.InvoiceGstin, c.InvoiceTermsAndConditions };
         c.CompanyName = src.CompanyName.Trim();
@@ -966,6 +971,8 @@ public class ConfigController : ControllerBase
         c.Address = src.Address;
         c.AddressHi = string.IsNullOrWhiteSpace(src.AddressHi) ? null : src.AddressHi.Trim();
         c.LogoPath = src.LogoPath;
+        c.ReportLogoWidth = src.ReportLogoWidth;
+        c.ReportLogoHeight = src.ReportLogoHeight;
         c.DefaultLanguage = src.DefaultLanguage;
         c.ThemeColor = src.ThemeColor;
         c.InvoiceRoadStreet = NullIfBlank(src.InvoiceRoadStreet);

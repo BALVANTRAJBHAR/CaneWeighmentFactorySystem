@@ -44,7 +44,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       static_cast<unsigned int>(std::max(0L, work_area.top +
           (work_area.bottom - work_area.top - 720L) / 2));
   Win32Window::Point origin(centered_x, centered_y);
-  if (!window.Create(L"Cane Factory", origin, size)) {
+  if (!window.Create(L"Sugarcane Factory", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

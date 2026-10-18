@@ -138,6 +138,9 @@ public class CompanyConfig : BaseEntity
     public string? Address { get; set; }
     public string? AddressHi { get; set; }
     public string? LogoPath { get; set; }
+    /// <summary>Logo size used by tabular PDF and Excel report exports.</summary>
+    public int ReportLogoWidth { get; set; } = 180;
+    public int ReportLogoHeight { get; set; } = 70;
     public string DefaultLanguage { get; set; } = "en";
     public string? ThemeColor { get; set; }
 

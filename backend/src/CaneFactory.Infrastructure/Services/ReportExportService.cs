@@ -22,14 +22,17 @@ public class ReportExportService : IReportExportService
     private readonly AppDbContext _db;
     public ReportExportService(AppDbContext db) => _db = db;
 
-    private (string Name, string? Address, byte[]? Logo, byte[] Qr) Branding(string title, List<string> headers, List<List<string>> rows)
+    private (string Name, string? Address, byte[]? Logo, byte[] Qr, int LogoWidth, int LogoHeight) Branding(
+        string title, List<string> headers, List<List<string>> rows)
     {
         var company = _db.CompanyConfigs.AsNoTracking().FirstOrDefault(c => !c.IsDeleted);
         // A list report has many transaction IDs: identify the complete dataset,
         // not an arbitrary first purchase. No credentials or personal data in QR.
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { title, headers, rows }))));
         return (company?.CompanyName ?? "Cane Factory", company?.Address,
-            CompanyPrintHeader.ReadLogo(company?.LogoPath), QrCodeHelper.GeneratePng($"Report: {title}\nSHA256: {hash}", 4));
+            CompanyPrintHeader.ReadLogo(company?.LogoPath), QrCodeHelper.GeneratePng($"Report: {title}\nSHA256: {hash}", 4),
+            Math.Clamp(company?.ReportLogoWidth ?? 180, 40, 400),
+            Math.Clamp(company?.ReportLogoHeight ?? 70, 20, 200));
     }
 
     private static float ColumnWeight(string header) => header switch
@@ -55,7 +58,8 @@ public class ReportExportService : IReportExportService
 
                 page.Header().Column(col =>
                 {
-                    col.Item().Element(e => CompanyPrintHeader.Compose(e, branding.Name, branding.Address, branding.Logo, branding.Qr));
+                    col.Item().Element(e => CompanyPrintHeader.Compose(e, branding.Name, branding.Address,
+                        branding.Logo, branding.Qr, branding.LogoWidth, branding.LogoHeight));
                     col.Item().PaddingTop(6).LineHorizontal(1).LineColor(Colors.Blue.Darken2);
                     col.Item().Text(title).FontSize(15).Bold().FontColor(Colors.Blue.Darken2);
                     if (!string.IsNullOrWhiteSpace(subtitle))
@@ -126,13 +130,13 @@ public class ReportExportService : IReportExportService
         ws.Range(1, 2, 1, lastColumn - 1).Style.Alignment.WrapText = true;
         ws.Range(2, 2, 2, lastColumn - 1).Merge().Value = branding.Address ?? "";
         ws.Range(2, 2, 2, lastColumn - 1).Style.Alignment.WrapText = true;
-        ws.Row(1).Height = 60;
+        ws.Row(1).Height = Math.Max(60, branding.LogoHeight * 0.75d + 8d);
         ws.Row(2).Height = 45;
         if (branding.Logo != null)
         {
             using var logo = new MemoryStream(branding.Logo);
-            var picture = ws.AddPicture(logo).MoveTo(ws.Cell(1, 1), 4, 4);
-            picture.Scale(Math.Min(70d / picture.Width, 70d / picture.Height));
+            ws.AddPicture(logo).MoveTo(ws.Cell(1, 1), 4, 4)
+                .WithSize(branding.LogoWidth, branding.LogoHeight);
         }
         using (var qr = new MemoryStream(branding.Qr))
             ws.AddPicture(qr).MoveTo(ws.Cell(1, lastColumn), 4, 4).WithSize(76, 76);
@@ -179,10 +183,11 @@ public class ReportExportService : IReportExportService
 
         ws.Columns().AdjustToContents();
         foreach (var column in ws.ColumnsUsed()) column.Width = Math.Clamp(column.Width, 14, 32);
+        if (branding.Logo != null)
+            ws.Column(1).Width = Math.Max(ws.Column(1).Width, Math.Min(55d, branding.LogoWidth / 7d));
         if (headers.Count <= 5) ws.Columns(1, lastColumn).Width = 32;
         ws.Range(headerRow, 1, headerRow, lastColumn).Style.Alignment.WrapText = true;
         ws.Row(headerRow).Height = 32;
-        ws.SheetView.FreezeRows(headerRow);
         ws.PageSetup.PageOrientation = XLPageOrientation.Landscape;
         ws.PageSetup.FitToPages(1, 0);
         ws.PageSetup.SetRowsToRepeatAtTop(1, headerRow);
@@ -194,23 +199,44 @@ public class ReportExportService : IReportExportService
     /// <summary>Excel layout for the date-wise Sale Product GST report. Percentages are data columns because a range may contain different rates.</summary>
     public byte[] ToSaleTaxExcel(IReadOnlyList<SaleTaxReportRow> rows, string subtitle)
     {
+        var headers = new[] { "S No", "Date", "Voucher No", "Vehicle Number", "Party Name", "Party Amount (Dr+/Cr-)", "Sales %", "Sales Amount (Dr+/Cr-)", "Tax Type", "SGST %", "SGST Amount (Dr+/Cr-)", "CGST %", "CGST Amount (Dr+/Cr-)", "IGST %", "IGST Amount (Dr+/Cr-)" };
+        var brandingRows = rows.Select((x, index) => new List<string>
+        {
+            (index + 1).ToString(), IndiaTime.Format(x.Date), x.SalePurchaseId.ToString(), x.VehicleNumber,
+            x.PartyName, x.PartyAmount.ToString("F2"), x.SalesPercent.ToString("F2"), x.SalesAmount.ToString("F2"),
+            x.TaxSupplyType, x.SgstAmount.ToString("F2"), x.CgstAmount.ToString("F2"), x.IgstAmount.ToString("F2")
+        }).ToList();
+        var branding = Branding("Sale Purchase Tax Report", headers.ToList(), brandingRows);
         using var workbook = new XLWorkbook();
         var ws = workbook.Worksheets.Add("Sale GST Report");
         ws.Style.Font.FontName = "Arial";
         ws.Style.Font.FontSize = 10;
         const string navy = "#102A4A";
-        const int headerRow = 5;
+        const int headerRow = 8;
         var widths = new[] { 8d, 13d, 13d, 16d, 26d, 17d, 11d, 17d, 14d, 11d, 16d, 11d, 16d, 11d, 16d };
         for (var column = 1; column <= widths.Length; column++) ws.Column(column).Width = widths[column - 1];
-        ws.Range(1, 1, 1, widths.Length).Merge().Value = "SALE PURCHASE TAX REPORT";
-        ws.Range(1, 1, 1, widths.Length).Style.Font.SetBold().Font.SetFontSize(14);
-        ws.Range(1, 1, 2, widths.Length).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-        ws.Range(2, 1, 2, widths.Length).Merge().Value = subtitle;
-        MergeGroup(ws, 3, 1, 4, "Voucher Details", navy);
-        MergeGroup(ws, 3, 5, 6, "Billed to Party & Invoice Amount", "#FCE4D6");
-        MergeGroup(ws, 3, 7, 8, "Sales Percentage", "#FFF2CC");
-        MergeGroup(ws, 3, 9, 15, "GST Output", "#E2F0D9");
-        var headers = new[] { "S No", "Date", "Voucher No", "Vehicle Number", "Party Name", "Party Amount (Dr+/Cr-)", "Sales %", "Sales Amount (Dr+/Cr-)", "Tax Type", "SGST %", "SGST Amount (Dr+/Cr-)", "CGST %", "CGST Amount (Dr+/Cr-)", "IGST %", "IGST Amount (Dr+/Cr-)" };
+        if (branding.Logo != null) ws.Column(1).Width = Math.Max(ws.Column(1).Width, Math.Min(55d, branding.LogoWidth / 7d));
+        ws.Range(1, 2, 1, widths.Length - 1).Merge().Value = branding.Name;
+        ws.Range(1, 2, 1, widths.Length - 1).Style.Font.SetBold().Font.SetFontSize(16);
+        ws.Range(1, 2, 2, widths.Length - 1).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        ws.Range(2, 2, 2, widths.Length - 1).Merge().Value = branding.Address ?? string.Empty;
+        ws.Row(1).Height = Math.Max(60, branding.LogoHeight * 0.75d + 8d);
+        ws.Row(2).Height = 30;
+        if (branding.Logo != null)
+        {
+            using var logo = new MemoryStream(branding.Logo);
+            ws.AddPicture(logo).MoveTo(ws.Cell(1, 1), 4, 4).WithSize(branding.LogoWidth, branding.LogoHeight);
+        }
+        using (var qr = new MemoryStream(branding.Qr))
+            ws.AddPicture(qr).MoveTo(ws.Cell(1, widths.Length), 4, 4).WithSize(76, 76);
+        ws.Range(4, 1, 4, widths.Length).Merge().Value = "SALE PURCHASE TAX REPORT";
+        ws.Range(4, 1, 4, widths.Length).Style.Font.SetBold().Font.SetFontSize(14);
+        ws.Range(4, 1, 5, widths.Length).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        ws.Range(5, 1, 5, widths.Length).Merge().Value = subtitle;
+        MergeGroup(ws, 7, 1, 4, "Voucher Details", navy);
+        MergeGroup(ws, 7, 5, 6, "Billed to Party & Invoice Amount", "#FCE4D6");
+        MergeGroup(ws, 7, 7, 8, "Sales Percentage", "#FFF2CC");
+        MergeGroup(ws, 7, 9, 15, "GST Output", "#E2F0D9");
         for (var column = 1; column <= headers.Length; column++)
         {
             var cell = ws.Cell(headerRow, column);
@@ -259,7 +285,7 @@ public class ReportExportService : IReportExportService
         ws.Range(totalRow, 5, totalRow, headers.Length).Style.Border.InsideBorder = XLBorderStyleValues.Thin;
         ws.Range(totalRow + 2, 1, totalRow + 2, headers.Length).Merge().Value = "POWERED BY WARRIOR SOFTECH";
         ws.Range(totalRow + 2, 1, totalRow + 2, headers.Length).Style.Font.SetBold().Alignment.SetHorizontal(XLAlignmentHorizontalValues.Center);
-        ws.SheetView.FreezeRows(headerRow); ws.PageSetup.PageOrientation = XLPageOrientation.Landscape; ws.PageSetup.FitToPages(1, 0); ws.PageSetup.SetRowsToRepeatAtTop(1, headerRow);
+        ws.PageSetup.PageOrientation = XLPageOrientation.Landscape; ws.PageSetup.FitToPages(1, 0); ws.PageSetup.SetRowsToRepeatAtTop(1, headerRow);
         using var stream = new MemoryStream(); workbook.SaveAs(stream); return stream.ToArray();
     }
 

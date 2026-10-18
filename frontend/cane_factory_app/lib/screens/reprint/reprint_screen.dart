@@ -145,14 +145,13 @@ class _ReprintScreenState extends State<ReprintScreen> {
         printerType: printerType,
         printerName: printerName,
         copies: 1,
-        dotMatrixTearOffParkingEnabled: selected != _ReprintType.payment &&
+        dotMatrixTearOffParkingEnabled:
             config['dotMatrixTearOffParkingEnabled'] == true,
         dotMatrixTearOffFeedLines:
             (config['dotMatrixTearOffFeedLines'] as num?)?.toDouble() ?? 12.0,
         dotMatrixLineSpacingUnits:
             (config['dotMatrixLineSpacingUnits'] as num?)?.toInt() ?? 20,
-        confirmTearOff:
-            selected == _ReprintType.payment ? null : _confirmTearOff,
+        confirmTearOff: _confirmTearOff,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(

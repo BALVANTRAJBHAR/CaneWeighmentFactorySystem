@@ -312,6 +312,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
           'growerId',
           'growerName',
           'fatherName',
+          'mobile',
           'villageName',
           'accountHolderName',
           'bankName',

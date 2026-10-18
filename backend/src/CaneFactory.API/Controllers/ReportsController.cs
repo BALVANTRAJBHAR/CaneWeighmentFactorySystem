@@ -468,7 +468,8 @@ public class ReportsController : ControllerBase
         var projected = q.Select(p => new PurchaseReportRow
         {
             PurchaseId = p.Id, GrowerId = p.GrowerId, GrowerCode = p.GrowerCode, GrowerName = p.Grower.GrowerName,
-            FatherName = p.Grower.FatherName, VillageName = p.Grower.Village.VillageName,
+            FatherName = p.Grower.FatherName, Mobile = p.Grower.Mobile,
+            VillageName = p.Grower.Village.VillageName,
             AccountHolderName = p.Grower.AccountHolderName,
             BankName = p.Grower.Bank != null ? p.Grower.Bank.BankName : null,
             BankBranch = p.Grower.Bank != null ? p.Grower.Bank.BranchName : null,
@@ -504,11 +505,11 @@ public class ReportsController : ControllerBase
         }
 
         var rows = await projected.Take(5000).ToListAsync();
-        var headers = new List<string> { "Purchase ID", "Grower ID", "Grower Name", "Father Name", "Village",
+        var headers = new List<string> { "Purchase ID", "Grower ID", "Grower Name", "Father Name", "Mobile Number", "Village",
             "Account Holder", "Bank", "Branch", "IFSC", "Account Number", "Vehicle No", "Variety",
             "Gross (Qtl)", "Tare (Qtl)", "Cutting Weight (Qtl)", "Net (Qtl)", "Final (Qtl)", "Rate", "Amount (Rs)", "Purchase Date (Tare)", "Weighment Status" };
         var tableRows = rows.Select(r => new List<string> {
-            r.PurchaseId.ToString(), r.GrowerId.ToString(), r.GrowerName, r.FatherName, r.VillageName,
+            r.PurchaseId.ToString(), r.GrowerId.ToString(), r.GrowerName, r.FatherName, r.Mobile, r.VillageName,
             r.AccountHolderName ?? "-", r.BankName ?? "-", r.BankBranch ?? "-", r.BankIfsc ?? "-",
             r.BankAccountNumber ?? "-", r.VehicleNumber, r.VarietyName,
             r.GrossWeightQuintal.ToString("F2"), r.TareWeightQuintal?.ToString("F2") ?? "-",

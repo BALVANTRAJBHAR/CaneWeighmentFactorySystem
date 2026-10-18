@@ -73,6 +73,9 @@ public class PaymentController : ControllerBase
             copies = userSelectedTarget ? Math.Max(1, cfg.PaymentCopies) : cfg.PaymentCopies,
             language = cfg.Language,
             shouldAutoPrint,
+            cfg.DotMatrixTearOffParkingEnabled,
+            cfg.DotMatrixTearOffFeedLines,
+            cfg.DotMatrixLineSpacingUnits,
             // Existing clients without an explicit choice still receive an A4 PDF when
             // physical auto-print is disabled.  A user-selected print type is honoured.
             documentUrl = $"/api/print/payment/{paymentId}?format=final" +
@@ -95,6 +98,9 @@ public class PaymentController : ControllerBase
             copies = userSelectedTarget ? Math.Max(1, cfg.PaymentCopies) : cfg.PaymentCopies,
             language = cfg.Language,
             shouldAutoPrint,
+            cfg.DotMatrixTearOffParkingEnabled,
+            cfg.DotMatrixTearOffFeedLines,
+            cfg.DotMatrixLineSpacingUnits,
             documentUrl = $"/api/print/payment-batch?batchToken={batchPrintToken}&format=final" +
                 (shouldAutoPrint ? $"&target={target}" : "&target=A4")
         };

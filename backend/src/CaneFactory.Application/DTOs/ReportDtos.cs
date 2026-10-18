@@ -8,6 +8,7 @@ public class PurchaseReportRow
     public string GrowerCode { get; set; } = string.Empty;
     public string GrowerName { get; set; } = string.Empty;
     public string FatherName { get; set; } = string.Empty;
+    public string Mobile { get; set; } = string.Empty;
     public string VillageName { get; set; } = string.Empty;
     public string? AccountHolderName { get; set; }
     public string? BankName { get; set; }
