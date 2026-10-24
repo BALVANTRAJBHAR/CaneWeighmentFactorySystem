@@ -227,7 +227,6 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
               images.where((image) => image['captureStage'] == stage).toList();
           if (stageImages.isNotEmpty) {
             _flashCapturedEvidence(stageImages, purchaseId);
-            await _sound.playConfiguredEvent('IMAGE_CAPTURED');
             return true;
           }
         }
@@ -266,13 +265,30 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
 
   Future<bool> _captureWeighmentAtEdge(int purchaseId, String stage) async {
     try {
-      final response = await ApiClient.instance.cameraDio.post(
-          '/api/purchases/$purchaseId/images/capture',
-          data: {'stage': stage});
+      final response = await ApiClient.instance.cameraDio
+          .post('/api/purchases/$purchaseId/images/capture',
+              data: {'stage': stage},
+              options: Options(
+                // Cameras are captured sequentially so that RTSP/ONVIF devices and
+                // the shared database are not overloaded. Three slow cameras can
+                // legitimately take longer than the camera preview timeout.
+                receiveTimeout: const Duration(seconds: 75),
+                sendTimeout: const Duration(seconds: 15),
+              ));
       if (response.statusCode == 200) {
         final results = response.data is Map ? response.data['results'] : null;
-        return results is List &&
-            results.any((x) => x is Map && x['success'] == true);
+        if (results is List) {
+          final saved =
+              results.where((x) => x is Map && x['success'] == true).length;
+          if (mounted && saved < results.length) {
+            _toast(
+              'Weight saved. Camera evidence: $saved of ${results.length} image(s) saved. Check the offline camera(s).',
+              error: true,
+            );
+          }
+          return saved > 0;
+        }
+        return false;
       }
       if (mounted)
         _toast(
@@ -280,7 +296,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
             error: true);
     } catch (error) {
       if (mounted)
-        _toast('Weight saved, but the factory camera service is not reachable.',
+        _toast(
+            'Weight saved, but camera capture could not finish: ${ApiClient.exceptionMessage(error, 'factory camera service is not reachable')}.',
             error: true);
     }
     return false;
@@ -370,7 +387,6 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       if (!mounted) return;
       if (res.statusCode == 200) {
         _toast(res.data['message']);
-        await _sound.onWeighmentSaved();
         final purchaseId = res.data['purchaseId'] as int;
         // reset new-entry fields; keep configuration selections for fast operation
         setState(() {
@@ -380,7 +396,6 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           _capturedImages = [];
         });
         _loadPending();
-        await _autoPrint(res.data['autoPrint']);
         // Normal weighment-camera evidence is optional and must never turn a
         // successful save into a red warning. Rate-change evidence is a
         // separate, synchronous required field validated by RateOverridePanel.
@@ -388,9 +403,11 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         if (_edgeCaptureRequired(res.data)) {
           evidenceCaptured = await _captureWeighmentAtEdge(purchaseId, 'GROSS');
         }
+        await _sound.onWeighmentSaved(imageCaptured: evidenceCaptured);
         if (evidenceCaptured) {
           unawaited(_loadCapturedImages(purchaseId, 'GROSS'));
         }
+        await _autoPrint(res.data['autoPrint']);
       } else {
         _toast(ApiClient.errorMessage(res), error: true);
       }
@@ -435,7 +452,6 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
       if (!mounted) return;
       if (res.statusCode == 200) {
         _toast('${res.data['message']} Purchase ID: ${res.data['purchaseId']}');
-        await _sound.onWeighmentSaved();
         final purchaseId = _selectedPurchase!['purchaseId'] as int;
         setState(() {
           _selectedPurchase = null;
@@ -443,14 +459,15 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           _capturedImages = [];
         });
         _loadPending();
-        await _autoPrint(res.data['autoPrint']);
         var evidenceCaptured = _hasCapturedWeighmentEvidence(res.data);
         if (_edgeCaptureRequired(res.data)) {
           evidenceCaptured = await _captureWeighmentAtEdge(purchaseId, 'TARE');
         }
+        await _sound.onWeighmentSaved(imageCaptured: evidenceCaptured);
         if (evidenceCaptured) {
           unawaited(_loadCapturedImages(purchaseId, 'TARE'));
         }
+        await _autoPrint(res.data['autoPrint']);
       } else {
         _toast(ApiClient.errorMessage(res), error: true);
       }

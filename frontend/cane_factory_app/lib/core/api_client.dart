@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 export 'package:dio/dio.dart' show Response;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Central API client. Base URL comes from --dart-define=API_BASE_URL (never hard-coded secrets).
@@ -13,7 +14,7 @@ class ApiClient {
   // generic for same-PC development only; production/LAN builds must pass API_BASE_URL.
   static const String baseUrl = String.fromEnvironment('API_BASE_URL',
       defaultValue: 'http://localhost:5000');
-  static const String cameraEdgeBaseUrl =
+  static const String compiledCameraEdgeBaseUrl =
       String.fromEnvironment('CAMERA_EDGE_API_BASE_URL', defaultValue: baseUrl);
   static Uri? get baseUri => Uri.tryParse(baseUrl);
   static String? get configurationError {
@@ -29,8 +30,46 @@ class ApiClient {
 
   final _storage = const FlutterSecureStorage();
   late final Dio dio = _build();
-  late final Dio cameraDio = _buildCameraEdge();
+  String _cameraEdgeBaseUrl = compiledCameraEdgeBaseUrl;
+  late Dio cameraDio = _buildCameraEdge();
   void Function()? onSessionExpired;
+
+  String get cameraEdgeBaseUrl => _cameraEdgeBaseUrl;
+
+  Future<void> initialize() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString('camera_edge_base_url')?.trim();
+      if (saved != null && _validHttpBaseUrl(saved)) {
+        _cameraEdgeBaseUrl = saved.replaceFirst(RegExp(r'/$'), '');
+        cameraDio.close(force: true);
+        cameraDio = _buildCameraEdge();
+      }
+    } catch (_) {
+      // The compiled endpoint remains available if local preferences cannot be read.
+    }
+  }
+
+  Future<String?> setCameraEdgeBaseUrl(String value) async {
+    final normalized = value.trim().replaceFirst(RegExp(r'/$'), '');
+    if (!_validHttpBaseUrl(normalized)) {
+      return 'Use a complete URL such as http://127.0.0.1:5001 or http://192.168.31.10:5000.';
+    }
+    _cameraEdgeBaseUrl = normalized;
+    cameraDio.close(force: true);
+    cameraDio = _buildCameraEdge();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('camera_edge_base_url', normalized);
+    return null;
+  }
+
+  static bool _validHttpBaseUrl(String value) {
+    final uri = Uri.tryParse(value);
+    return uri != null &&
+        uri.hasScheme &&
+        uri.hasAuthority &&
+        (uri.scheme == 'http' || uri.scheme == 'https');
+  }
 
   Dio _build() {
     final d = Dio(BaseOptions(
@@ -70,7 +109,7 @@ class ApiClient {
 
   Dio _buildCameraEdge() {
     final d = Dio(BaseOptions(
-      baseUrl: cameraEdgeBaseUrl,
+      baseUrl: _cameraEdgeBaseUrl,
       connectTimeout: const Duration(seconds: 5),
       receiveTimeout: const Duration(seconds: 20),
       validateStatus: (s) => s != null && s < 500,

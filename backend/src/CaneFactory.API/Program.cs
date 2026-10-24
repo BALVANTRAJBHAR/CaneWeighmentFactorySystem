@@ -39,6 +39,7 @@ MapEnv("CANE_CONNECTION_STRING", "ConnectionStrings:Default");
 MapEnv("CANE_DB_PROVIDER", "Database:Provider");
 MapEnv("CANE_SEED_DEV_PASSWORD", "Seed:DeveloperPassword");
 MapEnv("CANE_IMAGE_STORAGE_ROOT", "Storage:ImageRoot");
+MapEnv("CANE_IMAGE_STORAGE_MODE", "Storage:ImageMode");
 MapEnv("CANE_AZURE_BLOB_CONNECTION_STRING", "Storage:AzureBlob:ConnectionString");
 MapEnv("CANE_AZURE_BLOB_SERVICE_URI", "Storage:AzureBlob:ServiceUri");
 MapEnv("CANE_CAMERA_SIMULATOR", "Camera:SimulatorMode");
@@ -77,7 +78,6 @@ builder.Services.AddHostedService<WeighingRecoveryService>();
 builder.Services.AddScoped<UserStateService>();
 builder.Services.AddScoped<FarmerAccountService>();
 builder.Services.AddScoped<LicenseService>();
-builder.Services.AddScoped<BackupExecutionService>();
 builder.Services.AddHostedService<BackupSchedulerService>();
 
 // ---- Camera capture (Phase 6): vendor-abstracted providers + orchestration service ----
@@ -109,7 +109,7 @@ builder.Services.AddScoped<ISmsService, SmsService>();
 builder.Services.AddHostedService<SmsQueueProcessor>();
 
 // ---- Reports (Phase 11): generic PDF/Excel export shared by every report endpoint ----
-builder.Services.AddSingleton<IReportExportService, ReportExportService>();
+builder.Services.AddScoped<IReportExportService, ReportExportService>();
 QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneLatin", File.OpenRead(PrintFonts.PathFor("Tinos-Regular.ttf")));
 QuestPDF.Drawing.FontManager.RegisterFontWithCustomName("CaneLatin", File.OpenRead(PrintFonts.PathFor("Tinos-Bold.ttf")));
 

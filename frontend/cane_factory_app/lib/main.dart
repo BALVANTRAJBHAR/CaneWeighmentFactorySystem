@@ -32,6 +32,7 @@ void main() {
     } catch (error, stackTrace) {
       debugPrint('PDFium initialization failed: $error\n$stackTrace');
     }
+    await ApiClient.instance.initialize();
     runApp(MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeProvider()),

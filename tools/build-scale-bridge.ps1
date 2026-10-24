@@ -1,5 +1,8 @@
 [CmdletBinding()]
 param(
+    [ValidatePattern('^https?://[^/]+(?::\d+)?/?$')]
+    [string]$ApiBaseUrl = 'http://192.168.31.10:5000',
+
     [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\artifacts\scale-bridge')
 )
 
@@ -24,6 +27,12 @@ if ((Test-Path -LiteralPath $output) -and
 dotnet publish $project -c Release -r win-x64 --self-contained true -o $output
 if ($LASTEXITCODE -ne 0) { throw 'Scale Bridge publish failed.' }
 
+$settingsPath = Join-Path $output 'appsettings.json'
+$settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+$settings.ScaleBridge.ApiBaseUrl = $ApiBaseUrl.TrimEnd('/')
+$settings | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $settingsPath -Encoding UTF8
+
 Write-Host "Scale Bridge package created: $output"
+Write-Host "Configured API endpoint: $($settings.ScaleBridge.ApiBaseUrl)"
 Write-Host 'Copy the COMPLETE folder to the USB/COM (weighbridge) PC.'
-Write-Host 'Edit appsettings.json there before running or installing the service.'
+Write-Host 'Set the same ScaleBridge AgentKey on the Bridge and API before running or installing the service.'

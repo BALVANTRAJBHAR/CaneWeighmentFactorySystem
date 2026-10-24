@@ -45,6 +45,11 @@ public static class BackupScheduleRuntime
     {
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        // Azure SQL already provides platform-managed automated backups and does
+        // not permit BACKUP DATABASE TO a Windows/App-Service path.
+        if (db.Database.IsSqlServer() &&
+            db.Database.GetDbConnection().DataSource.Contains(".database.windows.net", StringComparison.OrdinalIgnoreCase))
+            return;
         var config = await db.BackupConfigs.AsNoTracking()
             .FirstOrDefaultAsync(x => !x.IsDeleted);
         if (config?.Enabled != true || !TimeOnly.TryParse(config.TimeOfDay, out var anchor))

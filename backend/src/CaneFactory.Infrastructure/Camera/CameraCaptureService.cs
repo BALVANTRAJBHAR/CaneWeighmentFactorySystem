@@ -85,9 +85,7 @@ public class CameraCaptureService : ICameraCaptureService
                     continue;
                 }
                 var password = cam.PasswordEncrypted != null ? _protector.Unprotect(cam.PasswordEncrypted) : null;
-                using var cameraTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                cameraTimeout.CancelAfter(TimeSpan.FromSeconds(8));
-                var (ok, bytes, error) = await provider.CaptureAsync(cam, password, cameraTimeout.Token);
+                var (ok, bytes, error) = await CaptureWithRetryAsync(provider, cam, password, ct);
                 if (!ok || bytes == null)
                 {
                     result.Error = error;
@@ -284,9 +282,7 @@ public class CameraCaptureService : ICameraCaptureService
                 var provider = ResolveProvider(cam.Protocol);
                 if (provider == null) { result.Error = $"No capture provider registered for protocol '{cam.Protocol}'."; results.Add(result); continue; }
                 var password = cam.PasswordEncrypted != null ? _protector.Unprotect(cam.PasswordEncrypted) : null;
-                using var cameraTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                cameraTimeout.CancelAfter(TimeSpan.FromSeconds(8));
-                var (ok, bytes, error) = await provider.CaptureAsync(cam, password, cameraTimeout.Token);
+                var (ok, bytes, error) = await CaptureWithRetryAsync(provider, cam, password, ct);
                 if (!ok || bytes == null)
                 {
                     result.Error = error;
@@ -355,18 +351,45 @@ public class CameraCaptureService : ICameraCaptureService
     /// <summary>Fast LAN guard: an offline camera is never allowed to hold up a weighment save.</summary>
     private static async Task<bool> IsCameraReachableAsync(CameraConfig camera, CancellationToken ct)
     {
-        try
+        for (var attempt = 0; attempt < 2; attempt++)
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromMilliseconds(900));
-            using var client = new TcpClient();
-            await client.ConnectAsync(camera.IpAddress, camera.Port, timeout.Token);
-            return client.Connected;
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromMilliseconds(1500));
+                using var client = new TcpClient();
+                await client.ConnectAsync(camera.IpAddress, camera.Port, timeout.Token);
+                if (client.Connected) return true;
+            }
+            catch when (!ct.IsCancellationRequested)
+            {
+                if (attempt == 0) await Task.Delay(150, ct);
+            }
         }
-        catch
+        return false;
+    }
+
+    private static async Task<(bool ok, byte[]? bytes, string? error)> CaptureWithRetryAsync(
+        ICameraCaptureProvider provider, CameraConfig camera, string? password, CancellationToken ct)
+    {
+        string? lastError = null;
+        for (var attempt = 1; attempt <= 2; attempt++)
         {
-            return false;
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(10));
+                var result = await provider.CaptureAsync(camera, password, timeout.Token);
+                if (result.success && result.jpegBytes is { Length: > 0 }) return result;
+                lastError = result.error;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                lastError = $"Camera {camera.CameraNumber:D2} did not return an evidence image within 10 seconds.";
+            }
+            if (attempt == 1) await Task.Delay(250, ct);
         }
+        return (false, null, lastError ?? $"Camera {camera.CameraNumber:D2} did not return an image after two attempts.");
     }
 
     /// <summary>Layout: {Root}/WeighmentImage/Cane Weighment/YYYY/MM/DD/PUR-{id}/{STAGE}-yyyyMMdd-HHmmssfff-CAM{NN}-{seq}.jpg.</summary>

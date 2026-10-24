@@ -14,6 +14,9 @@ public class PrintDocument
     public string CompanyName { get; set; } = string.Empty;
     public string? Address { get; set; }
     public string? LogoPath { get; set; }
+    public byte[]? LogoData { get; set; }
+    public int LogoWidth { get; set; } = 180;
+    public int LogoHeight { get; set; } = 70;
     public string? SeasonName { get; set; }
 
     /// <summary>Safe identifier only for the QR (PurchaseId/AdviceNumber/LoanId) - never secrets/Aadhaar.</summary>

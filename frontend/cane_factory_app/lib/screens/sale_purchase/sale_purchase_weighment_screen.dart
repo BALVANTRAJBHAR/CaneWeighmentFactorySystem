@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -217,7 +218,6 @@ class _SalePurchaseWeighmentScreenState
           final hasStage =
               (res.data as List).any((image) => image['captureStage'] == stage);
           if (hasStage) {
-            await _sound.playConfiguredEvent('IMAGE_CAPTURED');
             return true;
           }
         }
@@ -242,22 +242,37 @@ class _SalePurchaseWeighmentScreenState
 
   Future<bool> _captureWeighmentAtEdge(int salePurchaseId, String stage) async {
     try {
-      final response = await ApiClient.instance.cameraDio.post(
-          '/api/sale-purchase-weighment/$salePurchaseId/images/capture',
-          data: {'stage': stage});
+      final response = await ApiClient.instance.cameraDio
+          .post('/api/sale-purchase-weighment/$salePurchaseId/images/capture',
+              data: {'stage': stage},
+              options: Options(
+                receiveTimeout: const Duration(seconds: 75),
+                sendTimeout: const Duration(seconds: 15),
+              ));
       if (response.statusCode == 200) {
         final results = response.data is Map ? response.data['results'] : null;
-        return results is List &&
-            results.any((x) => x is Map && x['success'] == true);
+        if (results is List) {
+          final saved =
+              results.where((x) => x is Map && x['success'] == true).length;
+          if (mounted && saved < results.length) {
+            _toast(
+              'Weight saved. Camera evidence: $saved of ${results.length} image(s) saved. Check the offline camera(s).',
+              error: true,
+            );
+          }
+          return saved > 0;
+        }
+        return false;
       }
       if (mounted) {
         _toast(
             'Weight saved, but local camera capture failed: ${ApiClient.errorMessage(response)}',
             error: true);
       }
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
-        _toast('Weight saved, but the factory camera service is not reachable.',
+        _toast(
+            'Weight saved, but camera capture could not finish: ${ApiClient.exceptionMessage(error, 'factory camera service is not reachable')}.',
             error: true);
       }
     }
@@ -269,10 +284,17 @@ class _SalePurchaseWeighmentScreenState
   /// successful API save must never tell the operator that the sale was not saved.
   Future<void> _runPostSaveActions(
       Map<String, dynamic> response, int salePurchaseId, String stage) async {
+    var evidenceCaptured = _hasCapturedWeighmentEvidence(response);
+    if (_edgeCaptureRequired(response)) {
+      evidenceCaptured = await _captureWeighmentAtEdge(salePurchaseId, stage);
+    }
     try {
-      await _sound.onWeighmentSaved();
+      await _sound.onWeighmentSaved(imageCaptured: evidenceCaptured);
     } catch (_) {
       // Sound is advisory; saving must remain successful when local TTS fails.
+    }
+    if (evidenceCaptured) {
+      unawaited(_waitForCapturedImages(salePurchaseId, stage));
     }
     try {
       await _print(response['autoPrint']);
@@ -281,13 +303,6 @@ class _SalePurchaseWeighmentScreenState
         _toast('Weighment was saved, but automatic printing could not start.',
             error: true);
       }
-    }
-    var evidenceCaptured = _hasCapturedWeighmentEvidence(response);
-    if (_edgeCaptureRequired(response)) {
-      evidenceCaptured = await _captureWeighmentAtEdge(salePurchaseId, stage);
-    }
-    if (evidenceCaptured) {
-      unawaited(_waitForCapturedImages(salePurchaseId, stage));
     }
   }
 

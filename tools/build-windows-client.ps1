@@ -4,6 +4,12 @@ param(
     [ValidatePattern('^https?://[^/]+(?::\d+)?/?$')]
     [string]$ApiBaseUrl,
 
+    # In cloud mode the business API is hosted in Azure, while camera live
+    # view/capture stays on the factory PC. Point this at that PC's edge API.
+    # In local/LAN mode omit it and the main API URL is reused.
+    [ValidatePattern('^$|^https?://[^/]+(?::\d+)?/?$')]
+    [string]$CameraEdgeApiBaseUrl = '',
+
     [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\artifacts\windows-client')
 )
 
@@ -20,7 +26,11 @@ try {
     flutter pub get
     if ($LASTEXITCODE -ne 0) { throw 'flutter pub get failed.' }
 
-    flutter build windows --release "--dart-define=API_BASE_URL=$ApiBaseUrl"
+    $dartDefines = @("--dart-define=API_BASE_URL=$ApiBaseUrl")
+    if (![string]::IsNullOrWhiteSpace($CameraEdgeApiBaseUrl)) {
+        $dartDefines += "--dart-define=CAMERA_EDGE_API_BASE_URL=$CameraEdgeApiBaseUrl"
+    }
+    flutter build windows --release @dartDefines
     if ($LASTEXITCODE -ne 0) { throw 'Windows release build failed.' }
 }
 finally {
@@ -37,4 +47,10 @@ Get-ChildItem -LiteralPath $releaseFolder -Force |
 
 Write-Host "Client package created: $OutputDirectory"
 Write-Host "Configured API endpoint: $ApiBaseUrl"
+if (![string]::IsNullOrWhiteSpace($CameraEdgeApiBaseUrl)) {
+    Write-Host "Configured factory camera edge endpoint: $CameraEdgeApiBaseUrl"
+}
+else {
+    Write-Host 'Camera edge endpoint: main API endpoint (local/LAN mode)'
+}
 Write-Host 'Copy the complete folder (not only the .exe) to every client PC.'

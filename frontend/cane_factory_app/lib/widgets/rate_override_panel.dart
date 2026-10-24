@@ -181,25 +181,34 @@ class RateOverridePanelState extends State<RateOverridePanel> {
 
   Future<void> _captureConfiguredCamera() async {
     if (!_canAttach()) return;
+    final cameraId = (_configuredCamera?['id'] as num?)?.toInt();
+    if (cameraId == null || cameraId <= 0) {
+      return _showError(
+          'Configure a Rate Edit Evidence Camera in Developer > Configuration > Cameras first.');
+    }
     setState(() {
       _uploading = true;
       _error = null;
     });
     try {
-      final response = await ApiClient.instance.cameraDio
-          .post('/api/rate-overrides/evidence/capture-configured', data: {
-        'transactionType': widget.transactionType,
-        'transactionId': widget.transactionId,
-      });
-      if (!mounted) return;
-      if (response.statusCode == 200) {
-        setState(() {
-          _evidenceToken = response.data['evidenceToken'];
-          _evidenceName = response.data['imageName'];
-        });
-      } else {
-        _showError(ApiClient.errorMessage(response));
+      // Camera access stays on the factory LAN, while evidence ownership stays
+      // with the cloud business API. Staging on the Edge API can otherwise
+      // create a local C:\ path that Azure cannot read at final Tare/Gross.
+      final snapshot = await ApiClient.instance.cameraDio.get<List<int>>(
+        '/api/config/cameras/$cameraId/snapshot',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final bytes = Uint8List.fromList(snapshot.data ?? const <int>[]);
+      if (snapshot.statusCode != 200 || bytes.isEmpty) {
+        if (mounted) _showError(ApiClient.errorMessage(snapshot));
+        return;
       }
+      await _uploadEvidence(
+        bytes,
+        'configured-camera-${_configuredCamera!['cameraNumber']}.jpg',
+        'CONFIGURED_CAMERA',
+        manageBusyState: false,
+      );
     } catch (error) {
       if (mounted) _showError(ApiClient.exceptionMessage(error));
     } finally {
@@ -207,15 +216,17 @@ class RateOverridePanelState extends State<RateOverridePanel> {
     }
   }
 
-  Future<void> _uploadEvidence(
-      Uint8List bytes, String fileName, String source) async {
+  Future<void> _uploadEvidence(Uint8List bytes, String fileName, String source,
+      {bool manageBusyState = true}) async {
     if (!_canAttach()) return;
     if (bytes.length > 6000000)
       return _showError('JPG/JPEG evidence must be 6 MB or smaller.');
-    setState(() {
-      _uploading = true;
-      _error = null;
-    });
+    if (manageBusyState) {
+      setState(() {
+        _uploading = true;
+        _error = null;
+      });
+    }
     try {
       final response = await ApiClient.instance.dio.post(
         '/api/rate-overrides/evidence/upload',
@@ -238,7 +249,7 @@ class RateOverridePanelState extends State<RateOverridePanel> {
     } catch (error) {
       if (mounted) _showError(ApiClient.exceptionMessage(error));
     } finally {
-      if (mounted) setState(() => _uploading = false);
+      if (manageBusyState && mounted) setState(() => _uploading = false);
     }
   }
 

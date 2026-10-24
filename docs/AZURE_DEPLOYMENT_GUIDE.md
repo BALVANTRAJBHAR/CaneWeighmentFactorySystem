@@ -64,6 +64,7 @@ CANE_ENCRYPTION_KEY=<long random encryption key>
 CANE_SEED_DEV_PASSWORD=<one-time strong developer password>
 CANE_CAMERA_SIMULATOR=false
 CANE_CAMERA_CAPTURE_MODE=EDGE_PC
+CANE_IMAGE_STORAGE_MODE=AZURE_BLOB
 CANE_AZURE_BLOB_SERVICE_URI=https://<storage-account>.blob.core.windows.net
 ```
 
@@ -104,16 +105,31 @@ Before switching clients:
 
 ## Publishing
 
-Example API publish:
+Use the verified deployment script from the repository root:
 
 ```powershell
-dotnet publish backend/src/CaneFactory.API/CaneFactory.API.csproj `
-  -c Release -r win-x64 --self-contained false -o artifacts/azure-api
+.\tools\deploy-azure-api.ps1 `
+  -ResourceGroup AuthenticFoodFarm `
+  -AppName authenticfoodfarmApi
 ```
 
-Deploy that output to App Service by Visual Studio, `az webapp deploy`, GitHub Actions or Azure
-DevOps. Configure Health Check to `/api/health` and enable Application Insights/log streaming before
-the client cut-over.
+It creates a compact Windows x64 ZIP, temporarily enables the App Service SCM publishing policy,
+uploads and activates the package, verifies `/api/health`, and restores SCM publishing to disabled.
+The script prevents a VS Code deployment notification from being treated as success before Kudu has
+actually activated the package. It also excludes source settings, stale nested publish folders,
+FFmpeg (owned by the factory edge PC), and debug symbols from the cloud ZIP.
+
+To deploy an already-built ZIP:
+
+```powershell
+.\tools\deploy-azure-api.ps1 `
+  -ResourceGroup AuthenticFoodFarm `
+  -AppName authenticfoodfarmApi `
+  -PackagePath .\artifacts\AZURE_API_COMPACT_20261021.zip
+```
+
+Configure App Service Health Check to `/api/health` and enable Application Insights/log streaming
+before the client cut-over.
 
 Build clients with the final HTTPS API URL. A Windows package can be shared as a ZIP through
 WhatsApp for small deployments, but a versioned HTTPS download link (Azure Blob with a time-limited
@@ -153,17 +169,41 @@ cannot connect to private camera addresses such as `192.168.x.x`.
   plus private Blob storage.
 - Factory-PC API: run the same API build on loopback (for example
   `http://127.0.0.1:5001`), point it to the same Azure SQL database and Blob
-  container, and set `CANE_CAMERA_CAPTURE_MODE=SERVER`. Bind it to loopback
+  container, set `CANE_CAMERA_CAPTURE_MODE=SERVER` and
+  `CANE_IMAGE_STORAGE_MODE=AZURE_BLOB`. Bind it to loopback
   unless another trusted factory PC must use it.
 - Windows cloud build: pass
-  `--dart-define=API_BASE_URL=https://<azure-api>` and
-  `--dart-define=CAMERA_EDGE_API_BASE_URL=http://127.0.0.1:5001`.
+  `API_BASE_URL=https://<azure-api>` and
+  `CAMERA_EDGE_API_BASE_URL=http://127.0.0.1:5001`. The repository build command is:
+
+  ```powershell
+  .\tools\build-windows-client.ps1 `
+    -ApiBaseUrl https://<azure-api> `
+    -CameraEdgeApiBaseUrl http://127.0.0.1:5001 `
+    -OutputDirectory .\artifacts\windows-cloud
+  ```
+
+  The compiled value is only the first-run default. A Developer can change the
+  camera endpoint later from **Configuration > Cameras > This PC / LAN Camera
+  Service URL**. The override is stored only on that Windows client and does
+  not change the Azure business API URL.
+
 - Offline/LAN build: point `API_BASE_URL` at the local server and omit
-  `CAMERA_EDGE_API_BASE_URL`; camera and business calls then use the same server.
+  `CAMERA_EDGE_API_BASE_URL`; camera and business calls then use the same server:
+
+  ```powershell
+  .\tools\build-windows-client.ps1 `
+    -ApiBaseUrl http://192.168.31.10:5000 `
+    -OutputDirectory .\artifacts\windows-lan
+  ```
 - The Azure API commits the weighment first. The Windows client then asks the
   local edge API to capture enabled cameras. The edge API uploads the JPEG to
   Blob storage and writes its metadata to Azure SQL. Camera credentials never
   need to be exposed to Azure or to the Flutter client.
+- Configured-camera rate evidence follows a stricter split: the Edge API returns
+  the current JPEG to the Windows client, and the client uploads it to the Azure
+  business API. The evidence token, metadata and Blob object are therefore
+  created by one cloud authority and cannot reference an Edge PC `C:\` path.
 - Azure and edge API instances must use the same JWT signing configuration so
   the logged-in user's token is accepted by the edge capture endpoints. They
   must also use the same encryption key so the edge API can decrypt the camera
@@ -171,4 +211,176 @@ cannot connect to private camera addresses such as `192.168.x.x`.
   string in its protected service environment because Azure managed identity
   is available to App Service, not to that PC. Store Azure SQL/Blob/JWT secrets
   in environment variables or Key Vault, never in the distributed Windows app.
+
+If Camera Test, Snapshot and both weighment screens all report connection
+errors, check the camera service URL first. `Connection refused` for
+`127.0.0.1:5001` means no Camera Edge API is listening on that client PC; use
+the reachable LAN edge URL (for example `http://192.168.31.10:5000`) or start
+the local edge API. Camera definitions are stored centrally in the database,
+but RTSP decoding and capture are performed by the selected edge API, not by
+the Flutter executable itself.
+
+## Local/LAN and cloud build commands
+
+### API
+
+Cloud App Service deployment:
+
+```powershell
+.\tools\deploy-azure-api.ps1 `
+  -ResourceGroup AuthenticFoodFarm `
+  -AppName authenticfoodfarmApi
+```
+
+Local/LAN IIS package (keep the server's protected `web.config` and environment
+variables when updating an existing installation):
+
+```powershell
+.\tools\build-api-publish.ps1 `
+  -OutputDirectory .\artifacts\API_LAN_20261022
+```
+
+Fresh Camera Edge IIS site (includes the generated ASP.NET Core Module
+`web.config`; secrets are still not included):
+
+```powershell
+.\tools\build-camera-edge-iis.ps1 `
+  -OutputDirectory .\artifacts\CAMERA_EDGE_IIS_20261022
+```
+
+If `/api/health` returns an IIS `404.0` handled by `StaticFile`, the site is
+missing this generated `web.config` (or its physical path points at the wrong
+folder). Install the .NET 8 ASP.NET Core Hosting Bundle, set the application
+pool to **No Managed Code**, point the IIS site at the folder containing both
+`CaneFactory.API.dll` and `web.config`, then restart IIS.
+
+On the Camera Edge PC, save the Azure SQL/JWT/encryption/Blob secrets as
+machine-level environment variables without putting them in source files or
+PowerShell history:
+
+```powershell
+# Run PowerShell as Administrator; values are requested with hidden input.
+.\tools\configure-camera-edge-machine.ps1
+iisreset
+```
+
+`CANE_CAMERA_CAPTURE_MODE=EDGE_PC` belongs on the Azure App Service. The
+factory Camera Edge API must use `CANE_CAMERA_CAPTURE_MODE=SERVER`, because it
+is the process that opens the RTSP streams and captures the images.
+
+Direct/background test on the same Windows PC:
+
+```powershell
+.\tools\start-camera-edge.ps1 `
+  -ApiDirectory C:\Balvant\API\CAMERA_EDGE_API_LAN `
+  -Port 5001 `
+  -ListenAddress 127.0.0.1
+```
+
+When trusted Windows clients on other factory PCs must use one shared Camera
+Edge host, use `-ListenAddress 0.0.0.0`, allow inbound TCP 5001 in Windows
+Firewall, and configure each client with `http://<static-edge-PC-IP>:5001`.
+Never point an Internet client at this private HTTP endpoint or port-forward it
+from the router; use a VPN plus HTTPS if remote edge access is ever required.
+
+### Windows application
+
+Cloud business API with camera capture on the same factory PC:
+
+```powershell
+.\tools\build-windows-client.ps1 `
+  -ApiBaseUrl https://authenticfoodfarmapi-gwduddakdjgka6aq.centralindia-01.azurewebsites.net `
+  -CameraEdgeApiBaseUrl http://127.0.0.1:5001 `
+  -OutputDirectory .\artifacts\WINDOWS_CLOUD_20261022
+```
+
+Local/LAN server:
+
+```powershell
+.\tools\build-windows-client.ps1 `
+  -ApiBaseUrl http://192.168.31.10:5000 `
+  -OutputDirectory .\artifacts\WINDOWS_LAN_20261022
+```
+
+### Android application
+
+Run these commands from `frontend\cane_factory_app`. The LAN build explicitly
+supports the factory's HTTP IIS endpoint; use HTTPS whenever it is available.
+
+```powershell
+# Cloud
+flutter build apk --release --obfuscate `
+  --split-debug-info=build\symbols-cloud `
+  --dart-define=API_BASE_URL=https://authenticfoodfarmapi-gwduddakdjgka6aq.centralindia-01.azurewebsites.net
+
+# Local/LAN
+flutter build apk --release --obfuscate `
+  --split-debug-info=build\symbols-lan `
+  --dart-define=API_BASE_URL=http://192.168.31.10:5000
+```
+
+The mobile client uses the selected business API. Camera live view and capture
+remain a Windows/factory-edge responsibility and are not streamed through the
+mobile client or Azure App Service.
+
+### Scale Bridge
+
+The same Scale Bridge code is used in both modes. Only `ScaleBridge.ApiBaseUrl`
+changes; COM port, parser profile, device ID and local endpoint remain the same.
+
+```powershell
+# Cloud
+.\tools\build-scale-bridge.ps1 `
+  -ApiBaseUrl https://authenticfoodfarmapi-gwduddakdjgka6aq.centralindia-01.azurewebsites.net `
+  -OutputDirectory .\artifacts\SCALE_BRIDGE_CLOUD_20261022
+
+# Local/LAN
+.\tools\build-scale-bridge.ps1 `
+  -ApiBaseUrl http://192.168.31.10:5000 `
+  -OutputDirectory .\artifacts\SCALE_BRIDGE_LAN_20261022
+```
+
+Set one strong key on both sides. In App Service set
+`CANE_SCALE_AGENT_KEY=<same-key>`; on the Bridge set
+`ScaleBridge:AgentKey=<same-key>` in protected configuration. When **Live weight
+only on Digitizer PC** is enabled, the Bridge stops continuous cloud posting,
+the factory Windows client reads `http://127.0.0.1:5158`, and only the weight
+proof/save request is sent to the business API.
+
+## Company logo in cloud mode
+
+Do not use a Windows drive path for a cloud logo. Sign in as Developer, open
+**Configuration > Company**, choose the logo file and upload it once. The logo
+bytes are stored in the database and are then available to Azure report PDF,
+Excel, A4, dot-matrix and invoice rendering. Local/LAN mode can use either this
+portable upload or a server-local path.
+
+## Azure SQL backup behavior
+
+Azure SQL Database does not support the application's local
+`BACKUP DATABASE ... TO DISK` job. Azure automatically manages full,
+differential and transaction-log backups. The Configuration > Backup page shows
+`Azure SQL Managed Backup` in cloud mode instead of reporting a failed local
+folder backup.
+
+For the current Basic database, inspect or set the supported 1-7 day point-in-time
+retention policy with:
+
+```powershell
+az sql db str-policy show `
+  -g AuthenticFoodFarm `
+  -s authenticfoodfarmserver `
+  -n AuthenticFoodFarmDatabase
+
+az sql db str-policy set `
+  -g AuthenticFoodFarm `
+  -s authenticfoodfarmserver `
+  -n AuthenticFoodFarmDatabase `
+  --retention-days 7 `
+  --diffbackup-hours 24
+```
+
+Local/LAN SQL Server continues to use the existing Backup folder, `.bak`, SQL
+script and Task Scheduler workflow. Restoring an Azure backup is performed from
+Azure SQL Database **Restore** / Point-in-time restore, not from the application.
 

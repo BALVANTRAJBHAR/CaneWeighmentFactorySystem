@@ -587,6 +587,7 @@ class _CamerasTab extends StatefulWidget {
 
 class _CamerasTabState extends State<_CamerasTab> {
   List cams = [];
+  late final TextEditingController _cameraServiceController;
   final _imageRootController = TextEditingController();
   final _azureContainerController =
       TextEditingController(text: 'canefactory-images');
@@ -600,11 +601,83 @@ class _CamerasTabState extends State<_CamerasTab> {
   String? _azureServiceUri;
   int? _paymentEvidenceCameraId;
   int? _rateEvidenceCameraId;
+  bool _checkingCameraService = false;
+  String? _cameraServiceStatus;
+  bool _cameraServiceAvailable = false;
 
   @override
   void initState() {
     super.initState();
+    _cameraServiceController =
+        TextEditingController(text: ApiClient.instance.cameraEdgeBaseUrl);
     _load();
+    _checkCameraService(showMessage: false);
+  }
+
+  Future<void> _saveCameraService() async {
+    final error = await ApiClient.instance
+        .setCameraEdgeBaseUrl(_cameraServiceController.text);
+    if (!mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(error),
+          backgroundColor: Theme.of(context).colorScheme.error));
+      return;
+    }
+    _cameraServiceController.text = ApiClient.instance.cameraEdgeBaseUrl;
+    await _checkCameraService(showMessage: true);
+  }
+
+  Future<void> _checkCameraService({required bool showMessage}) async {
+    if (_checkingCameraService) return;
+    setState(() {
+      _checkingCameraService = true;
+      _cameraServiceStatus = 'Checking local camera service…';
+    });
+    try {
+      final response = await ApiClient.instance.cameraDio.get('/api/ping',
+          options: Options(
+              sendTimeout: const Duration(seconds: 4),
+              receiveTimeout: const Duration(seconds: 4)));
+      final ok = response.statusCode == 200;
+      if (!mounted) return;
+      setState(() {
+        _cameraServiceAvailable = ok;
+        _cameraServiceStatus = ok
+            ? 'Connected. Camera Test, Snapshot, Live View and capture use this PC/LAN service.'
+            : 'Service responded with HTTP ${response.statusCode}.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _cameraServiceAvailable = false;
+        _cameraServiceStatus =
+            'Not reachable. Start the Camera Edge API at ${ApiClient.instance.cameraEdgeBaseUrl} or enter the LAN camera-server URL.';
+      });
+    } finally {
+      if (mounted) setState(() => _checkingCameraService = false);
+    }
+    if (showMessage && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_cameraServiceStatus ?? 'Camera service checked.'),
+          backgroundColor: _cameraServiceAvailable
+              ? const Color(0xFF2E7D32)
+              : Theme.of(context).colorScheme.error));
+    }
+  }
+
+  Future<void> _testCamera(dynamic cam) async {
+    try {
+      final res = await ApiClient.instance.cameraDio
+          .post('/api/config/cameras/${cam['id']}/test');
+      if (mounted) showResult(context, res);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              'Camera test could not reach ${ApiClient.instance.cameraEdgeBaseUrl}. Start the local Camera Edge API or correct the Camera Service URL.'),
+          backgroundColor: Theme.of(context).colorScheme.error));
+    }
   }
 
   Future<void> _load() async {
@@ -710,6 +783,7 @@ class _CamerasTabState extends State<_CamerasTab> {
 
   @override
   void dispose() {
+    _cameraServiceController.dispose();
     _imageRootController.dispose();
     _azureContainerController.dispose();
     _azurePrefixController.dispose();
@@ -960,6 +1034,56 @@ class _CamerasTabState extends State<_CamerasTab> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     SizedBox(
+                        width: 440,
+                        child: TextField(
+                            controller: _cameraServiceController,
+                            decoration: const InputDecoration(
+                                labelText: 'This PC / LAN Camera Service URL',
+                                hintText: 'http://127.0.0.1:5001',
+                                helperText:
+                                    'Saved only on this client PC; cloud business API remains unchanged.'))),
+                    FilledButton.icon(
+                        onPressed:
+                            _checkingCameraService ? null : _saveCameraService,
+                        icon: const Icon(Icons.save_outlined),
+                        label: const Text('Save & Test Service')),
+                    OutlinedButton.icon(
+                        onPressed: _checkingCameraService
+                            ? null
+                            : () => _checkCameraService(showMessage: true),
+                        icon: _checkingCameraService
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.refresh),
+                        label: const Text('Check')),
+                    SizedBox(
+                        width: 900,
+                        child: Text(
+                            _cameraServiceStatus ??
+                                'Camera Test, Snapshot, Live View and capture are executed by this local service.',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: _cameraServiceStatus == null
+                                    ? null
+                                    : _cameraServiceAvailable
+                                        ? const Color(0xFF2E7D32)
+                                        : Theme.of(context)
+                                            .colorScheme
+                                            .error))),
+                  ]))),
+      const SizedBox(height: 8),
+      Card(
+          child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SizedBox(
                         width: 230,
                         child: DropdownButtonFormField<String>(
                             value: _imageStorageMode,
@@ -1123,12 +1247,7 @@ class _CamerasTabState extends State<_CamerasTab> {
               '${cam['protocol']} • Capture: ${cam['captureEnabled'] == true ? 'ON' : 'OFF'} • Weighment: ${cam['weighmentCaptureEnabled'] == true ? 'ON' : 'OFF'} • Live: ${cam['liveViewEnabled'] == true ? 'ON' : 'OFF'}'),
           trailing: Wrap(children: [
             TextButton(
-                onPressed: () async {
-                  final res = await ApiClient.instance.cameraDio
-                      .post('/api/config/cameras/${cam['id']}/test');
-                  if (context.mounted) showResult(context, res);
-                },
-                child: const Text('Test')),
+                onPressed: () => _testCamera(cam), child: const Text('Test')),
             TextButton(
                 onPressed: () => _snapshot(cam['id']),
                 child: const Text('Snapshot')),
@@ -1186,8 +1305,10 @@ class _CamerasTabState extends State<_CamerasTab> {
     } catch (e) {
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
       if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Snapshot failed: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                'Snapshot failed because the local camera service at ${ApiClient.instance.cameraEdgeBaseUrl} is unavailable. Start the Camera Edge API or correct the Camera Service URL.'),
+            backgroundColor: Theme.of(context).colorScheme.error));
     }
   }
 }
@@ -1238,6 +1359,8 @@ class _PrintTabState extends State<_PrintTab> {
         config['dotMatrixTearOffParkingEnabled'] ??= true;
         config['dotMatrixTearOffFeedLines'] ??= 12.0;
         config['dotMatrixFastPrint'] ??= true;
+        config['paymentAutoPrint'] ??= true;
+        config['loanAutoPrint'] ??= true;
         setState(() {
           v = config;
           _printers = PrintService.installedPrinterNames();
@@ -1308,9 +1431,23 @@ class _PrintTabState extends State<_PrintTab> {
                 onChanged: (x) => setState(() => v!['language'] = x))),
       ]),
       SwitchListTile(
-          title: const Text('Auto Print after Save'),
+          title: const Text('Weighment Auto Print after Save'),
+          subtitle: const Text(
+              'Master auto-print switch for Sugarcane Purchase and Sale Weighment saves.'),
           value: v!['autoPrint'] == true,
           onChanged: (x) => setState(() => v!['autoPrint'] = x)),
+      SwitchListTile(
+          title: const Text('Payment Auto Print after Payment'),
+          subtitle: const Text(
+              'OFF keeps payment saved but does not automatically print/open its slip. Manual print and reprint still work.'),
+          value: v!['paymentAutoPrint'] != false,
+          onChanged: (x) => setState(() => v!['paymentAutoPrint'] = x)),
+      SwitchListTile(
+          title: const Text('Loan Auto Print after Save'),
+          subtitle: const Text(
+              'Controls automatic Loan and Loan Recovery slips. Manual print and reprint still work.'),
+          value: v!['loanAutoPrint'] != false,
+          onChanged: (x) => setState(() => v!['loanAutoPrint'] = x)),
       SwitchListTile(
           title: const Text('Print captured images on A4'),
           subtitle: const Text(
@@ -2776,6 +2913,34 @@ class _BackupTabState extends State<_BackupTab> {
 
   @override
   Widget build(BuildContext context) {
+    final azureManaged = backupStatus['backupMode'] == 'AZURE_MANAGED';
+    if (azureManaged) {
+      return ListView(padding: const EdgeInsets.all(16), children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Azure SQL Managed Backup',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 8),
+                Text('${backupStatus['lastMessage'] ?? ''}'),
+                const SizedBox(height: 8),
+                const Text(
+                    'The Local/LAN .bak folder, SQL script and Windows Task Scheduler controls are disabled in cloud mode. Configure Point-in-Time Restore retention on the Azure SQL Database resource.'),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                    onPressed: _load,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh Status')),
+              ],
+            ),
+          ),
+        ),
+      ]);
+    }
     return ListView(padding: const EdgeInsets.all(16), children: [
       const Text(
           'The server API runs this policy automatically. Hourly 01:00 means 01:00, 02:00, 03:00…; Daily/Weekly run at the selected time. The SQL/XML downloads are an optional fallback.',
@@ -2915,6 +3080,7 @@ class _CompanyTabState extends State<_CompanyTab> {
   final _addressHi = TextEditingController();
   bool _companyNameHiManual = false;
   bool _addressHiManual = false;
+  bool _uploadingLogo = false;
 
   @override
   void initState() {
@@ -2946,11 +3112,27 @@ class _CompanyTabState extends State<_CompanyTab> {
     final picked = await FilePicker.platform.pickFiles(
         type: FileType.custom, allowedExtensions: const ['png', 'jpg', 'jpeg']);
     final path = picked?.files.single.path;
-    if (path != null && mounted) {
-      setState(() {
-        _logoPath.text = path;
-        v!['logoPath'] = path;
+    if (path == null || !mounted) return;
+    setState(() => _uploadingLogo = true);
+    try {
+      final form = FormData.fromMap({
+        'logo': await MultipartFile.fromFile(path,
+            filename: picked!.files.single.name),
       });
+      final res = await ApiClient.instance.dio.post('/api/config/company/logo',
+          data: form, options: Options(contentType: 'multipart/form-data'));
+      if (!mounted) return;
+      showResult(context, res);
+      if (res.statusCode == 200) {
+        final storedPath = res.data['logoPath']?.toString() ?? '';
+        setState(() {
+          _logoPath.text = storedPath;
+          v!['logoPath'] = storedPath;
+          v!['hasUploadedLogo'] = true;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingLogo = false);
     }
   }
 
@@ -3002,15 +3184,19 @@ class _CompanyTabState extends State<_CompanyTab> {
               labelText: 'Print Logo File',
               hintText: 'PNG/JPG logo used on all slips and reports',
               suffixIcon: IconButton(
-                  tooltip: 'Choose logo image',
-                  icon: const Icon(Icons.folder_open_outlined),
-                  onPressed: _chooseLogo)),
+                  tooltip: 'Choose and upload logo image',
+                  icon: _uploadingLogo
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.upload_file_outlined),
+                  onPressed: _uploadingLogo ? null : _chooseLogo)),
           onChanged: (x) =>
               v!['logoPath'] = x.trim().isEmpty ? null : x.trim()),
       const Padding(
           padding: EdgeInsets.only(top: 4),
           child: Text(
-              'Select a PNG/JPG stored on this factory PC. It is used by A4/PDF and Dot Matrix slips.',
+              'Choose a PNG/JPG (max 2 MB). It is uploaded into the database, so the same logo works on Azure cloud and Local/LAN servers in A4, PDF, Excel and Dot Matrix output.',
               style: TextStyle(fontSize: 12, color: Colors.grey))),
       const SizedBox(height: 12),
       Row(children: [

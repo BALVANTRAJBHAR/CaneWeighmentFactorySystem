@@ -507,7 +507,7 @@ public class ReportsController : ControllerBase
         var rows = await projected.Take(5000).ToListAsync();
         var headers = new List<string> { "Purchase ID", "Grower ID", "Grower Name", "Father Name", "Mobile Number", "Village",
             "Account Holder", "Bank", "Branch", "IFSC", "Account Number", "Vehicle No", "Variety",
-            "Gross (Qtl)", "Tare (Qtl)", "Cutting Weight (Qtl)", "Net (Qtl)", "Final (Qtl)", "Rate", "Amount (Rs)", "Purchase Date (Tare)", "Weighment Status" };
+            "Gross (Qtl)", "Tare (Qtl)", "Cutting Weight (Qtl)", "Net (Qtl)", "Final (Qtl)", "Rate", "Amount (Rs)", "Purchase Date (Tare)", "Weighment Status", "Payment Status" };
         var tableRows = rows.Select(r => new List<string> {
             r.PurchaseId.ToString(), r.GrowerId.ToString(), r.GrowerName, r.FatherName, r.Mobile, r.VillageName,
             r.AccountHolderName ?? "-", r.BankName ?? "-", r.BankBranch ?? "-", r.BankIfsc ?? "-",
@@ -515,7 +515,7 @@ public class ReportsController : ControllerBase
             r.GrossWeightQuintal.ToString("F2"), r.TareWeightQuintal?.ToString("F2") ?? "-",
             r.CuttingWeightQuintal?.ToString("F2") ?? "-", r.NetWeightQuintal?.ToString("F2") ?? "-",
             r.FinalWeightQuintal?.ToString("F2") ?? "-", r.Rate.ToString("F2"), r.PurchaseAmount?.ToString("F2") ?? "-",
-            r.PurchaseDate.HasValue ? IndiaTime.Format(r.PurchaseDate.Value) : "-", r.GrossTareStatus
+            r.PurchaseDate.HasValue ? IndiaTime.Format(r.PurchaseDate.Value) : "-", r.GrossTareStatus, r.PaymentStatus
         }).ToList();
         return ExportFile("Cane-Purchase-Report", format, "Cane Purchase Report",
             GeneratedSubtitle(), headers, tableRows, totals);

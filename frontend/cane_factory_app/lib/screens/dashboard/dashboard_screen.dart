@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
+import '../../providers/live_weight_provider.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -15,6 +17,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    context.read<LiveWeightProvider>().start();
     _load();
   }
 
@@ -36,26 +39,66 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final liveWeight = context.watch<LiveWeightProvider>().current;
+    final effectiveHealth = _health.map((raw) {
+      final item = Map<String, dynamic>.from(raw as Map);
+      if (item['name'] == 'Digitizer' && liveWeight.deviceConnected) {
+        item['value'] =
+            'Connected (${liveWeight.deviceName ?? 'Local Scale Bridge'})';
+        item['color'] = 'Green';
+      }
+      return item;
+    }).toList();
     final cards = <(String, String, IconData)>[
-      ('Today Vehicles', '${_summary?['todayVehicles'] ?? '-'}', Icons.local_shipping_outlined),
-      ('Pending Tare', '${_summary?['pendingTare'] ?? '-'}', Icons.hourglass_top_outlined),
-      ('Today Final Weight (Qtl)',
-          _summary == null ? '-' : (_summary!['todayFinalWeightQuintal'] as num).toStringAsFixed(2),
-          Icons.scale_outlined),
-      ('Payment Pending', '${_summary?['paymentPending'] ?? '-'}', Icons.currency_rupee_outlined),
-      ('Active Growers', '${_summary?['totalGrowers'] ?? '-'}', Icons.agriculture_outlined),
-      ('Villages', '${_summary?['totalVillages'] ?? '-'}', Icons.location_city_outlined),
+      (
+        'Today Vehicles',
+        '${_summary?['todayVehicles'] ?? '-'}',
+        Icons.local_shipping_outlined
+      ),
+      (
+        'Pending Tare',
+        '${_summary?['pendingTare'] ?? '-'}',
+        Icons.hourglass_top_outlined
+      ),
+      (
+        'Today Final Weight (Qtl)',
+        _summary == null
+            ? '-'
+            : (_summary!['todayFinalWeightQuintal'] as num).toStringAsFixed(2),
+        Icons.scale_outlined
+      ),
+      (
+        'Payment Pending',
+        '${_summary?['paymentPending'] ?? '-'}',
+        Icons.currency_rupee_outlined
+      ),
+      (
+        'Active Growers',
+        '${_summary?['totalGrowers'] ?? '-'}',
+        Icons.agriculture_outlined
+      ),
+      (
+        'Villages',
+        '${_summary?['totalVillages'] ?? '-'}',
+        Icons.location_city_outlined
+      ),
     ];
 
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(padding: const EdgeInsets.all(16), children: [
         Row(children: [
-          Text('Dashboard', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+          Text('Dashboard',
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w700)),
           const Spacer(),
           Chip(
-            avatar: Icon(_online ? Icons.wifi : Icons.wifi_off, size: 16, color: Colors.white),
-            label: Text(_online ? 'Online' : 'No Internet', style: const TextStyle(color: Colors.white, fontSize: 12)),
+            avatar: Icon(_online ? Icons.wifi : Icons.wifi_off,
+                size: 16, color: Colors.white),
+            label: Text(_online ? 'Online' : 'No Internet',
+                style: const TextStyle(color: Colors.white, fontSize: 12)),
             backgroundColor: _online ? const Color(0xFF2E7D32) : Colors.red,
           ),
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
@@ -69,13 +112,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Padding(
                   padding: const EdgeInsets.all(18),
                   child: Row(children: [
-                    Icon(c.$3, size: 34, color: Theme.of(context).colorScheme.primary),
+                    Icon(c.$3,
+                        size: 34, color: Theme.of(context).colorScheme.primary),
                     const SizedBox(width: 14),
                     Expanded(
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(c.$2, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-                        Text(c.$1, style: Theme.of(context).textTheme.bodySmall),
-                      ]),
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(c.$2,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineSmall
+                                    ?.copyWith(fontWeight: FontWeight.w800)),
+                            Text(c.$1,
+                                style: Theme.of(context).textTheme.bodySmall),
+                          ]),
                     ),
                   ]),
                 ),
@@ -83,10 +134,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
         ]),
         const SizedBox(height: 20),
-        Text('System Health (role-aware)', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+        Text('System Health (role-aware)',
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         Wrap(spacing: 10, runSpacing: 10, children: [
-          for (final h in _health)
+          for (final h in effectiveHealth)
             Chip(
               avatar: CircleAvatar(
                   radius: 6,
@@ -95,7 +150,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     'Yellow' => Colors.orange,
                     _ => Colors.red,
                   }),
-              label: Text('${h['name']}: ${h['value']}', style: const TextStyle(fontSize: 12)),
+              label: Text('${h['name']}: ${h['value']}',
+                  style: const TextStyle(fontSize: 12)),
             ),
         ]),
       ]),

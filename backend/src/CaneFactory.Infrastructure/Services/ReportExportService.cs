@@ -30,7 +30,7 @@ public class ReportExportService : IReportExportService
         // not an arbitrary first purchase. No credentials or personal data in QR.
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { title, headers, rows }))));
         return (company?.CompanyName ?? "Cane Factory", company?.Address,
-            CompanyPrintHeader.ReadLogo(company?.LogoPath), QrCodeHelper.GeneratePng($"Report: {title}\nSHA256: {hash}", 4),
+            CompanyPrintHeader.ReadLogo(company?.LogoPath, company?.LogoData), QrCodeHelper.GeneratePng($"Report: {title}\nSHA256: {hash}", 4),
             Math.Clamp(company?.ReportLogoWidth ?? 180, 40, 400),
             Math.Clamp(company?.ReportLogoHeight ?? 70, 20, 200));
     }

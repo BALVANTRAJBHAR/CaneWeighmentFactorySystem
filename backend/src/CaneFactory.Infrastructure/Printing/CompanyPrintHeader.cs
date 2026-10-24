@@ -7,8 +7,10 @@ namespace CaneFactory.Infrastructure.Printing;
 /// <summary>Company header shared by weighment slips and tabular reports.</summary>
 public static class CompanyPrintHeader
 {
-    public static byte[]? ReadLogo(string? path) =>
-        !string.IsNullOrWhiteSpace(path) && File.Exists(path) ? File.ReadAllBytes(path) : null;
+    public static byte[]? ReadLogo(string? path, byte[]? storedLogo = null) =>
+        storedLogo is { Length: > 0 }
+            ? storedLogo
+            : !string.IsNullOrWhiteSpace(path) && File.Exists(path) ? File.ReadAllBytes(path) : null;
 
     public static void Compose(IContainer container, string companyName, string? address, byte[]? logo, byte[]? qr,
         float logoWidth = 70, float logoHeight = 60)

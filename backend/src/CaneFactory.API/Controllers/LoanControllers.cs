@@ -216,14 +216,14 @@ public class LoanController : ControllerBase
     private async Task<object?> AutoPrintAsync(int loanId, string? requestedTarget = null)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
-        if (cfg == null || (cfg.LoanCopies <= 0 && string.IsNullOrWhiteSpace(requestedTarget)) || (!cfg.AutoPrint && string.IsNullOrWhiteSpace(requestedTarget))) return null;
+        if (cfg == null || cfg.LoanCopies <= 0 || !cfg.LoanAutoPrint) return null;
         var target = requestedTarget ?? cfg.PrinterType;
         if (target is not ("A4" or "DotMatrix")) target = cfg.PrinterType;
         return new
         {
             printerType = target,
             printerName = target == "DotMatrix" ? cfg.DotMatrixPrinterName : cfg.A4PrinterName,
-            copies = string.IsNullOrWhiteSpace(requestedTarget) ? cfg.LoanCopies : Math.Max(1, cfg.LoanCopies),
+            copies = cfg.LoanCopies,
             language = cfg.Language,
             documentUrl = $"/api/print/loan/{loanId}?format=final&target={target}"
         };
@@ -403,14 +403,14 @@ public class LoanRecoveryController : ControllerBase
     private async Task<object?> AutoPrintAsync(int loanRecoveryId, string? requestedTarget = null)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
-        if (cfg == null || (cfg.LoanCopies <= 0 && string.IsNullOrWhiteSpace(requestedTarget)) || (!cfg.AutoPrint && string.IsNullOrWhiteSpace(requestedTarget))) return null;
+        if (cfg == null || cfg.LoanCopies <= 0 || !cfg.LoanAutoPrint) return null;
         var target = requestedTarget ?? cfg.PrinterType;
         if (target is not ("A4" or "DotMatrix")) target = cfg.PrinterType;
         return new
         {
             printerType = target,
             printerName = target == "DotMatrix" ? cfg.DotMatrixPrinterName : cfg.A4PrinterName,
-            copies = string.IsNullOrWhiteSpace(requestedTarget) ? cfg.LoanCopies : Math.Max(1, cfg.LoanCopies),
+            copies = cfg.LoanCopies,
             language = cfg.Language,
             documentUrl = $"/api/print/loan-recovery/{loanRecoveryId}?format=final&target={target}"
         };

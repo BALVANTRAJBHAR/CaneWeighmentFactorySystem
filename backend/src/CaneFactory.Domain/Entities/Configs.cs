@@ -35,6 +35,10 @@ public class PrintConfig : BaseEntity
     public string A4PrinterName { get; set; } = string.Empty;
     public string PaperType { get; set; } = "Continuous";
     public bool AutoPrint { get; set; } = true;
+    /// <summary>Independent automatic print gate for completed grower payments.</summary>
+    public bool PaymentAutoPrint { get; set; } = true;
+    /// <summary>Independent automatic print gate shared by loan issue and recovery slips.</summary>
+    public bool LoanAutoPrint { get; set; } = true;
     public bool PrintImages { get; set; } = true;
     public int GrossCopies { get; set; } = 1;
     public int TareCopies { get; set; } = 2;

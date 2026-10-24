@@ -60,49 +60,41 @@ public class PaymentController : ControllerBase
     private async Task<object?> AutoPrintAsync(int paymentId, string? requestedTarget = null)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
-        if (cfg == null) return null;
+        if (cfg == null || !cfg.PaymentAutoPrint || cfg.PaymentCopies <= 0) return null;
         var target = requestedTarget ?? cfg.PrinterType;
         if (target is not ("A4" or "DotMatrix")) target = cfg.PrinterType;
         var printerName = target == "DotMatrix" ? cfg.DotMatrixPrinterName : cfg.A4PrinterName;
-        var userSelectedTarget = !string.IsNullOrWhiteSpace(requestedTarget);
-        var shouldAutoPrint = userSelectedTarget || (cfg.AutoPrint && cfg.PaymentCopies > 0);
         return new
         {
             printerType = target,
             printerName,
-            copies = userSelectedTarget ? Math.Max(1, cfg.PaymentCopies) : cfg.PaymentCopies,
+            copies = cfg.PaymentCopies,
             language = cfg.Language,
-            shouldAutoPrint,
+            shouldAutoPrint = true,
             cfg.DotMatrixTearOffParkingEnabled,
             cfg.DotMatrixTearOffFeedLines,
             cfg.DotMatrixLineSpacingUnits,
-            // Existing clients without an explicit choice still receive an A4 PDF when
-            // physical auto-print is disabled.  A user-selected print type is honoured.
-            documentUrl = $"/api/print/payment/{paymentId}?format=final" +
-                (shouldAutoPrint ? $"&target={target}" : "&target=A4")
+            documentUrl = $"/api/print/payment/{paymentId}?format=final&target={target}"
         };
     }
 
     private async Task<object?> AutoPrintBatchAsync(string batchPrintToken, string? requestedTarget = null)
     {
         var cfg = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(c => !c.IsDeleted);
-        if (cfg == null) return null;
+        if (cfg == null || !cfg.PaymentAutoPrint || cfg.PaymentCopies <= 0) return null;
         var target = requestedTarget ?? cfg.PrinterType;
         if (target is not ("A4" or "DotMatrix")) target = cfg.PrinterType;
-        var userSelectedTarget = !string.IsNullOrWhiteSpace(requestedTarget);
-        var shouldAutoPrint = userSelectedTarget || (cfg.AutoPrint && cfg.PaymentCopies > 0);
         return new
         {
             printerType = target,
             printerName = target == "DotMatrix" ? cfg.DotMatrixPrinterName : cfg.A4PrinterName,
-            copies = userSelectedTarget ? Math.Max(1, cfg.PaymentCopies) : cfg.PaymentCopies,
+            copies = cfg.PaymentCopies,
             language = cfg.Language,
-            shouldAutoPrint,
+            shouldAutoPrint = true,
             cfg.DotMatrixTearOffParkingEnabled,
             cfg.DotMatrixTearOffFeedLines,
             cfg.DotMatrixLineSpacingUnits,
-            documentUrl = $"/api/print/payment-batch?batchToken={batchPrintToken}&format=final" +
-                (shouldAutoPrint ? $"&target={target}" : "&target=A4")
+            documentUrl = $"/api/print/payment-batch?batchToken={batchPrintToken}&format=final&target={target}"
         };
     }
 

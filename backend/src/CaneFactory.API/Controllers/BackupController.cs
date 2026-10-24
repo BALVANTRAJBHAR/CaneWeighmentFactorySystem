@@ -40,6 +40,9 @@ public class BackupController : ControllerBase
         IConfiguration config, ILogger<BackupController> logger)
         => (_db, _audit, _current, _config, _executor) = (db, audit, current, config, new BackupExecutionService(db, logger));
 
+    private bool IsAzureSql => _db.Database.IsSqlServer() &&
+        _db.Database.GetDbConnection().DataSource.Contains(".database.windows.net", StringComparison.OrdinalIgnoreCase);
+
     [HasPermission("Backup.View")]
     [HttpGet("config")]
     public async Task<IActionResult> GetConfig() => Ok(await _db.BackupConfigs.FirstOrDefaultAsync(b => !b.IsDeleted));
@@ -69,13 +72,16 @@ public class BackupController : ControllerBase
 
         return Ok(new
         {
-            enabled = cfg.Enabled,
+            backupMode = IsAzureSql ? "AZURE_MANAGED" : "LOCAL_SQL_SERVER",
+            enabled = IsAzureSql || cfg.Enabled,
             serverTime = DateTime.Now,
-            nextFullBackupAt = NextFullRun(cfg.Frequency, cfg.TimeOfDay),
+            nextFullBackupAt = IsAzureSql ? null : NextFullRun(cfg.Frequency, cfg.TimeOfDay),
             lastAttemptUtc = values.GetValueOrDefault("Backup.LastAttemptUtc"),
             lastKind = values.GetValueOrDefault("Backup.LastKind"),
             lastResult = values.GetValueOrDefault("Backup.LastResult"),
-            lastMessage = values.GetValueOrDefault("Backup.LastMessage"),
+            lastMessage = IsAzureSql
+                ? "Azure SQL automated backups are managed by Azure. Configure Point-in-Time Restore retention in Azure Portal/CLI; local .bak scheduling is intentionally disabled."
+                : values.GetValueOrDefault("Backup.LastMessage"),
             lastFile = values.GetValueOrDefault("Backup.LastFile"),
             newestConfiguredFolderBackup = newestFile
         });
@@ -85,6 +91,8 @@ public class BackupController : ControllerBase
     [HttpPut("config")]
     public async Task<IActionResult> UpdateConfig([FromBody] BackupConfigDto src)
     {
+        if (IsAzureSql)
+            return Conflict(new { message = "This database is Azure SQL. Configure automated backup retention in Azure; a Windows folder/.bak policy applies only to Local/LAN SQL Server." });
         if (!ModelState.IsValid) return BadRequest(ModelState);
         if (!(new[] { "Daily", "Hourly", "Weekly" }).Contains(src.Frequency))
             return BadRequest(new { message = "Frequency must be Daily, Hourly, or Weekly." });
@@ -126,6 +134,8 @@ public class BackupController : ControllerBase
     [HttpPost("current/download")]
     public async Task<IActionResult> DownloadCurrentBackup(CancellationToken cancellationToken)
     {
+        if (IsAzureSql)
+            return Conflict(new { message = "Azure SQL does not expose BACKUP DATABASE .bak files to App Service. Use Azure Point-in-Time Restore or export a BACPAC from Azure Portal/SQL tooling." });
         var result = await _executor.CreateAsync(BackupKind.Full, copyOnly: true, cancellationToken);
         if (!result.Success || string.IsNullOrWhiteSpace(result.FilePath))
             return Conflict(new { message = result.Message });
@@ -164,6 +174,8 @@ public class BackupController : ControllerBase
     [HttpGet("script")]
     public async Task<IActionResult> GenerateScript()
     {
+        if (IsAzureSql)
+            return Conflict(new { message = "The SQL backup script is only for Local/LAN SQL Server. Azure SQL backups are configured in Azure." });
         var cfg = await _db.BackupConfigs.FirstOrDefaultAsync(b => !b.IsDeleted) ?? new BackupConfig();
         var db = DatabaseName().Replace("]", "]]", StringComparison.Ordinal);
         var folder = cfg.BackupFolderPath.Replace("'", "''", StringComparison.Ordinal);
@@ -182,6 +194,8 @@ RESTORE VERIFYONLY FROM DISK = @full WITH CHECKSUM;
     [HttpGet("task-scheduler-xml")]
     public async Task<IActionResult> GenerateTaskSchedulerXml()
     {
+        if (IsAzureSql)
+            return Conflict(new { message = "Windows Task Scheduler backup is only for Local/LAN SQL Server. Azure SQL backups are configured in Azure." });
         var cfg = await _db.BackupConfigs.FirstOrDefaultAsync(b => !b.IsDeleted) ?? new BackupConfig();
         var start = $"{DateTime.Today:yyyy-MM-dd}T{cfg.TimeOfDay}:00";
         var trigger = cfg.Frequency switch

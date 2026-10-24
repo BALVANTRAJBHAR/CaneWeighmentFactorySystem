@@ -14,6 +14,11 @@
          Publishing the source placeholder previously overwrote the working IIS configuration. -->
     <Content Update="appsettings.json" CopyToPublishDirectory="Never" />
     <Content Update="appsettings.Production.example.json" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Never recursively republish old deployment artifacts that happen to
+         exist below the API project folder. Apart from bloating the ZIP, a
+         nested publish/web.config can make App Service deploy the wrong root. -->
+    <Content Remove="publish\**;backend\**;app.zip;publish.zip" />
+    <None Remove="publish\**;backend\**;app.zip;publish.zip" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.31" />

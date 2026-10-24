@@ -1,4 +1,5 @@
 import 'package:affllp/providers/auth_provider.dart';
+import 'package:affllp/providers/live_weight_provider.dart';
 import 'package:affllp/providers/theme_provider.dart';
 import 'package:affllp/widgets/app_shell.dart';
 import 'package:flutter/material.dart';
@@ -26,6 +27,7 @@ void main() {
       providers: [
         ChangeNotifierProvider.value(value: auth),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => LiveWeightProvider()),
       ],
       child: const MaterialApp(home: AppShell()),
     ));

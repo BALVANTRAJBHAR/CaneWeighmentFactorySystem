@@ -8,6 +8,7 @@ using CaneFactory.Application.Interfaces;
 using CaneFactory.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace CaneFactory.Infrastructure.Storage;
@@ -21,6 +22,7 @@ namespace CaneFactory.Infrastructure.Storage;
 public sealed class ImageStorageService(
     AppDbContext db,
     IConfiguration configuration,
+    IMemoryCache memoryCache,
     ILogger<ImageStorageService> logger) : IImageStorageService
 {
     public const string LocalMode = "LOCAL";
@@ -28,12 +30,24 @@ public sealed class ImageStorageService(
     private const string CloudScheme = "azureblob://";
     private static readonly Regex ContainerPattern = new("^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly TokenCredential SharedManagedIdentityCredential =
+        new DefaultAzureCredential(new DefaultAzureCredentialOptions
+        {
+            ExcludeInteractiveBrowserCredential = true
+        });
 
     public bool IsCloudLocator(string? locator) =>
         locator?.StartsWith(CloudScheme, StringComparison.OrdinalIgnoreCase) == true;
 
     public async Task<string> GetModeAsync(CancellationToken ct = default)
     {
+        // Hosting determines where evidence is physically writable. In a cloud
+        // + factory-edge deployment the shared database can be edited by either
+        // API, so a stale LOCAL row must never redirect App Service/Edge writes
+        // to two unrelated C: drives. A server environment override therefore
+        // takes precedence over the user-facing database setting.
+        var serverMode = configuration["Storage:ImageMode"]?.Trim().ToUpperInvariant();
+        if (serverMode is LocalMode or CloudMode) return serverMode;
         var value = await SettingAsync("ImageStorageMode", ct);
         return string.Equals(value, CloudMode, StringComparison.OrdinalIgnoreCase) ? CloudMode : LocalMode;
     }
@@ -95,11 +109,20 @@ public sealed class ImageStorageService(
             return File.Exists(locator) ? await File.ReadAllBytesAsync(locator, ct) : null;
 
         var (container, blobName) = ParseCloudLocator(locator);
+        var cacheKey = $"evidence-image:{container}/{blobName}";
+        if (memoryCache.TryGetValue<byte[]>(cacheKey, out var cached) && cached != null)
+            return cached;
         try
         {
             var content = await CreateServiceClient().GetBlobContainerClient(container)
                 .GetBlobClient(blobName).DownloadContentAsync(ct);
-            return content.Value.Content.ToArray();
+            var bytes = content.Value.Content.ToArray();
+            memoryCache.Set(cacheKey, bytes, new MemoryCacheEntryOptions
+            {
+                SlidingExpiration = TimeSpan.FromMinutes(10),
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30)
+            });
+            return bytes;
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -133,11 +156,7 @@ public sealed class ImageStorageService(
         if (!Uri.TryCreate(serviceUri, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
             throw new InvalidOperationException(
                 "Azure Blob storage is not configured. Set CANE_AZURE_BLOB_SERVICE_URI to the HTTPS blob service URL, or set the server-only CANE_AZURE_BLOB_CONNECTION_STRING.");
-        TokenCredential credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
-        {
-            ExcludeInteractiveBrowserCredential = true
-        });
-        return new BlobServiceClient(uri, credential);
+        return new BlobServiceClient(uri, SharedManagedIdentityCredential);
     }
 
     private async Task<string?> SettingAsync(string key, CancellationToken ct) =>

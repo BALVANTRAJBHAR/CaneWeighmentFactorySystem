@@ -35,9 +35,15 @@ public sealed class SaleInvoiceService(AppDbContext db) : ISaleInvoiceService
             8 => 12, 9 => 8, 10 => 10, 11 => 10, 12 => 11, 13 => 11, _ => 13
         };
 
-        ws.Row(1).Height = 38; ws.Row(2).Height = 38; ws.Row(3).Height = 22;
+        var logoHeight = Math.Clamp(data.Company.ReportLogoHeight, 20, 200);
+        var logoRowsHeight = Math.Max(98d, logoHeight * 0.75d + 8d);
+        ws.Row(1).Height = logoRowsHeight * 0.39d;
+        ws.Row(2).Height = logoRowsHeight * 0.39d;
+        ws.Row(3).Height = logoRowsHeight * 0.22d;
         ws.Range("A1:N3").Merge();
-        AddLogo(ws, data.Company.LogoPath, ws.Cell("A1"), 750, 94);
+        AddLogo(ws, data.Company.LogoPath, data.Company.LogoData, ws.Cell("A1"),
+            Math.Clamp(data.Company.ReportLogoWidth, 40, 400),
+            logoHeight);
         ws.Range("A4:N4").Merge().Value = $"Company Name: {data.Company.CompanyName}";
         ws.Range("A4:N4").Style.Font.Bold = true;
         ws.Range("A4:N10").Style.Fill.BackgroundColor = XLColor.FromHtml(LightGreen);
@@ -154,7 +160,7 @@ public sealed class SaleInvoiceService(AppDbContext db) : ISaleInvoiceService
     public async Task<byte[]> BuildPdfAsync(int salePurchaseId)
     {
         var data = await LoadAsync(salePurchaseId);
-        var logo = CompanyPrintHeader.ReadLogo(data.Company.LogoPath);
+        var logo = CompanyPrintHeader.ReadLogo(data.Company.LogoPath, data.Company.LogoData);
         return Document.Create(container =>
         {
             container.Page(page =>
@@ -164,7 +170,10 @@ public sealed class SaleInvoiceService(AppDbContext db) : ISaleInvoiceService
                 page.DefaultTextStyle(t => t.FontFamily("CaneLatin").FontSize(8));
                 page.Content().Column(col =>
                 {
-                    if (logo != null) col.Item().Height(90).AlignCenter().Image(logo).FitArea();
+                    if (logo != null)
+                        col.Item().Width(Math.Clamp(data.Company.ReportLogoWidth, 40, 400))
+                            .Height(Math.Clamp(data.Company.ReportLogoHeight, 20, 200))
+                            .AlignCenter().Image(logo).FitArea();
                     col.Item().Background(Colors.Green.Lighten4).Padding(5).Column(c =>
                     {
                         c.Item().Text($"Company Name: {data.Company.CompanyName}").Bold();
@@ -264,10 +273,12 @@ public sealed class SaleInvoiceService(AppDbContext db) : ISaleInvoiceService
             sale.Rate ?? 0m, sale.FinalWeightQuintal.Value, baseAmount, sale.GstAmount ?? 0m, finalAmount);
     }
 
-    private static void AddLogo(IXLWorksheet ws, string? path, IXLCell cell, int width, int height)
+    private static void AddLogo(IXLWorksheet ws, string? path, byte[]? storedLogo, IXLCell cell, int width, int height)
     {
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
-        ws.AddPicture(path).MoveTo(cell, 0, 0).WithSize(width, height);
+        var bytes = CompanyPrintHeader.ReadLogo(path, storedLogo);
+        if (bytes == null) return;
+        using var stream = new MemoryStream(bytes);
+        ws.AddPicture(stream).MoveTo(cell, 0, 0).WithSize(width, height);
     }
 
     private static void WriteMerged(IXLWorksheet ws, string range, string value)

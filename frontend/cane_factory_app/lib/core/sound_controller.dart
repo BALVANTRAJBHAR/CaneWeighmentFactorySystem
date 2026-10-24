@@ -47,6 +47,7 @@ class SoundController {
   int _playCount = 0;
   bool _speaking = false;
   int _speechGeneration = 0;
+  int _stateEpoch = 0;
   String? _activeEvent;
   Future<void>? _configFuture;
   Future<void>? _voiceFuture;
@@ -173,35 +174,41 @@ class SoundController {
     // Do not consume the first vehicle transition before sound messages have
     // arrived from Configuration. This was the reason the configured vehicle
     // and weighment prompts could remain silent until the next state change.
+    final observedEpoch = _stateEpoch;
     await loadConfig();
     if (!enabled) return;
+    // A live-weight callback may have started before a save and resumed after
+    // it. Never let that older callback replace the post-save removal state.
+    if (observedEpoch != _stateEpoch && state == SoundState.completed) return;
     // After a successful saved weight, the vehicle-removal instruction must
     // continue until a real zero platform reading arrives. It must never be
     // cleared by a timer, app route change, or digitizer reconnect.
     if (state == SoundState.completed) {
-      if (weightQuintal < 0.5) _setState(SoundState.noVehicle);
+      if (_isPlatformEmpty(weightQuintal)) {
+        _setState(SoundState.noVehicle);
+      }
       return;
     }
-    if (weightQuintal < 0.5) {
+    if (_isPlatformEmpty(weightQuintal)) {
       _setState(SoundState.noVehicle);
     } else if (rulesEnabled && weightQuintal < minimumWeightQuintal) {
       _setState(SoundState.belowMinimum);
     } else {
+      // The waiting instruction starts only after the configured minimum
+      // weight has been reached (for example 3.00 quintal).
       _setState(SoundState.weighingInProgress);
     }
   }
 
-  Future<void> onWeighmentSaved() async {
+  bool _isPlatformEmpty(double weightQuintal) => weightQuintal <= 0;
+
+  Future<void> onWeighmentSaved({bool imageCaptured = false}) async {
     await loadConfig();
-    // OFF means no repeating live-weight announcement. A successful save is
-    // still a one-time mandatory confirmation and must be spoken whenever
-    // Sound Enabled is on.
     if (!enabled) return;
 
-    // A save is an explicit event, not merely another state transition. At
-    // zero weight there may be no new live-weight frame/change between two
-    // successful test saves, so the previous `completed` state can remain
-    // active. Always restart this announcement for every save.
+    // Mark the state transition before interrupting speech so an in-flight
+    // live-weight callback cannot restart WEIGHING_ACTIVE during this sequence.
+    _stateEpoch++;
     _stopRepeat();
     state = SoundState.completed;
 
@@ -219,11 +226,19 @@ class SoundController {
       }
     }
 
-    _activeEvent = 'WEIGHMENT_COMPLETED';
-    _playCount = 0;
-    // Speech remains non-blocking: saving/printing/camera work must continue
-    // while the explicit completion phrase is playing.
-    unawaited(_speakEvent('WEIGHMENT_COMPLETED'));
+    // The evidence confirmation is deliberately first and exactly once.
+    // Awaiting it guarantees that the vehicle-removal message cannot overlap
+    // it or be heard before it.
+    if (imageCaptured) {
+      await _speakEvent('IMAGE_CAPTURED');
+    }
+
+    // Vehicle removal is a safety workflow, so it repeats at the configured
+    // interval even when the general Repeat Mode is ONCE/OFF. A zero-weight
+    // frame stops it and returns the state machine to BELOW_MINIMUM.
+    if (state == SoundState.completed) {
+      _startEvent('WEIGHMENT_COMPLETED', overrideMode: 'CONTINUOUS');
+    }
   }
 
   /// Plays a configured one-time event after an asynchronous operation such as
@@ -251,6 +266,7 @@ class SoundController {
 
   /// Changing Gross/Tare mode or leaving the screen stops any repeating message.
   void reset() {
+    _stateEpoch++;
     _stopRepeat();
     // Serialize stop with speak. Calling Windows TTS methods concurrently can
     // terminate the native plugin without producing a Dart exception.
@@ -281,8 +297,7 @@ class SoundController {
         _startEvent('WEIGHING_ACTIVE');
         break;
       case SoundState.completed:
-        _startEvent('WEIGHMENT_COMPLETED',
-            overrideMode: repeatMode == 'OFF' ? 'OFF' : 'ONCE');
+        _startEvent('WEIGHMENT_COMPLETED', overrideMode: 'CONTINUOUS');
         break;
       default:
         break;
@@ -320,6 +335,13 @@ class SoundController {
       // A temporary platform TTS error must not mute all later messages.
     } finally {
       if (_speechGeneration == generation) _speaking = false;
+      // If the live weight changed state while this phrase was playing, speak
+      // the new state immediately instead of making the operator wait for the
+      // next repeat interval (which may be 30 seconds).
+      final nextEvent = _activeEvent;
+      if (!_speaking && nextEvent != null && nextEvent != event) {
+        unawaited(_speakEvent(nextEvent));
+      }
     }
   }
 

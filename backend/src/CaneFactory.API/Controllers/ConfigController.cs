@@ -263,8 +263,11 @@ public class ConfigController : ControllerBase
             s.Key == "AzureBlobContainer" || s.Key == "AzureBlobPrefix")
             .ToDictionaryAsync(x => x.Key, x => x.Value);
         var configured = settings.GetValueOrDefault("ImageStorageRoot") ?? string.Empty;
-        var mode = string.Equals(settings.GetValueOrDefault("ImageStorageMode"), ImageStorageService.CloudMode,
+        var databaseMode = string.Equals(settings.GetValueOrDefault("ImageStorageMode"), ImageStorageService.CloudMode,
             StringComparison.OrdinalIgnoreCase) ? ImageStorageService.CloudMode : ImageStorageService.LocalMode;
+        var serverMode = _configuration["Storage:ImageMode"]?.Trim().ToUpperInvariant();
+        var modeLockedByServer = serverMode is ImageStorageService.LocalMode or ImageStorageService.CloudMode;
+        var mode = modeLockedByServer ? serverMode! : databaseMode;
         var container = settings.GetValueOrDefault("AzureBlobContainer") ?? "canefactory-images";
         var prefix = settings.GetValueOrDefault("AzureBlobPrefix") ?? "authentic-food-farm";
         var detected = WeighmentImagePathResolver.DetectDefaultDrive();
@@ -274,6 +277,8 @@ public class ConfigController : ControllerBase
         return Ok(new
         {
             mode,
+            databaseMode,
+            modeLockedByServer,
             configuredPath = configured,
             detectedDrive = detected,
             effectiveRoot = effective,
@@ -302,6 +307,13 @@ public class ConfigController : ControllerBase
         mode = mode.Trim().ToUpperInvariant();
         if (mode is not (ImageStorageService.LocalMode or ImageStorageService.CloudMode))
             return BadRequest(new { message = "Image storage mode must be LOCAL or AZURE_BLOB." });
+        var serverMode = _configuration["Storage:ImageMode"]?.Trim().ToUpperInvariant();
+        if ((serverMode is ImageStorageService.LocalMode or ImageStorageService.CloudMode) &&
+            !string.Equals(mode, serverMode, StringComparison.OrdinalIgnoreCase))
+            return Conflict(new
+            {
+                message = $"Image storage mode is locked to {serverMode} by this server deployment. Change CANE_IMAGE_STORAGE_MODE on the API host instead."
+            });
         var path = (req.Path ?? old.GetValueOrDefault("ImageStorageRoot") ?? string.Empty).Trim();
         if (path.Length > 512) return BadRequest(new { message = "Image path must be 512 characters or fewer." });
         if (!string.IsNullOrWhiteSpace(path))
@@ -656,6 +668,8 @@ public class ConfigController : ControllerBase
             p.DotMatrixPrinterName,
             p.A4PrinterName,
             p.AutoPrint,
+            p.PaymentAutoPrint,
+            p.LoanAutoPrint,
             p.PrintImages,
             p.GrossCopies,
             p.TareCopies,
@@ -682,6 +696,8 @@ public class ConfigController : ControllerBase
         p.PrinterName = p.PrinterType == "A4" ? p.A4PrinterName : p.DotMatrixPrinterName;
         p.PaperType = src.PaperType;
         p.AutoPrint = src.AutoPrint;
+        p.PaymentAutoPrint = src.PaymentAutoPrint;
+        p.LoanAutoPrint = src.LoanAutoPrint;
         p.PrintImages = src.PrintImages;
         p.GrossCopies = Math.Clamp(src.GrossCopies, 0, 5);
         p.TareCopies = Math.Clamp(src.TareCopies, 0, 5);
@@ -947,21 +963,77 @@ public class ConfigController : ControllerBase
     // ---------------------------------------------------------------- COMPANY
     [HasPermission("Company.View")]
     [HttpGet("company")]
-    public async Task<IActionResult> GetCompany() => Ok(await _db.CompanyConfigs.FirstOrDefaultAsync(c => !c.IsDeleted));
+    public async Task<IActionResult> GetCompany()
+    {
+        var c = await _db.CompanyConfigs.AsNoTracking().FirstOrDefaultAsync(x => !x.IsDeleted);
+        if (c == null) return NotFound(new { message = "Company configuration was not found." });
+        return Ok(new
+        {
+            c.Id, c.CompanyName, c.CompanyNameHi, c.Address, c.AddressHi, c.LogoPath,
+            hasUploadedLogo = c.LogoData != null && c.LogoData.Length > 0,
+            c.LogoContentType, c.ReportLogoWidth, c.ReportLogoHeight,
+            c.DefaultLanguage, c.ThemeColor,
+            c.InvoiceRoadStreet, c.InvoiceNearbyLandmark, c.InvoiceLocality, c.InvoiceCity,
+            c.InvoiceDistrict, c.InvoiceState, c.InvoicePinCode, c.InvoicePhone,
+            c.InvoiceEmail, c.InvoiceGstin, c.InvoiceTermsAndConditions
+        });
+    }
+
+    [HasPermission("Company.Configure")]
+    [HttpPost("company/logo")]
+    [RequestSizeLimit(2_500_000)]
+    public async Task<IActionResult> UploadCompanyLogo([FromForm] IFormFile logo)
+    {
+        if (logo == null || logo.Length == 0)
+            return BadRequest(new { message = "Select a PNG or JPG logo." });
+        if (logo.Length > 2_000_000)
+            return BadRequest(new { message = "Logo must be 2 MB or smaller." });
+        var extension = Path.GetExtension(logo.FileName).ToLowerInvariant();
+        if (extension is not (".png" or ".jpg" or ".jpeg") ||
+            logo.ContentType.ToLowerInvariant() is not ("image/png" or "image/jpeg"))
+            return BadRequest(new { message = "Logo must be a valid PNG or JPG image." });
+
+        await using var input = logo.OpenReadStream();
+        using var memory = new MemoryStream();
+        await input.CopyToAsync(memory);
+        var bytes = memory.ToArray();
+        try
+        {
+            using var bitmap = SkiaSharp.SKBitmap.Decode(bytes);
+            if (bitmap == null || bitmap.Width <= 0 || bitmap.Height <= 0)
+                return BadRequest(new { message = "The selected logo image could not be decoded." });
+        }
+        catch
+        {
+            return BadRequest(new { message = "The selected logo image is invalid." });
+        }
+
+        var c = await _db.CompanyConfigs.FirstAsync(x => !x.IsDeleted);
+        c.LogoData = bytes;
+        c.LogoContentType = logo.ContentType.ToLowerInvariant();
+        c.LogoPath = $"database://company-logo/{Path.GetFileName(logo.FileName)}";
+        c.UpdatedAt = DateTime.UtcNow;
+        c.UpdatedBy = _current.UserId;
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("CompanyLogoUploaded", "Company", "CompanyConfig", c.Id.ToString(),
+            newValue: new { fileName = Path.GetFileName(logo.FileName), logo.Length, c.LogoContentType });
+        return Ok(new { message = "Company logo uploaded. It will now work on both LAN and cloud servers.", c.LogoPath });
+    }
 
     [HasPermission("Company.Configure")]
     [HttpPut("company")]
     public async Task<IActionResult> UpdateCompany([FromBody] CompanyConfig src)
     {
         if (string.IsNullOrWhiteSpace(src.CompanyName)) return BadRequest(new { message = "Company Name is required." });
+        var c = await _db.CompanyConfigs.FirstAsync(x => !x.IsDeleted);
         if (!string.IsNullOrWhiteSpace(src.LogoPath) &&
+            !src.LogoPath.StartsWith("database://company-logo/", StringComparison.OrdinalIgnoreCase) &&
             (!System.IO.File.Exists(src.LogoPath) || Path.GetExtension(src.LogoPath).ToLowerInvariant() is not (".png" or ".jpg" or ".jpeg")))
             return BadRequest(new { message = "Logo must be an existing PNG or JPG file on the factory server/PC." });
         if (src.ReportLogoWidth is < 40 or > 400)
             return BadRequest(new { message = "Report Logo Width must be between 40 and 400." });
         if (src.ReportLogoHeight is < 20 or > 200)
             return BadRequest(new { message = "Report Logo Height must be between 20 and 200." });
-        var c = await _db.CompanyConfigs.FirstAsync(x => !x.IsDeleted);
         var old = new { c.CompanyName, c.CompanyNameHi, c.Address, c.AddressHi, c.DefaultLanguage, c.ThemeColor,
             c.ReportLogoWidth, c.ReportLogoHeight,
             c.InvoiceRoadStreet, c.InvoiceNearbyLandmark, c.InvoiceLocality, c.InvoiceCity, c.InvoiceDistrict,
@@ -971,6 +1043,14 @@ public class ConfigController : ControllerBase
         c.Address = src.Address;
         c.AddressHi = string.IsNullOrWhiteSpace(src.AddressHi) ? null : src.AddressHi.Trim();
         c.LogoPath = src.LogoPath;
+        if (string.IsNullOrWhiteSpace(src.LogoPath) ||
+            !src.LogoPath.StartsWith("database://company-logo/", StringComparison.OrdinalIgnoreCase))
+        {
+            // A blank path removes the uploaded logo; a real server-local path switches
+            // back to the legacy LAN mode without accidentally keeping stale DB bytes.
+            c.LogoData = null;
+            c.LogoContentType = null;
+        }
         c.ReportLogoWidth = src.ReportLogoWidth;
         c.ReportLogoHeight = src.ReportLogoHeight;
         c.DefaultLanguage = src.DefaultLanguage;

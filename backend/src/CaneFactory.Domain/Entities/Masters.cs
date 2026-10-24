@@ -138,6 +138,10 @@ public class CompanyConfig : BaseEntity
     public string? Address { get; set; }
     public string? AddressHi { get; set; }
     public string? LogoPath { get; set; }
+    /// <summary>Portable company logo used when the API runs in Azure or another host
+    /// that cannot access the original factory-PC path.</summary>
+    public byte[]? LogoData { get; set; }
+    public string? LogoContentType { get; set; }
     /// <summary>Logo size used by tabular PDF and Excel report exports.</summary>
     public int ReportLogoWidth { get; set; } = 180;
     public int ReportLogoHeight { get; set; } = 70;

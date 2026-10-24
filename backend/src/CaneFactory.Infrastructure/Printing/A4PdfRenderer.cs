@@ -21,7 +21,7 @@ public class A4PdfRenderer : IPrintRenderer
         var fontFamily = string.Equals(doc.Language, "hi", StringComparison.OrdinalIgnoreCase) ? "CaneDevanagari" : "CaneLatin";
         var hindi = string.Equals(doc.Language, "hi", StringComparison.OrdinalIgnoreCase);
         byte[]? qr = doc.QrValue.HasValue ? QrCodeHelper.GeneratePng(doc.QrValue.Value.ToString(), 8) : null;
-        byte[]? logo = !string.IsNullOrWhiteSpace(doc.LogoPath) && File.Exists(doc.LogoPath) ? File.ReadAllBytes(doc.LogoPath) : null;
+        byte[]? logo = CompanyPrintHeader.ReadLogo(doc.LogoPath, doc.LogoData);
 
         var document = Document.Create(container =>
         {
@@ -33,7 +33,8 @@ public class A4PdfRenderer : IPrintRenderer
 
                 page.Header().Column(col =>
                 {
-                    col.Item().Element(e => CompanyPrintHeader.Compose(e, doc.CompanyName, doc.Address, logo, qr));
+                    col.Item().Element(e => CompanyPrintHeader.Compose(e, doc.CompanyName, doc.Address,
+                        logo, qr, doc.LogoWidth, doc.LogoHeight));
                     if (!doc.SuppressHeaderSeparator)
                         col.Item().PaddingTop(6).LineHorizontal(1).LineColor(Colors.Blue.Darken2);
                     col.Item().PaddingTop(4).Row(row =>

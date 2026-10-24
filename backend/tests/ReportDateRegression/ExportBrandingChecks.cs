@@ -42,8 +42,12 @@ internal static class ExportBrandingChecks
                 using var workbook = new XLWorkbook(new MemoryStream(file.FileContents));
                 var sheet = workbook.Worksheet(1);
                 if (sheet.Cell(1, 2).GetString() != (company?.CompanyName ?? "Cane Factory")) throw new Exception("Company header mismatch");
-                var expectedPictures = !string.IsNullOrWhiteSpace(company?.LogoPath) && File.Exists(company.LogoPath) ? 2 : 1;
+                var hasLogo = company?.LogoData is { Length: > 0 } ||
+                    (!string.IsNullOrWhiteSpace(company?.LogoPath) && File.Exists(company.LogoPath));
+                var expectedPictures = hasLogo ? 2 : 1;
                 if (sheet.Pictures.Count != expectedPictures) throw new Exception("Logo/QR missing");
+                if (name == "Purchases" && !sheet.Row(7).CellsUsed().Any(c => c.GetString() == "Payment Status"))
+                    throw new Exception("Purchase Payment Status column missing");
                 foreach (var header in sheet.Row(7).CellsUsed().Where(c => c.GetString().Contains("Date")))
                 {
                     var cell = sheet.Cell(8, header.Address.ColumnNumber);

@@ -89,7 +89,7 @@ class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
           throw const _StreamStatusException('Stream disconnected');
         } on DioException catch (error) {
           if (cancelToken.isCancelled || !mounted) break;
-          _setError(id, _message(error.response?.statusCode));
+          _setError(id, _dioMessage(error));
         } on _StreamStatusException catch (error) {
           if (cancelToken.isCancelled || !mounted) break;
           _setError(id, error.message);
@@ -166,6 +166,15 @@ class _CameraLivePreviewPanelState extends State<CameraLivePreviewPanel> {
   String _message(int? statusCode) {
     if (statusCode == 401 || statusCode == 403) return 'Authentication Failed';
     if (statusCode == 404 || statusCode == 409) return 'Camera Offline';
+    return 'Connection Error';
+  }
+
+  String _dioMessage(DioException error) {
+    if (error.response != null) return _message(error.response?.statusCode);
+    if (error.type == DioExceptionType.connectionError ||
+        error.type == DioExceptionType.connectionTimeout) {
+      return 'Local Camera Service Unavailable';
+    }
     return 'Connection Error';
   }
 

@@ -240,20 +240,25 @@ public class DotMatrixEscPRenderer : IPrintRenderer
     private static void DrawReservedHeader(SKCanvas canvas, PrintDocument doc, SKTypeface regular,
         SKTypeface bold, SKPaint paint, int headerHeight)
     {
-        const int sideBox = 82;
-        if (!string.IsNullOrWhiteSpace(doc.LogoPath) && File.Exists(doc.LogoPath))
+        var logoBoxWidth = Math.Clamp(doc.LogoWidth, 40, 400);
+        var logoBoxHeight = Math.Clamp(doc.LogoHeight, 20, Math.Max(20, headerHeight - 8));
+        var sideBox = logoBoxWidth + 20;
+        if (doc.LogoData is { Length: > 0 } ||
+            (!string.IsNullOrWhiteSpace(doc.LogoPath) && File.Exists(doc.LogoPath)))
         {
             try
             {
-                using var logo = SKBitmap.Decode(doc.LogoPath);
+                using var logo = doc.LogoData is { Length: > 0 }
+                    ? SKBitmap.Decode(doc.LogoData)
+                    : SKBitmap.Decode(doc.LogoPath);
                 if (logo != null)
                 {
-                    var maxSide = Math.Max(24, Math.Min(58, headerHeight - 12));
-                    var scale = Math.Min((float)maxSide / logo.Width, (float)maxSide / logo.Height);
+                    var scale = Math.Min((float)logoBoxWidth / logo.Width,
+                        (float)logoBoxHeight / logo.Height);
                     var w = logo.Width * scale;
                     var h = logo.Height * scale;
-                    canvas.DrawBitmap(logo, new SKRect(10 + (sideBox - w) / 2, (headerHeight - h) / 2,
-                        10 + (sideBox + w) / 2, (headerHeight + h) / 2),
+                    canvas.DrawBitmap(logo, new SKRect(10 + (logoBoxWidth - w) / 2, (headerHeight - h) / 2,
+                        10 + (logoBoxWidth + w) / 2, (headerHeight + h) / 2),
                         new SKSamplingOptions(SKFilterMode.Linear));
                 }
             }
@@ -263,7 +268,7 @@ public class DotMatrixEscPRenderer : IPrintRenderer
         using var shaperBold = new SKShaper(bold);
         using var shaperRegular = new SKShaper(regular);
         var textLeft = 10 + sideBox;
-        var textRight = WidthPx - sideBox - 10;
+        var textRight = WidthPx - 92;
         var companyBottom = Math.Min(headerHeight - 24, 36);
         DrawFittedText(canvas, doc.CompanyName, shaperBold, bold, 24, 11,
             new SKRect(textLeft, 2, textRight, Math.Max(22, companyBottom)), paint, SKTextAlign.Center);
@@ -347,14 +352,20 @@ public class DotMatrixEscPRenderer : IPrintRenderer
         using var shaperRegular = new SKShaper(regular);
 
         var y = 8;
-        if (!string.IsNullOrWhiteSpace(doc.LogoPath) && File.Exists(doc.LogoPath))
+        if (doc.LogoData is { Length: > 0 } ||
+            (!string.IsNullOrWhiteSpace(doc.LogoPath) && File.Exists(doc.LogoPath)))
         {
             try
             {
-                using var logo = SKBitmap.Decode(doc.LogoPath);
+                using var logo = doc.LogoData is { Length: > 0 }
+                    ? SKBitmap.Decode(doc.LogoData)
+                    : SKBitmap.Decode(doc.LogoPath);
                 if (logo != null)
                 {
-                    var scale = Math.Min(52f / logo.Width, 52f / logo.Height);
+                    var logoBoxWidth = Math.Clamp(doc.LogoWidth, 40, 400);
+                    var logoBoxHeight = Math.Clamp(doc.LogoHeight, 20, headerH - 12);
+                    var scale = Math.Min((float)logoBoxWidth / logo.Width,
+                        (float)logoBoxHeight / logo.Height);
                     var destination = new SKRect(10, 4, 10 + logo.Width * scale, 4 + logo.Height * scale);
                     canvas.DrawBitmap(logo, destination, new SKSamplingOptions(SKFilterMode.Linear));
                 }
