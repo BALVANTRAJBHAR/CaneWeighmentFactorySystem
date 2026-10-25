@@ -4,6 +4,7 @@ using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Interfaces;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Persistence;
+using CaneFactory.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
@@ -396,6 +397,7 @@ public class CameraCaptureService : ICameraCaptureService
     private async Task<(int imageId, string imageName)> SaveImageAsync(byte[] bytes, Purchase purchase, string stage,
         CameraConfig cam, int? capturedByUserId, CancellationToken ct)
     {
+        bytes = EvidenceImageOptimizer.OptimizeJpeg(bytes);
         var root = await ResolveWeighmentImageRootAsync(ct);
         var stageTag = stage.ToUpperInvariant();
         var now = DateTime.Now;
@@ -437,6 +439,7 @@ public class CameraCaptureService : ICameraCaptureService
     private async Task<(int imageId, string imageName)> SavePaymentImageAsync(byte[] bytes, Payment payment,
         int purchaseId, CameraConfig cam, int? capturedByUserId, bool replaceExisting, CancellationToken ct)
     {
+        bytes = EvidenceImageOptimizer.OptimizeJpeg(bytes);
         var root = await ResolvePaymentEvidenceRootAsync(ct);
         var now = DateTime.Now;
         var folder = Path.Combine(root, now.ToString("yyyy-MM-dd"));
@@ -475,6 +478,7 @@ public class CameraCaptureService : ICameraCaptureService
     private async Task<(int imageId, string imageName)> SaveSalePurchaseImageAsync(byte[] bytes, int salePurchaseId, string stage,
         CameraConfig cam, int? capturedByUserId, CancellationToken ct)
     {
+        bytes = EvidenceImageOptimizer.OptimizeJpeg(bytes);
         var root = await ResolveWeighmentImageRootAsync(ct);
         var now = DateTime.Now; var stageTag = stage.ToUpperInvariant();
         var folder = Path.Combine(root, "SalePurchase Weighment", now.ToString("yyyy"), now.ToString("MM"), now.ToString("dd"), $"SP-{salePurchaseId}");

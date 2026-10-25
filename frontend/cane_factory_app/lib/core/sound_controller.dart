@@ -18,7 +18,23 @@ enum SoundState {
 }
 
 class SoundController {
-  SoundController._();
+  SoundController._() {
+    // Keep the safety announcements available even during a short API/config
+    // outage. Server-configured text replaces these defaults after load.
+    messages.addAll(const {
+      'BELOW_MINIMUM|hi': 'कृपया गाड़ी को प्लेटफॉर्म पर खड़ा करें।',
+      'BELOW_MINIMUM|en': 'Please position the vehicle on the platform.',
+      'WEIGHING_ACTIVE|hi':
+          'आपकी गाड़ी का तौल हो रहा है, कृपया प्रतीक्षा करें।',
+      'WEIGHING_ACTIVE|en': 'Your vehicle is being weighed, please wait.',
+      'WEIGHMENT_COMPLETED|hi':
+          'तौल हो चुका है, कृपया गाड़ी को प्लेटफॉर्म से नीचे उतारें।',
+      'WEIGHMENT_COMPLETED|en':
+          'Weighment completed, please move the vehicle off the platform.',
+      'IMAGE_CAPTURED|hi': 'तौल की तस्वीरें सुरक्षित हो गई हैं।',
+      'IMAGE_CAPTURED|en': 'Weighment images have been captured and saved.',
+    });
+  }
 
   /// Keep one Windows TTS channel for the whole application. Creating and
   /// stopping multiple native TTS objects while switching screens can tear
@@ -50,6 +66,7 @@ class SoundController {
   int _stateEpoch = 0;
   String? _activeEvent;
   Future<void>? _configFuture;
+  bool _configLoaded = false;
   Future<void>? _voiceFuture;
   List<String> _windowsVoices = const [];
   List<String> _windowsHindiVoices = const [];
@@ -70,8 +87,15 @@ class SoundController {
 
   Future<void> _loadWindowsVoices() async {
     if (!_windowsSpeech.isSupported) return;
-    final prefs = await SharedPreferences.getInstance();
-    _windowsVoiceName = prefs.getString('windows_speech_voice');
+    SharedPreferences? prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+      _windowsVoiceName = prefs.getString('windows_speech_voice');
+    } catch (_) {
+      // Speech must continue even if a legacy local preferences file is
+      // damaged. Automatic voice selection is safe for this workstation.
+      _windowsVoiceName = null;
+    }
     final result = await Future.wait([
       _windowsSpeech.getVoices(),
       _windowsSpeech.getHindiVoices(),
@@ -82,17 +106,23 @@ class SoundController {
     if (_windowsVoiceName != null &&
         !_windowsVoices.contains(_windowsVoiceName)) {
       _windowsVoiceName = null;
-      await prefs.remove('windows_speech_voice');
+      try {
+        await prefs?.remove('windows_speech_voice');
+      } catch (_) {}
     }
   }
 
   Future<void> setWindowsVoice(String? voiceName) async {
     _windowsVoiceName = voiceName?.trim().isEmpty == true ? null : voiceName;
-    final prefs = await SharedPreferences.getInstance();
-    if (_windowsVoiceName == null) {
-      await prefs.remove('windows_speech_voice');
-    } else {
-      await prefs.setString('windows_speech_voice', _windowsVoiceName!);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_windowsVoiceName == null) {
+        await prefs.remove('windows_speech_voice');
+      } else {
+        await prefs.setString('windows_speech_voice', _windowsVoiceName!);
+      }
+    } catch (_) {
+      // Keep the in-memory choice usable for this session.
     }
   }
 
@@ -109,9 +139,20 @@ class SoundController {
     return next;
   }
 
-  Future<void> loadConfig() => _configFuture ??= _loadConfig();
+  Future<void> loadConfig() {
+    final current = _configFuture;
+    if (current != null) return current;
+    final loading = _loadConfig();
+    _configFuture = loading.whenComplete(() {
+      // Retry on the next weight frame if startup briefly reached the API
+      // before authentication/network configuration was ready.
+      if (!_configLoaded) _configFuture = null;
+    });
+    return _configFuture!;
+  }
 
   Future<void> reloadConfig() {
+    _configLoaded = false;
     _configFuture = null;
     return loadConfig();
   }
@@ -138,6 +179,10 @@ class SoundController {
         for (final m in (res.data['soundMessages'] as List? ?? [])) {
           messages['${m['eventCode']}|${m['languageCode']}'] = m['messageText'];
         }
+        _configLoaded = true;
+      } else {
+        throw StateError(
+            'Sound configuration returned HTTP ${res.statusCode}.');
       }
 
       // On Windows, speak() only completes after the spoken phrase when this

@@ -5,11 +5,13 @@ using CaneFactory.Application.Interfaces;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Camera;
 using CaneFactory.Infrastructure.Persistence;
+using CaneFactory.Infrastructure.Storage;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using SkiaSharp;
 
 await using var connection = new SqliteConnection("Data Source=:memory:");
 await connection.OpenAsync();
@@ -22,6 +24,20 @@ void Check(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);
     checks++;
+}
+
+using (var sourceBitmap = new SKBitmap(2400, 1800))
+{
+    sourceBitmap.Erase(new SKColor(80, 130, 90));
+    using var sourceImage = SKImage.FromBitmap(sourceBitmap);
+    using var sourceData = sourceImage.Encode(SKEncodedImageFormat.Jpeg, 100);
+    var sourceBytes = sourceData.ToArray();
+    var optimizedBytes = EvidenceImageOptimizer.OptimizeJpeg(sourceBytes);
+    using var optimizedBitmap = SKBitmap.Decode(optimizedBytes);
+    Check(optimizedBitmap is not null && Math.Max(optimizedBitmap.Width, optimizedBitmap.Height) <= 1600,
+        "Evidence image optimizer must limit the longest image side to 1600 pixels");
+    Check(optimizedBytes.Length < sourceBytes.Length,
+        "Evidence image optimizer must reduce storage size when compression is effective");
 }
 
 var adminRole = new Role { Name = "Admin", IsSystem = true };

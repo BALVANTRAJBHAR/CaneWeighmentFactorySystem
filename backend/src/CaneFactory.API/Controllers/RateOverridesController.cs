@@ -3,6 +3,7 @@ using CaneFactory.Application.Interfaces;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Camera;
 using CaneFactory.Infrastructure.Persistence;
+using CaneFactory.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -125,7 +126,9 @@ public sealed class RateOverridesController(
         using var safeImage = SKImage.FromBitmap(decoded);
         using var encoded = safeImage.Encode(SKEncodedImageFormat.Jpeg, 88)
             ?? throw new InvalidDataException("The image could not be sanitised.");
-        var safeBytes = encoded.ToArray(); // decode + re-encode strips EXIF/scripts/trailing payloads
+        var safeBytes = EvidenceImageOptimizer.OptimizeJpeg(encoded.ToArray());
+        // Decode + re-encode strips EXIF/scripts/trailing payloads; the shared
+        // optimizer also bounds cloud/LAN storage size and dimensions.
 
         var configuredRoot = configuration["Storage:ImageRoot"];
         if (string.IsNullOrWhiteSpace(configuredRoot))

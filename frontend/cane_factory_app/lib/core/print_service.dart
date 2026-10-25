@@ -182,8 +182,19 @@ class PrintService {
       return PrintOutcome(false,
           'Paper-position recovery is only supported on the Windows client.');
     }
-    final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool(_paperParkedKey(printerName)) != true) {
+    bool wasParked = false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      wasParked = prefs.getBool(_paperParkedKey(printerName)) == true;
+    } on FormatException {
+      // A damaged legacy preferences file must never stop the actual print
+      // job. Treat the paper as manually aligned and rebuild this one flag
+      // after printing succeeds.
+      wasParked = false;
+    } catch (_) {
+      wasParked = false;
+    }
+    if (!wasParked) {
       return PrintOutcome(true, 'Paper is already marked at logical TOF.');
     }
     final accepted = await _sendPaperMotion(
@@ -206,8 +217,12 @@ class PrintService {
       _setPaperParked(printerName, false);
 
   static Future<bool> isDotMatrixPaperParked(String printerName) async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_paperParkedKey(printerName)) == true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_paperParkedKey(printerName)) == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<bool> _sendPaperMotion({
@@ -236,7 +251,12 @@ class PrintService {
       'dot_matrix_paper_parked_${base64Url.encode(utf8.encode(printerName))}';
 
   static Future<void> _setPaperParked(String printerName, bool parked) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_paperParkedKey(printerName), parked);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_paperParkedKey(printerName), parked);
+    } catch (_) {
+      // Paper motion has already been accepted by the spooler. Failure to
+      // persist advisory recovery state must not suppress the next print.
+    }
   }
 }
