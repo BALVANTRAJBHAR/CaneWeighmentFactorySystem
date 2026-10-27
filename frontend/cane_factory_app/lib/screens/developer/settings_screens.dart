@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
 import '../../core/print_service.dart';
 import '../../core/file_download.dart';
 import '../../core/hindi_transliteration.dart';
 import '../../core/sound_controller.dart';
+import '../../providers/auth_provider.dart';
 
 /// Developer Configuration hub: Weight Rules, Sound/TTS, Cameras, Print, SMS, Backup, Company.
 class DeveloperSettingsScreen extends StatelessWidget {
@@ -15,35 +17,41 @@ class DeveloperSettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final tabs = <({String label, Widget child})>[
+      if (auth.can('WeightRule.Configure'))
+        (label: 'Weight Rules', child: const _WeightRulesTab()),
+      if (auth.can('Sound.Configure'))
+        (label: 'Sound / TTS', child: const _SoundTab()),
+      if (auth.can('Camera.Configure'))
+        (label: 'Cameras', child: const _CamerasTab()),
+      if (auth.can('Print.Configure'))
+        (label: 'Print', child: const _PrintTab()),
+      if (auth.can('Sms.Configure')) (label: 'SMS', child: const _SmsTab()),
+      if (auth.can('Sms.View')) (label: 'SMS Logs', child: const _SmsLogsTab()),
+      if (auth.can('Backup.Configure'))
+        (label: 'Backup', child: const _BackupTab()),
+      if (auth.can('Company.Configure') && !auth.hasRole('Administrator'))
+        (label: 'Company', child: const _CompanyTab()),
+      if (auth.hasRole('Developer'))
+        (label: 'License', child: const _LicenseTab()),
+    ];
+    if (tabs.isEmpty) {
+      return const Center(
+          child:
+              Text('No configuration modules are available for this account.'));
+    }
     return DefaultTabController(
-      length: 9,
+      length: tabs.length,
       child: Column(children: [
         Material(
           color: Theme.of(context).colorScheme.surface,
-          child: const TabBar(isScrollable: true, tabs: [
-            Tab(text: 'Weight Rules'),
-            Tab(text: 'Sound / TTS'),
-            Tab(text: 'Cameras'),
-            Tab(text: 'Print'),
-            Tab(text: 'SMS'),
-            Tab(text: 'SMS Logs'),
-            Tab(text: 'Backup'),
-            Tab(text: 'Company'),
-            Tab(text: 'License'),
-          ]),
+          child: TabBar(
+              isScrollable: true,
+              tabs: [for (final tab in tabs) Tab(text: tab.label)]),
         ),
-        const Expanded(
-          child: TabBarView(children: [
-            _WeightRulesTab(),
-            _SoundTab(),
-            _CamerasTab(),
-            _PrintTab(),
-            _SmsTab(),
-            _SmsLogsTab(),
-            _BackupTab(),
-            _CompanyTab(),
-            _LicenseTab(),
-          ]),
+        Expanded(
+          child: TabBarView(children: [for (final tab in tabs) tab.child]),
         ),
       ]),
     );
@@ -105,7 +113,11 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
       if (mounted) {
         setState(() {
           if (res.statusCode == 200) {
-            _platformLocked = res.data['locked'] == true;
+            final rawLocked = res.data['locked'];
+            _platformLocked = rawLocked == true ||
+                rawLocked == 1 ||
+                rawLocked.toString().trim().toUpperCase() == 'LOCKED' ||
+                rawLocked.toString().trim() == '1';
             _platformStatusError = null;
           } else if (res.statusCode == 404) {
             _platformStatusError =
@@ -336,16 +348,22 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
             // Always keep the recovery action visible. The lock can be armed
             // after this tab was opened, so a status snapshot must never hide
             // the only manual recovery path.
-            FilledButton.tonalIcon(
-              onPressed: _unlockingPlatform ? null : _unlockPlatform,
-              icon: _unlockingPlatform
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.lock_open),
-              label: const Text('Developer Unlock'),
-            ),
+            if (_platformLocked)
+              FilledButton.tonalIcon(
+                onPressed: _unlockingPlatform ? null : _unlockPlatform,
+                icon: _unlockingPlatform
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.lock_open),
+                label: const Text('Developer Unlock'),
+              )
+            else
+              const Chip(
+                avatar: Icon(Icons.lock_open, size: 18),
+                label: Text('UNLOCKED'),
+              ),
           ]),
         ),
       ),
@@ -1333,6 +1351,94 @@ class _PrintTabState extends State<_PrintTab> {
     return (lines * spacing / 180).toStringAsFixed(2);
   }
 
+  static const _profileFields = <String>[
+    'dotMatrixFontStyle',
+    'dotMatrixFontWeight',
+    'dotMatrixInkDensity',
+    'dotMatrixDriverRenderDpi',
+  ];
+
+  Map<String, Map<String, dynamic>> _readPrinterProfiles(
+      Map<String, dynamic> config) {
+    final raw = config['dotMatrixPrinterProfilesJson']?.toString();
+    if (raw == null || raw.trim().isEmpty)
+      return <String, Map<String, dynamic>>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return <String, Map<String, dynamic>>{};
+      final profiles = decoded.map((key, value) => MapEntry(
+          key.toString(),
+          value is Map
+              ? Map<String, dynamic>.from(value)
+              : <String, dynamic>{}));
+      // Version 1 profiles were created while the Epson edge-light settings
+      // were still global. Restore affected TVS queues once to the exact
+      // pre-Epson production defaults requested by the factory.
+      for (final entry in profiles.entries) {
+        if (entry.key.toLowerCase().contains('tvs') &&
+            entry.value['profileVersion'] != 2) {
+          entry.value
+            ..['dotMatrixFontStyle'] = 'LegacyTVS'
+            ..['dotMatrixFontWeight'] = 'Regular'
+            ..['dotMatrixInkDensity'] = 'Normal'
+            ..['dotMatrixDriverRenderDpi'] = 120
+            ..['profileVersion'] = 2;
+        }
+      }
+      return profiles;
+    } catch (_) {
+      return <String, Map<String, dynamic>>{};
+    }
+  }
+
+  Map<String, dynamic> _currentProfile() => {
+        for (final field in _profileFields) field: v![field],
+        'profileVersion': 2,
+      };
+
+  Map<String, dynamic> _defaultProfileFor(String printerName) {
+    final lower = printerName.toLowerCase();
+    final isEpson = lower.contains('epson lx');
+    final isTvs = lower.contains('tvs');
+    return <String, dynamic>{
+      'dotMatrixFontStyle': isTvs ? 'LegacyTVS' : 'Sans',
+      'dotMatrixFontWeight': 'Regular',
+      'dotMatrixInkDensity': isEpson ? 'Light' : 'Normal',
+      // RAW ESC/P used by TVS always renders at 120 DPI. Epson V4 is the
+      // Windows-driver bitmap route, for which 240 is the safe initial test.
+      'dotMatrixDriverRenderDpi': isEpson ? 240 : 120,
+      'profileVersion': 2,
+    };
+  }
+
+  void _writeProfiles(Map<String, Map<String, dynamic>> profiles) {
+    v!['dotMatrixPrinterProfilesJson'] = jsonEncode(profiles);
+  }
+
+  void _selectDotMatrixPrinter(String printerName) {
+    final previous = v!['dotMatrixPrinterName']?.toString() ?? '';
+    final profiles = _readPrinterProfiles(v!);
+    if (previous.isNotEmpty) profiles[previous] = _currentProfile();
+    final selected = Map<String, dynamic>.from(
+        profiles[printerName] ?? _defaultProfileFor(printerName));
+    profiles[printerName] = selected;
+    v!['dotMatrixPrinterName'] = printerName;
+    for (final field in _profileFields) {
+      v![field] = selected[field] ?? _defaultProfileFor(printerName)[field];
+    }
+    _writeProfiles(profiles);
+  }
+
+  Future<void> _savePrintConfiguration() async {
+    if (v == null) return;
+    final profiles = _readPrinterProfiles(v!);
+    final active = v!['dotMatrixPrinterName']?.toString() ?? '';
+    if (active.isNotEmpty) profiles[active] = _currentProfile();
+    _writeProfiles(profiles);
+    final res = await ApiClient.instance.dio.put('/api/config/print', data: v);
+    if (mounted) showResult(context, res);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1359,8 +1465,35 @@ class _PrintTabState extends State<_PrintTab> {
         config['dotMatrixTearOffParkingEnabled'] ??= true;
         config['dotMatrixTearOffFeedLines'] ??= 12.0;
         config['dotMatrixFastPrint'] ??= true;
+        config['dotMatrixFontWeight'] ??= 'Regular';
+        config['dotMatrixFontStyle'] ??= 'Sans';
+        config['dotMatrixInkDensity'] ??= 'Light';
+        config['dotMatrixDriverRenderDpi'] ??= 240;
+        final activeDotMatrix =
+            config['dotMatrixPrinterName']?.toString() ?? '';
+        final profiles = _readPrinterProfiles(config);
+        // Upgrade a current global profile safely: it becomes the profile of
+        // the printer that was selected before this version was installed.
+        if (activeDotMatrix.isNotEmpty &&
+            !profiles.containsKey(activeDotMatrix)) {
+          profiles[activeDotMatrix] =
+              activeDotMatrix.toLowerCase().contains('tvs')
+                  ? _defaultProfileFor(activeDotMatrix)
+                  : {
+                      for (final field in _profileFields) field: config[field],
+                      'profileVersion': 2,
+                    };
+          config['dotMatrixPrinterProfilesJson'] = jsonEncode(profiles);
+        }
+        final activeProfile = profiles[activeDotMatrix];
+        if (activeProfile != null) {
+          for (final field in _profileFields) {
+            config[field] = activeProfile[field] ?? config[field];
+          }
+        }
         config['paymentAutoPrint'] ??= true;
         config['loanAutoPrint'] ??= true;
+        config['salePurchaseInvoicePrinterType'] ??= 'A4';
         setState(() {
           v = config;
           _printers = PrintService.installedPrinterNames();
@@ -1400,8 +1533,10 @@ class _PrintTabState extends State<_PrintTab> {
                         value: name,
                         child: Text(name, overflow: TextOverflow.ellipsis))
                 ],
-                onChanged: (x) =>
-                    setState(() => v!['dotMatrixPrinterName'] = x ?? ''))),
+                onChanged: (x) {
+                  if (x == null) return;
+                  setState(() => _selectDotMatrixPrinter(x));
+                })),
         SizedBox(
             width: 280,
             child: DropdownButtonFormField<String>(
@@ -1430,6 +1565,15 @@ class _PrintTabState extends State<_PrintTab> {
                 ],
                 onChanged: (x) => setState(() => v!['language'] = x))),
       ]),
+      if ((v!['dotMatrixPrinterName'] ?? '').toString().isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            'A separate saved profile is used for ${v!['dotMatrixPrinterName']}. '
+            '${(v!['dotMatrixPrinterName'] as String).toLowerCase().contains('tvs') ? 'TVS prints through native 120-DPI ESC/P; the selected Windows DPI is retained for when this queue uses a driver route.' : 'Epson V4 uses this profile through its Windows driver.'}',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ),
       SwitchListTile(
           title: const Text('Weighment Auto Print after Save'),
           subtitle: const Text(
@@ -1457,10 +1601,36 @@ class _PrintTabState extends State<_PrintTab> {
       SwitchListTile(
           title: const Text('Sale Weighment Tax Invoice (Excel)'),
           subtitle: const Text(
-              'For completed Sale Weighment only: opens the Excel tax invoice and auto-prints its matching A4 layout. Tare and Dot Matrix continue with the standard configured format.'),
+              'For completed Sale Weighment Gross only: generates Excel and prints the invoice on the dedicated target selected below.'),
           value: v!['salePurchaseInvoiceEnabled'] == true,
           onChanged: (x) =>
               setState(() => v!['salePurchaseInvoiceEnabled'] = x)),
+      if (v!['salePurchaseInvoiceEnabled'] == true)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: SizedBox(
+            width: 360,
+            child: DropdownButtonFormField<String>(
+              value: v!['salePurchaseInvoicePrinterType'] == 'DotMatrix'
+                  ? 'DotMatrix'
+                  : 'A4',
+              decoration: const InputDecoration(
+                labelText: 'Sale Invoice Print Target',
+                helperText:
+                    'Dot Matrix uses fast native ESC/P text. A4 uses the configured laser/inkjet queue and fits one page.',
+              ),
+              items: const [
+                DropdownMenuItem(
+                    value: 'DotMatrix',
+                    child: Text('Dot Matrix — Native Text / Fastest')),
+                DropdownMenuItem(
+                    value: 'A4', child: Text('A4 Laser / Inkjet — One Page')),
+              ],
+              onChanged: (value) => setState(
+                  () => v!['salePurchaseInvoicePrinterType'] = value ?? 'A4'),
+            ),
+          ),
+        ),
       if (v!['printerType'] == 'DotMatrix') ...[
         const SizedBox(height: 8),
         Card(
@@ -1472,6 +1642,117 @@ class _PrintTabState extends State<_PrintTab> {
                 const Text('DOT MATRIX PRINTING',
                     style:
                         TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                const SizedBox(height: 8),
+                Wrap(spacing: 14, runSpacing: 14, children: [
+                  SizedBox(
+                    width: 290,
+                    child: DropdownButtonFormField<String>(
+                      value: v!['dotMatrixFontStyle'],
+                      decoration: const InputDecoration(
+                        labelText: 'Dot Matrix Font Style',
+                        helperText:
+                            'Sans Clear is recommended for Hindi and mixed text.',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'LegacyTVS',
+                            child: Text('TVS Original / Legacy')),
+                        DropdownMenuItem(
+                            value: 'Sans', child: Text('Sans / Clear')),
+                        DropdownMenuItem(
+                            value: 'SansCompact',
+                            child: Text('Sans Compact / Clear')),
+                        DropdownMenuItem(
+                            value: 'Serif', child: Text('Serif / Traditional')),
+                        DropdownMenuItem(
+                            value: 'SerifCompact',
+                            child: Text('Serif Compact / Traditional')),
+                        DropdownMenuItem(
+                            value: 'TimesNewRoman',
+                            child: Text('Times New Roman / Formal')),
+                        DropdownMenuItem(
+                            value: 'CourierNew',
+                            child: Text('Courier New / Typewriter')),
+                        DropdownMenuItem(
+                            value: 'Monospace',
+                            child: Text('Monospace / Fixed Width')),
+                      ],
+                      onChanged: (x) =>
+                          setState(() => v!['dotMatrixFontStyle'] = x),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 290,
+                    child: DropdownButtonFormField<String>(
+                      value: v!['dotMatrixFontWeight'],
+                      decoration: const InputDecoration(
+                        labelText: 'Dot Matrix Font Weight',
+                        helperText:
+                            'Regular is clearest; Bold is for a light/worn ribbon.',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'Light', child: Text('Light / Cleanest')),
+                        DropdownMenuItem(
+                            value: 'Regular', child: Text('Regular / Clear')),
+                        DropdownMenuItem(
+                            value: 'Medium', child: Text('Medium')),
+                        DropdownMenuItem(value: 'Bold', child: Text('Bold')),
+                      ],
+                      onChanged: (x) =>
+                          setState(() => v!['dotMatrixFontWeight'] = x),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 290,
+                    child: DropdownButtonFormField<String>(
+                      value: v!['dotMatrixInkDensity'],
+                      decoration: const InputDecoration(
+                        labelText: 'Ink Density / Edge Dots',
+                        helperText:
+                            'Light removes gray edge dots and reduces ribbon spread.',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'ExtraLight',
+                            child: Text('Extra Light / Thin')),
+                        DropdownMenuItem(
+                            value: 'Light', child: Text('Light / Clean')),
+                        DropdownMenuItem(
+                            value: 'Normal', child: Text('Normal')),
+                        DropdownMenuItem(value: 'Dark', child: Text('Dark')),
+                      ],
+                      onChanged: (x) =>
+                          setState(() => v!['dotMatrixInkDensity'] = x),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 290,
+                    child: DropdownButtonFormField<int>(
+                      value:
+                          (v!['dotMatrixDriverRenderDpi'] as num?)?.toInt() ??
+                              240,
+                      decoration: const InputDecoration(
+                        labelText: 'Windows Driver Resolution',
+                        helperText:
+                            'Start at 240 DPI. Higher options are for Epson V4 quality testing.',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 240, child: Text('240 DPI / Clear')),
+                        DropdownMenuItem(
+                            value: 360, child: Text('360 DPI / Fine Test')),
+                        DropdownMenuItem(
+                            value: 480,
+                            child: Text('480 DPI / Extra Fine Test')),
+                        DropdownMenuItem(
+                            value: 120, child: Text('120 DPI / Faster')),
+                      ],
+                      onChanged: (x) =>
+                          setState(() => v!['dotMatrixDriverRenderDpi'] = x),
+                    ),
+                  ),
+                ]),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Fast Weighment Print (Clear 120 DPI)'),
@@ -1660,32 +1941,61 @@ class _PrintTabState extends State<_PrintTab> {
                 const SizedBox(height: 8),
                 Card(
                   color: Theme.of(context).colorScheme.primaryContainer,
-                  child: const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('TVS MSP 270 — recommended 12-inch setup',
-                              style: TextStyle(fontWeight: FontWeight.w800)),
-                          SizedBox(height: 6),
-                          Text(
-                              'Page 108, Half 54, Header 9, Content Offset 0, Tear 54, Post-Slip 0, Next TOF 108, Line Spacing 20/180.'),
-                          SizedBox(height: 4),
-                          Text(
-                              'Result: each dotted line advances exactly 6.00 inches; two slips advance exactly 12.00 inches. The next transaction starts after the reserved 1-inch header area below the previous dotted line.'),
-                          SizedBox(height: 4),
-                          Text(
-                              'Tear-Off Parking Feed (for example 14.0 or 14.5) only moves the finished dotted line outside the plastic cover. After Paper Torn — Reset TOF, the same distance reverses and restores the next logical TOF.'),
-                          SizedBox(height: 4),
-                          Text(
-                              'Before the first job, align the tractor paper manually at the pre-printed form TOF and tap Mark Current Position as TOF. Do not turn the paper knob or pull paper between jobs. After the tear dialog, tear only at the dotted line and confirm reset before the next print.'),
-                          SizedBox(height: 4),
-                          Text(
-                              'If the measured dotted-line distance is not 6 inches, keep Page 108 and Half 54 unchanged. Correct only Line Spacing: new value = current value × 6 ÷ measured inches. Example: 20 with an actual 5-inch half becomes 24; print the calibration sheet again and re-measure.'),
-                          SizedBox(height: 4),
-                          Text(
-                              'Font: Hindi cannot use the printer’s English-only resident Draft/NLQ font. It is rendered as normal-weight, monochrome 120-DPI double-density graphics for clean matras and conjuncts.'),
-                        ]),
+                  child: const ExpansionTile(
+                    initiallyExpanded: false,
+                    title: Text('TVS MSP 270 — recommended 12-inch setup',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
+                    subtitle: Text('Tap to show / hide setup guide.'),
+                    childrenPadding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(height: 6),
+                      Text(
+                          'Page 108, Half 54, Header 9, Content Offset 0, Tear 54, Post-Slip 0, Next TOF 108, Line Spacing 20/180.'),
+                      SizedBox(height: 4),
+                      Text(
+                          'Result: each dotted line advances exactly 6.00 inches; two slips advance exactly 12.00 inches. The next transaction starts after the reserved 1-inch header area below the previous dotted line.'),
+                      SizedBox(height: 4),
+                      Text(
+                          'Tear-Off Parking Feed (for example 14.0 or 14.5) only moves the finished dotted line outside the plastic cover. After Paper Torn — Reset TOF, the same distance reverses and restores the next logical TOF.'),
+                      SizedBox(height: 4),
+                      Text(
+                          'Before the first job, align the tractor paper manually at the pre-printed form TOF and tap Mark Current Position as TOF. Do not turn the paper knob or pull paper between jobs. After the tear dialog, tear only at the dotted line and confirm reset before the next print.'),
+                      SizedBox(height: 4),
+                      Text(
+                          'If the measured dotted-line distance is not 6 inches, keep Page 108 and Half 54 unchanged. Correct only Line Spacing: new value = current value × 6 ÷ measured inches. Example: 20 with an actual 5-inch half becomes 24; print the calibration sheet again and re-measure.'),
+                      SizedBox(height: 4),
+                      Text(
+                          'Font: Hindi cannot use the printer’s English-only resident Draft/NLQ font. It is rendered as normal-weight, monochrome 120-DPI double-density graphics for clean matras and conjuncts.'),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  color: Theme.of(context).colorScheme.secondaryContainer,
+                  child: const ExpansionTile(
+                    initiallyExpanded: false,
+                    title: Text('Epson LX-310 V4/Class — recommended setup',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
+                    subtitle: Text('Tap to show / hide setup guide.'),
+                    childrenPadding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    expandedCrossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                          'Use Epson LX-310 with its Windows V4/Class queue, continuous tractor paper, actual-size printing and monochrome Normal quality.'),
+                      SizedBox(height: 4),
+                      Text(
+                          'Recommended application profile: Sans / Clear, Regular, Light ink density and 240 DPI. If ribbon spread is still heavy, use Light font weight or Extra Light density.'),
+                      SizedBox(height: 4),
+                      Text(
+                          'Keep Page 108, Half 54, Tear 54, Next TOF 108 and Line Spacing 20/180 for the 12-inch two-slip form. Adjust only Tear-Off Parking Feed to match the physical cover clearance.'),
+                      SizedBox(height: 4),
+                      Text(
+                          'Turn printer Default Setting → Auto Tear-Off ON and set tractor page length correctly. After tearing, confirm in the app; LX-310 retracts automatically when the next Windows print job begins. For immediate physical return, press the printer Tear Off button once.'),
+                      SizedBox(height: 4),
+                      Text(
+                          'Before the first job, align paper manually and choose Mark Current Position as TOF. Do not rotate the platen knob between jobs.'),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -1762,11 +2072,7 @@ class _PrintTabState extends State<_PrintTab> {
           onChanged: (x) => v!['invoiceTermsAndConditions'] = x),
       const SizedBox(height: 12),
       FilledButton(
-          onPressed: () async {
-            final res =
-                await ApiClient.instance.dio.put('/api/config/print', data: v);
-            if (context.mounted) showResult(context, res);
-          },
+          onPressed: _savePrintConfiguration,
           child: const Text('Save Print Configuration')),
       const Divider(height: 32),
       const Text('Print Test',
@@ -1876,12 +2182,45 @@ class _PrintTabState extends State<_PrintTab> {
           '/api/print/test?target=$_testTarget&language=$_testLanguage&format=final',
       printerType: _testTarget,
       printerName: printerName,
+      dotMatrixTearOffParkingEnabled: _testTarget == 'DotMatrix' &&
+          v!['dotMatrixTearOffParkingEnabled'] == true,
+      dotMatrixTearOffFeedLines:
+          (v!['dotMatrixTearOffFeedLines'] as num?)?.toDouble() ?? 12.0,
+      dotMatrixLineSpacingUnits:
+          (v!['dotMatrixLineSpacingUnits'] as num?)?.toInt() ?? 20,
+      dotMatrixDriverRenderDpi:
+          (v!['dotMatrixDriverRenderDpi'] as num?)?.toInt() ?? 240,
+      confirmTearOff: _testTarget == 'DotMatrix' ? _confirmTestTearOff : null,
     );
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(outcome.message),
           backgroundColor: outcome.success ? Colors.green : Colors.red));
     }
+  }
+
+  Future<bool> _confirmTestTearOff(int totalCopies, bool isEpson) async {
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Tear test slip'),
+            content: Text(isEpson
+                ? 'Tear at the dotted line. If paper has not returned to TOF, press Tear Off on the Epson printer panel.'
+                : 'All $totalCopies test ${totalCopies == 1 ? 'copy has' : 'copies have'} printed. Tear at the dotted line, then confirm the next Top-of-Form.'),
+            actions: [
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                icon: const Icon(Icons.content_cut),
+                label: Text(isEpson
+                    ? 'Paper Torn — Continue'
+                    : 'Paper Torn — Reset TOF'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Future<void> _previewCalibration() async {
@@ -1933,6 +2272,8 @@ class _PrintTabState extends State<_PrintTab> {
       documentUrl: '/api/print/calibration?format=final',
       printerType: 'DotMatrix',
       printerName: (v!['dotMatrixPrinterName'] ?? '').toString(),
+      dotMatrixDriverRenderDpi:
+          (v!['dotMatrixDriverRenderDpi'] as num?)?.toInt() ?? 240,
     );
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(

@@ -395,6 +395,12 @@ public class AppDbContext : DbContext
         });
         b.Entity<SoundConfig>().Property(x => x.SpeechRate).HasPrecision(4, 2);
         b.Entity<PrintConfig>().Property(x => x.DotMatrixTearOffFeedLines).HasPrecision(5, 1);
+        b.Entity<PrintConfig>().Property(x => x.DotMatrixFontWeight).HasMaxLength(16).HasDefaultValue("Regular");
+        b.Entity<PrintConfig>().Property(x => x.DotMatrixFontStyle).HasMaxLength(16).HasDefaultValue("Sans");
+        b.Entity<PrintConfig>().Property(x => x.DotMatrixInkDensity).HasMaxLength(16).HasDefaultValue("Light");
+        b.Entity<PrintConfig>().Property(x => x.DotMatrixDriverRenderDpi).HasDefaultValue(240);
+        b.Entity<PrintConfig>().Property(x => x.DotMatrixPrinterProfilesJson).HasDefaultValue("{}");
+        b.Entity<PrintConfig>().Property(x => x.SalePurchaseInvoicePrinterType).HasMaxLength(16).HasDefaultValue("A4");
         b.Entity<CompanyConfig>().Property(x => x.LogoContentType).HasMaxLength(100);
         b.Entity<SystemSetting>().HasIndex(x => x.Key).IsUnique();
         b.Entity<NumberSequence>().HasKey(x => x.Name);

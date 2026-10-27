@@ -331,12 +331,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
           (autoPrint['dotMatrixTearOffFeedLines'] as num?)?.toDouble() ?? 12.0,
       dotMatrixLineSpacingUnits:
           (autoPrint['dotMatrixLineSpacingUnits'] as num?)?.toInt() ?? 20,
+      dotMatrixDriverRenderDpi:
+          (autoPrint['dotMatrixDriverRenderDpi'] as num?)?.toInt() ?? 240,
       confirmTearOff: _confirmTearOff,
     );
     if (mounted) _toast(outcome.message, error: !outcome.success);
   }
 
-  Future<bool> _confirmTearOff(int totalCopies) async {
+  Future<bool> _confirmTearOff(int totalCopies, bool isEpson) async {
     if (!mounted) return false;
     return await showDialog<bool>(
           context: context,
@@ -345,14 +347,16 @@ class _PaymentScreenState extends State<PaymentScreen> {
             title: Text(totalCopies == 1
                 ? 'Tear printed payment slip'
                 : 'Tear printed payment slips'),
-            content: Text(
-                'Wait until the dotted line comes outside the printer cover. '
-                'Tear ${totalCopies == 1 ? 'the payment slip' : 'all $totalCopies payment slips'} on that line, then reset the remaining paper to the next TOF.'),
+            content: Text(isEpson
+                ? 'Tear at the dotted line. If paper has not returned to TOF, press Tear Off on the Epson printer panel.'
+                : 'Wait until the dotted line comes outside the printer cover. Tear ${totalCopies == 1 ? 'the payment slip' : 'all $totalCopies payment slips'} on that line, then reset the remaining paper to the next TOF.'),
             actions: [
               FilledButton.icon(
                 onPressed: () => Navigator.pop(dialogContext, true),
                 icon: const Icon(Icons.content_cut),
-                label: const Text('Paper Torn — Reset TOF'),
+                label: Text(isEpson
+                    ? 'Paper Torn — Continue'
+                    : 'Paper Torn — Reset TOF'),
               ),
             ],
           ),

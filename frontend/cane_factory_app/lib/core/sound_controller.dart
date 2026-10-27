@@ -62,6 +62,8 @@ class SoundController {
   Timer? _repeatTimer;
   int _playCount = 0;
   bool _speaking = false;
+  int _completedZeroSamples = 0;
+  bool _completedZeroArmed = false;
   int _speechGeneration = 0;
   int _stateEpoch = 0;
   String? _activeEvent;
@@ -215,7 +217,8 @@ class SoundController {
   }
 
   /// Feed live weight updates; drives the state machine.
-  Future<void> onWeight(double weightQuintal) async {
+  Future<void> onWeight(double weightQuintal,
+      {bool readingValid = true}) async {
     // Do not consume the first vehicle transition before sound messages have
     // arrived from Configuration. This was the reason the configured vehicle
     // and weighment prompts could remain silent until the next state change.
@@ -226,22 +229,34 @@ class SoundController {
     // it. Never let that older callback replace the post-save removal state.
     if (observedEpoch != _stateEpoch && state == SoundState.completed) return;
     // After a successful saved weight, the vehicle-removal instruction must
-    // continue until a real zero platform reading arrives. It must never be
-    // cleared by a timer, app route change, or digitizer reconnect.
+    // continue until real consecutive zero platform readings arrive. Ignore
+    // disconnected/stale zero frames and a single transient zero between live
+    // scale packets; either could otherwise announce that the next vehicle
+    // should enter while the weighed vehicle is still on the platform.
     if (state == SoundState.completed) {
-      if (_isPlatformEmpty(weightQuintal)) {
+      if (!_completedZeroArmed) return;
+      if (!readingValid) return;
+      if (!_isPlatformEmpty(weightQuintal)) {
+        _completedZeroSamples = 0;
+        return;
+      }
+      _completedZeroSamples++;
+      if (_completedZeroSamples >= 2) {
+        _completedZeroSamples = 0;
         _setState(SoundState.noVehicle);
       }
       return;
     }
-    if (_isPlatformEmpty(weightQuintal)) {
-      _setState(SoundState.noVehicle);
-    } else if (rulesEnabled && weightQuintal < minimumWeightQuintal) {
-      _setState(SoundState.belowMinimum);
-    } else {
-      // The waiting instruction starts only after the configured minimum
-      // weight has been reached (for example 3.00 quintal).
+    // There is one authoritative live-weighment threshold: the configured
+    // minimum. At or above it, only the waiting announcement is eligible;
+    // the platform-entry phrase can never be scheduled alongside it.
+    final minimumReached = weightQuintal >= minimumWeightQuintal;
+    if (minimumReached) {
       _setState(SoundState.weighingInProgress);
+    } else if (_isPlatformEmpty(weightQuintal)) {
+      _setState(SoundState.noVehicle);
+    } else {
+      _setState(SoundState.belowMinimum);
     }
   }
 
@@ -255,6 +270,8 @@ class SoundController {
     // live-weight callback cannot restart WEIGHING_ACTIVE during this sequence.
     _stateEpoch++;
     _stopRepeat();
+    _completedZeroSamples = 0;
+    _completedZeroArmed = false;
     state = SoundState.completed;
 
     // Completion has priority over an older BELOW_MINIMUM/WEIGHING_ACTIVE
@@ -278,11 +295,19 @@ class SoundController {
       await _speakEvent('IMAGE_CAPTURED');
     }
 
-    // Vehicle removal is a safety workflow, so it repeats at the configured
-    // interval even when the general Repeat Mode is ONCE/OFF. A zero-weight
-    // frame stops it and returns the state machine to BELOW_MINIMUM.
+    // Speak the first vehicle-removal instruction to completion before zero
+    // detection is armed. Live callbacks arriving while IMAGE_CAPTURED or the
+    // first completion phrase is playing must not advance to the next vehicle.
     if (state == SoundState.completed) {
-      _startEvent('WEIGHMENT_COMPLETED', overrideMode: 'CONTINUOUS');
+      await _speakEvent('WEIGHMENT_COMPLETED');
+    }
+    // Vehicle removal is a safety workflow, so it repeats at the configured
+    // interval even when the general Repeat Mode is ONCE/OFF. Two consecutive
+    // valid zero frames stop it and return to the vehicle-entry instruction.
+    if (state == SoundState.completed) {
+      _completedZeroArmed = true;
+      _startEvent('WEIGHMENT_COMPLETED',
+          overrideMode: 'CONTINUOUS', speakImmediately: false);
     }
   }
 
@@ -324,6 +349,8 @@ class SoundController {
     }
     _speechGeneration++;
     _speaking = false;
+    _completedZeroSamples = 0;
+    _completedZeroArmed = false;
     state = SoundState.noVehicle;
   }
 
@@ -339,7 +366,11 @@ class SoundController {
         _startEvent('BELOW_MINIMUM');
         break;
       case SoundState.weighingInProgress:
-        _startEvent('WEIGHING_ACTIVE');
+        // Once the vehicle reaches the configured minimum, the operator must
+        // continue hearing the waiting instruction at the configured interval
+        // until Gross/Tare is saved. This safety workflow is not limited by
+        // the general ONCE/TWICE preference.
+        _startEvent('WEIGHING_ACTIVE', overrideMode: 'CONTINUOUS');
         break;
       case SoundState.completed:
         _startEvent('WEIGHMENT_COMPLETED', overrideMode: 'CONTINUOUS');
@@ -349,12 +380,13 @@ class SoundController {
     }
   }
 
-  void _startEvent(String event, {String? overrideMode}) {
+  void _startEvent(String event,
+      {String? overrideMode, bool speakImmediately = true}) {
     final mode = overrideMode ?? repeatMode;
     if (mode == 'OFF') return;
     _activeEvent = event;
-    _playCount = 0;
-    _speakEvent(event);
+    _playCount = speakImmediately ? 0 : 1;
+    if (speakImmediately) _speakEvent(event);
     final maxPlays = mode == 'ONCE' ? 1 : (mode == 'TWICE' ? 2 : -1);
     if (maxPlays == 1) return;
     _repeatTimer =

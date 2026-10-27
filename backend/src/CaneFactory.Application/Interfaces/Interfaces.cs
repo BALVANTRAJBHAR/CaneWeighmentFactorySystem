@@ -124,6 +124,7 @@ public interface ISaleInvoiceService
 {
     Task<byte[]> BuildExcelAsync(int salePurchaseId);
     Task<byte[]> BuildPdfAsync(int salePurchaseId);
+    Task<byte[]> BuildDotMatrixNativeAsync(int salePurchaseId, bool avoidCarriageReturn = false);
 }
 
 /// <summary>Generic HTTP SMS gateway client (Phase 10) - never tied to one named provider. Builds the

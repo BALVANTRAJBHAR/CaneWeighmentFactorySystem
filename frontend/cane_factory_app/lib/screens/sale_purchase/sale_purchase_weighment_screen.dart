@@ -62,7 +62,11 @@ class _SalePurchaseWeighmentScreenState
 
   void _onLiveWeightChanged() {
     if (!mounted) return;
-    unawaited(_sound.onWeight(_liveWeightProvider.current.weightQuintal));
+    final reading = _liveWeightProvider.current;
+    unawaited(_sound.onWeight(reading.weightQuintal,
+        readingValid: reading.deviceConnected &&
+            reading.readerRunning &&
+            reading.isLive));
   }
 
   Future<void> _load() async {
@@ -180,11 +184,14 @@ class _SalePurchaseWeighmentScreenState
             (print['dotMatrixTearOffFeedLines'] as num?)?.toDouble() ?? 12.0,
         dotMatrixLineSpacingUnits:
             (print['dotMatrixLineSpacingUnits'] as num?)?.toInt() ?? 20,
+        dotMatrixDriverRenderDpi:
+            (print['dotMatrixDriverRenderDpi'] as num?)?.toInt() ?? 240,
+        forceNativeDotMatrix: print['nativeTextInvoice'] == true,
         confirmTearOff: _confirmTearOff);
     if (mounted && !outcome.success) _toast(outcome.message, error: true);
   }
 
-  Future<bool> _confirmTearOff(int totalCopies) async {
+  Future<bool> _confirmTearOff(int totalCopies, bool isEpson) async {
     if (!mounted) return false;
     return await showDialog<bool>(
           context: context,
@@ -193,14 +200,18 @@ class _SalePurchaseWeighmentScreenState
             title: Text(totalCopies == 1
                 ? 'Tear printed slip'
                 : 'Tear printed page ($totalCopies slips)'),
-            content: Text(totalCopies == 1
+            content: Text(isEpson
+                ? 'Tear at the dotted line. If paper has not returned to TOF, press Tear Off on the Epson printer panel.'
+                : totalCopies == 1
                 ? 'Wait until the final dotted line comes outside the printer cover. Tear the paper on that line, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'
                 : 'All $totalCopies configured slips have printed continuously. Wait until the final dotted line comes outside the printer cover, tear the paper there, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'),
             actions: [
               FilledButton.icon(
                 onPressed: () => Navigator.pop(dialogContext, true),
                 icon: const Icon(Icons.content_cut),
-                label: const Text('Paper Torn — Reset TOF'),
+                label: Text(isEpson
+                    ? 'Paper Torn — Continue'
+                    : 'Paper Torn — Reset TOF'),
               ),
             ],
           ),
@@ -345,6 +356,7 @@ class _SalePurchaseWeighmentScreenState
         'vehicleNumber': _vehicle.text.trim(),
         'driverName': _driver.text.trim(),
         'remark': _remark.text.trim(),
+        'taxSupplyType': _taxSupplyType,
         ...live.saveProof,
         'idempotencyKey': 'sp-tare-${DateTime.now().microsecondsSinceEpoch}'
       });
@@ -629,6 +641,7 @@ class _SalePurchaseWeighmentScreenState
             if (_itemId != null) ...[
               _calculationBox('Item Rate (automatic)', _rateText),
             ],
+            _taxSupplySelector(),
             FilledButton.icon(
                 onPressed: _saving ||
                         !context
@@ -728,27 +741,46 @@ class _SalePurchaseWeighmentScreenState
                 onChanged: (_) => setState(() {}),
               ),
             ),
-            SizedBox(
-              width: 220,
-              child: DropdownButtonFormField<String>(
-                value: _taxSupplyType,
-                decoration: const InputDecoration(labelText: 'Tax supply'),
-                items: const [
-                  DropdownMenuItem(
-                      value: 'INTRA_STATE',
-                      child: Text('Intra-state (CGST + SGST)')),
-                  DropdownMenuItem(
-                      value: 'INTER_STATE', child: Text('Inter-state (IGST)')),
-                ],
-                onChanged: (value) =>
-                    setState(() => _taxSupplyType = value ?? 'INTRA_STATE'),
-              ),
-            ),
+            _taxSupplySelector(),
           ]),
           const SizedBox(height: 6),
           _saleAmountEstimate(finalWeight),
         ]
       ]);
+
+  Widget _taxSupplySelector() => SizedBox(
+        width: 470,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('GST supply type'),
+          RadioGroup<String>(
+            groupValue: _taxSupplyType,
+            onChanged: (value) => setState(() => _taxSupplyType = value!),
+            child: Wrap(spacing: 12, runSpacing: 4, children: [
+            SizedBox(
+              width: 215,
+              child: RadioListTile<String>(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Intra-State'),
+                subtitle: const Text('Same State/UT · CGST + SGST'),
+                value: 'INTRA_STATE',
+              ),
+            ),
+            SizedBox(
+              width: 215,
+              child: RadioListTile<String>(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Inter-State'),
+                subtitle: const Text('Different State/UT · IGST'),
+                value: 'INTER_STATE',
+              ),
+            ),
+            ]),
+          ),
+          const Text('Choose from supplier location and place of supply; a different city in the same State is still Intra-State.'),
+        ]),
+      );
 
   Widget _saleAmountEstimate(double? finalWeight) {
     final rate = (_itemRate?['rate'] as num?)?.toDouble();

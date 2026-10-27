@@ -139,6 +139,8 @@ public class SalePurchaseTareSaveRequest : IScaleReadingProofRequest
     public string VehicleNumber { get; set; } = string.Empty;
     public string DriverName { get; set; } = string.Empty;
     public string? Remark { get; set; }
+    /// <summary>Operator-selected supply classification, confirmed again at gross.</summary>
+    public string TaxSupplyType { get; set; } = "INTRA_STATE";
     public decimal ScaleReadingKg { get; set; }
     public bool ScaleReadingStable { get; set; }
     public DateTime? ScaleReadingCapturedAtUtc { get; set; }

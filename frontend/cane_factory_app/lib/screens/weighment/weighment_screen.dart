@@ -89,7 +89,10 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
 
   void _onLiveWeightChanged() {
     if (!mounted) return;
-    unawaited(_sound.onWeight(_liveWeightProvider.current.weightQuintal));
+    final reading = _liveWeightProvider.current;
+    unawaited(_sound.onWeight(reading.weightQuintal,
+        readingValid:
+            reading.deviceConnected && reading.readerRunning && reading.isLive));
   }
 
   Future<void> _loadRefs() async {
@@ -170,12 +173,14 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           (autoPrint['dotMatrixTearOffFeedLines'] as num?)?.toDouble() ?? 12.0,
       dotMatrixLineSpacingUnits:
           (autoPrint['dotMatrixLineSpacingUnits'] as num?)?.toInt() ?? 20,
+      dotMatrixDriverRenderDpi:
+          (autoPrint['dotMatrixDriverRenderDpi'] as num?)?.toInt() ?? 240,
       confirmTearOff: _confirmTearOff,
     );
     if (mounted) _toast(outcome.message, error: !outcome.success);
   }
 
-  Future<bool> _confirmTearOff(int totalCopies) async {
+  Future<bool> _confirmTearOff(int totalCopies, bool isEpson) async {
     if (!mounted) return false;
     return await showDialog<bool>(
           context: context,
@@ -184,7 +189,9 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
             title: Text(totalCopies == 1
                 ? 'Tear printed slip'
                 : 'Tear printed page ($totalCopies slips)'),
-            content: Text(totalCopies == 1
+            content: Text(isEpson
+                ? 'Tear at the dotted line. If paper has not returned to TOF, press Tear Off on the Epson printer panel.'
+                : totalCopies == 1
                 ? 'Wait until the final dotted line comes outside the printer cover. Tear the paper on that line, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'
                 : 'All $totalCopies configured slips have printed continuously. Wait until the final dotted line comes outside the printer cover, tear the paper there, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'),
             actions: [
@@ -193,11 +200,13 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                   // Give immediate feedback before the raw ESC/P reverse-feed
                   // is handed to Windows. PrintService has its own timeout, so
                   // a stalled spooler cannot leave this form indefinitely busy.
-                  _toast('Resetting paper to the next TOF...');
+                  if (!isEpson) _toast('Resetting paper to the next TOF...');
                   Navigator.pop(dialogContext, true);
                 },
                 icon: const Icon(Icons.content_cut),
-                label: const Text('Paper Torn — Reset TOF'),
+                label: Text(isEpson
+                    ? 'Paper Torn — Continue'
+                    : 'Paper Torn — Reset TOF'),
               ),
             ],
           ),

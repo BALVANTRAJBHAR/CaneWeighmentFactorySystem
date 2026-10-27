@@ -123,6 +123,29 @@ try {
             if ($response.StatusCode -eq 200) {
                 Write-Host "Deployment verified: $healthUri"
                 Write-Host $response.Content
+                # WEBSITE_RUN_FROM_PACKAGE stores one ZIP per deployment.
+                # Retain the active package plus one rollback package and
+                # remove older ZIPs so repeated F1 deployments cannot slowly
+                # consume the 1-GB App Service file quota.
+                try {
+                    $packages = @(Invoke-RestMethod `
+                        -Uri "$kuduBase/api/vfs/data/SitePackages/" `
+                        -Headers $kuduHeaders -TimeoutSec 30) |
+                        Where-Object { $_.name -like '*.zip' } |
+                        Sort-Object mtime -Descending
+                    foreach ($oldPackage in @($packages | Select-Object -Skip 2)) {
+                        $deleteHeaders = @{
+                            Authorization = $kuduHeaders.Authorization
+                            'If-Match' = '*'
+                        }
+                        Invoke-RestMethod -Uri $oldPackage.href `
+                            -Headers $deleteHeaders -Method Delete -TimeoutSec 30 | Out-Null
+                        Write-Host "Removed old rollback package: $($oldPackage.name)"
+                    }
+                }
+                catch {
+                    Write-Warning "Deployment is healthy, but old package cleanup failed: $($_.Exception.Message)"
+                }
                 return
             }
             $lastError = "HTTP $($response.StatusCode)"

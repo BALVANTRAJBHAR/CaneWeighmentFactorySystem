@@ -151,6 +151,8 @@ class _ReprintScreenState extends State<ReprintScreen> {
             (config['dotMatrixTearOffFeedLines'] as num?)?.toDouble() ?? 12.0,
         dotMatrixLineSpacingUnits:
             (config['dotMatrixLineSpacingUnits'] as num?)?.toInt() ?? 20,
+        dotMatrixDriverRenderDpi:
+            (config['dotMatrixDriverRenderDpi'] as num?)?.toInt() ?? 240,
         confirmTearOff: _confirmTearOff,
       );
       if (!mounted) return;
@@ -163,20 +165,23 @@ class _ReprintScreenState extends State<ReprintScreen> {
     }
   }
 
-  Future<bool> _confirmTearOff(int totalCopies) async {
+  Future<bool> _confirmTearOff(int totalCopies, bool isEpson) async {
     if (!mounted) return false;
     return await showDialog<bool>(
           context: context,
           barrierDismissible: false,
           builder: (dialogContext) => AlertDialog(
             title: const Text('Tear duplicate slip'),
-            content: const Text(
-                'Wait until the dotted line comes outside the printer cover. Tear the duplicate slip on that line, then reset the remaining paper to the next TOF.'),
+            content: Text(isEpson
+                ? 'Tear at the dotted line. If the Epson paper has not returned to TOF, press its Tear Off button on the printer panel. The app cannot confirm a physical reverse feed.'
+                : 'Wait until the dotted line comes outside the printer cover. Tear the duplicate slip on that line, then reset the remaining paper to the next TOF.'),
             actions: [
               FilledButton.icon(
                 onPressed: () => Navigator.pop(dialogContext, true),
                 icon: const Icon(Icons.content_cut),
-                label: const Text('Paper Torn — Reset TOF'),
+                label: Text(isEpson
+                    ? 'Paper Torn — Continue'
+                    : 'Paper Torn — Reset TOF'),
               ),
             ],
           ),

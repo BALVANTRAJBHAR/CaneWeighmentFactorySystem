@@ -59,8 +59,31 @@ public static class DbSeeder
         admin.AddRange(Codes(new[] { "Image", "CashEvidence" }, "View"));
         admin.AddRange(Codes(new[] { "Audit" }, "View"));
         admin.AddRange(Codes(new[] { "Dashboard", "Health", "UserGuide" }, "View"));
-        admin.AddRange(Codes(new[] { "Company", "Season" }, "Configure"));
-        admin.AddRange(Codes(new[] { "Backup" }, "View", "Configure"));
+        // Admin's Configuration surface is intentionally limited to the
+        // operational weighbridge controls requested by the factory: Weight
+        // Rules (including the platform lock) and the local Print profile.
+        // In particular do not grant Backup, Company, Sound, Camera, SMS or
+        // License configuration through this role.
+        admin.RemoveAll(code => code.StartsWith("Company.", StringComparison.OrdinalIgnoreCase)
+            || code.StartsWith("Season.", StringComparison.OrdinalIgnoreCase));
+        admin.AddRange(Codes(new[] { "WeightRule" }, "View", "Configure"));
+        admin.AddRange(Codes(new[] { "Print" }, "View", "Configure"));
+
+        // Administrator is a developer-created operational super-user: every
+        // Admin right except Company configuration, plus the explicitly
+        // delegated infrastructure/configuration modules. License/SystemSetting
+        // remains Developer-only.
+        var administrator = admin
+            .Where(code => !code.StartsWith("Company.", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        administrator.AddRange(Codes(new[] { "WeightRule", "Sound" }, "View", "Configure"));
+        administrator.AddRange(Codes(new[] { "Camera" }, "View", "Configure", "ViewCamera"));
+        administrator.AddRange(Codes(new[] { "Print" }, "View", "Configure", "Print"));
+        administrator.AddRange(Codes(new[] { "Sms" }, "View", "Configure"));
+        administrator.AddRange(Codes(new[] { "Backup" }, "View", "Configure"));
+        administrator.AddRange(Codes(new[] { "Device" }, "View", "Configure"));
+        administrator = administrator.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         var subAdmin = Codes(Modules.Masters, "View", "Create", "Edit");
         subAdmin.AddRange(Codes(new[] { "Purchase", "Weighment", "Report" }, "View"));
@@ -104,6 +127,7 @@ public static class DbSeeder
         return new Dictionary<string, List<string>>
         {
             ["Developer"] = new() { "*" },
+            ["Administrator"] = administrator,
             ["Admin"] = admin,
             ["SubAdmin"] = subAdmin,
             ["Accountant"] = accountant,
@@ -133,7 +157,7 @@ public static class DbSeeder
             // These restricted roles are an exact allow-list. Reconcile removals as
             // well as additions so a previously granted permission cannot survive a
             // deployment merely because it already exists in RolePermissions.
-            if (roleName is "Farmer" or "Operator")
+            if (roleName is "Farmer" or "Operator" or "Administrator" or "Admin")
             {
                 var targetIds = target.Select(p => p.Id).ToHashSet();
                 db.RolePermissions.RemoveRange(role.RolePermissions

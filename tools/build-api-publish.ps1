@@ -28,10 +28,10 @@ if ((Test-Path -LiteralPath $OutputDirectory) -and
     throw "Output directory is not empty: $OutputDirectory. Use a new empty directory."
 }
 
-if ($AzureAppService) {
-    # The configured cloud Web App is Windows/.NET 8. Publishing for win-x64
-    # avoids shipping SkiaSharp native binaries for Linux, macOS, ARM and x86,
-    # which otherwise wastes most of a Free-plan site's storage and upload time.
+if ($AzureAppService -or $FreshIis) {
+    # Both supported hosts are Windows/.NET 8. Publishing for win-x64 avoids
+    # shipping SkiaSharp/SQLite native binaries for Linux, macOS, ARM and x86,
+    # which otherwise adds hundreds of megabytes to a fresh IIS package.
     dotnet publish $apiProject -c Release -r win-x64 --self-contained false -o $OutputDirectory
 }
 else {

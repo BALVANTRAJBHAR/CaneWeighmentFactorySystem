@@ -266,6 +266,8 @@ class _UsersScreenState extends State<UsersScreen> {
                 Wrap(spacing: 6, children: [
                   for (final r in _roles.where((r) =>
                       r['name']?.toString() != 'Developer' &&
+                      (r['name']?.toString() != 'Administrator' ||
+                          isDeveloper) &&
                       r['name']?.toString() != 'Farmer'))
                     FilterChip(
                       label: Text(r['name']),
@@ -345,12 +347,15 @@ class _UsersScreenState extends State<UsersScreen> {
     final visibleUsers = auth.hasRole('Developer')
         ? _users
         : _users
-            .where((u) => !(u['roles'] as List).contains('Developer'))
+            .where((u) =>
+                !(u['roles'] as List).contains('Developer') &&
+                !(u['roles'] as List).contains('Administrator'))
             .toList();
     final selectableRoles = _roles.where((role) {
       final name = role['name']?.toString() ?? '';
       if (name == 'Farmer') return _category != 'SYSTEM';
       if (name == 'Developer' && !auth.hasRole('Developer')) return false;
+      if (name == 'Administrator' && !auth.hasRole('Developer')) return false;
       return _category != 'FARMER';
     }).toList();
     final firstResult = _totalCount == 0 ? 0 : ((_page - 1) * _pageSize) + 1;
@@ -499,7 +504,10 @@ class _UsersScreenState extends State<UsersScreen> {
                                         visualDensity: VisualDensity.compact),
                                     if (auth.can('User.Edit') &&
                                         !(u['roles'] as List)
-                                            .contains('Developer'))
+                                            .contains('Developer') &&
+                                        (auth.hasRole('Developer') ||
+                                            !(u['roles'] as List)
+                                                .contains('Administrator')))
                                       IconButton(
                                           tooltip: isFarmer
                                               ? 'Manage farmer login / reset password'

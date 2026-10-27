@@ -55,7 +55,13 @@ public class PrintDocument
     public int DotMatrixPostSlipFeedLines { get; set; }
     public int DotMatrixNextFormTofLines { get; set; } = 108;
     public int DotMatrixLineSpacingUnits { get; set; } = 20;
+    /// <summary>Epson RAW jobs use LF alone to avoid a second feed when Auto LF is enabled on the printer.</summary>
+    public bool DotMatrixAvoidCarriageReturn { get; set; }
     public bool DotMatrixFastPrint { get; set; } = true;
+    public string DotMatrixFontWeight { get; set; } = "Regular";
+    public string DotMatrixFontStyle { get; set; } = "Sans";
+    public string DotMatrixInkDensity { get; set; } = "Light";
+    public int DotMatrixDriverRenderDpi { get; set; } = 120;
 
     /// <summary>Dot-matrix-only full-form calibration sheet. It is never used by operational
     /// transaction prints or by the A4 renderer.</summary>

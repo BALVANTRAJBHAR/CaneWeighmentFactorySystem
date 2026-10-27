@@ -282,7 +282,11 @@ public class PrintEngineService : IPrintEngineService
             DotMatrixPostSlipFeedLines = cfg.DotMatrixPostSlipFeedLines,
             DotMatrixNextFormTofLines = cfg.DotMatrixNextFormTofLines,
             DotMatrixLineSpacingUnits = cfg.DotMatrixLineSpacingUnits,
-            DotMatrixFastPrint = cfg.DotMatrixFastPrint
+            DotMatrixFastPrint = cfg.DotMatrixFastPrint,
+            DotMatrixFontWeight = cfg.DotMatrixFontWeight,
+            DotMatrixFontStyle = cfg.DotMatrixFontStyle,
+            DotMatrixInkDensity = cfg.DotMatrixInkDensity,
+            DotMatrixDriverRenderDpi = cfg.DotMatrixDriverRenderDpi
         };
     }
 

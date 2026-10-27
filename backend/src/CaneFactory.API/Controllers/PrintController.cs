@@ -31,6 +31,17 @@ public class PrintController : ControllerBase
         _db = db; _current = current; _audit = audit; _engine = engine; _saleInvoice = saleInvoice;
     }
 
+    private (byte[] bytes, string contentType, string fileExtension) RenderDocument(
+        PrintDocument doc, string target, bool preview)
+    {
+        // This is a printer-specific RAW transport adjustment, not a stored
+        // business preference. Keep the TVS byte stream unchanged.
+        if (target == "DotMatrix" &&
+            string.Equals(Request.Query["rawProfile"], "epson", StringComparison.OrdinalIgnoreCase))
+            doc.DotMatrixAvoidCarriageReturn = true;
+        return _engine.Render(doc, target, preview);
+    }
+
     /// <summary>Renders the Gross/Tare slip. format=final (default) is auditable Print/Reprint and is
     /// what Flutter sends to the printer; format=preview never touches the audit log or counters.</summary>
     [HttpGet("purchase/{id:int}")]
@@ -65,7 +76,7 @@ public class PrintController : ControllerBase
             return NotFound(new { message = ex.Message });
         }
 
-        var (bytes, contentType, ext) = _engine.Render(doc, resolvedTarget, format == "preview");
+        var (bytes, contentType, ext) = RenderDocument(doc, resolvedTarget, format == "preview");
 
         if (format == "final")
         {
@@ -98,7 +109,7 @@ public class PrintController : ControllerBase
         try { doc = await _engine.BuildLoanSlipAsync(id, _current.Username ?? ""); }
         catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
 
-        var (bytes, contentType, ext) = _engine.Render(doc, resolvedTarget, format == "preview");
+        var (bytes, contentType, ext) = RenderDocument(doc, resolvedTarget, format == "preview");
         if (format == "final")
         {
             var isReprint = loan.PrintCount > 0;
@@ -130,7 +141,7 @@ public class PrintController : ControllerBase
         try { doc = await _engine.BuildLoanRecoverySlipAsync(id, _current.Username ?? ""); }
         catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
 
-        var (bytes, contentType, ext) = _engine.Render(doc, resolvedTarget, format == "preview");
+        var (bytes, contentType, ext) = RenderDocument(doc, resolvedTarget, format == "preview");
         if (format == "final")
         {
             var isReprint = recovery.PrintCount > 0;
@@ -162,7 +173,7 @@ public class PrintController : ControllerBase
         try { doc = await _engine.BuildPaymentSlipAsync(id, _current.Username ?? ""); }
         catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
 
-        var (bytes, contentType, ext) = _engine.Render(doc, resolvedTarget, format == "preview");
+        var (bytes, contentType, ext) = RenderDocument(doc, resolvedTarget, format == "preview");
         if (format == "final")
         {
             var isReprint = payment.PrintCount > 0;
@@ -201,7 +212,7 @@ public class PrintController : ControllerBase
         try { doc = await _engine.BuildPaymentBatchSlipAsync(payments.Select(x => x.Id).ToArray(), _current.Username ?? ""); }
         catch (KeyNotFoundException ex) { return NotFound(new { message = ex.Message }); }
 
-        var (bytes, contentType, ext) = _engine.Render(doc, resolvedTarget, format == "preview");
+        var (bytes, contentType, ext) = RenderDocument(doc, resolvedTarget, format == "preview");
         if (format == "final")
         {
             foreach (var payment in payments) payment.PrintCount++;
@@ -228,7 +239,7 @@ public class PrintController : ControllerBase
         PrintDocument doc;
         try { doc = await _engine.BuildSalePurchaseSlipAsync(id, stage, _current.Username ?? "", resolvedTarget != "DotMatrix"); }
         catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException) { return Conflict(new { message = ex.Message }); }
-        var (bytes, contentType, ext) = _engine.Render(doc, resolvedTarget, format == "preview");
+        var (bytes, contentType, ext) = RenderDocument(doc, resolvedTarget, format == "preview");
         if (format == "final")
         {
             var reprint = stage == "TARE" ? record.TarePrintCount > 0 : record.GrossPrintCount > 0;
@@ -249,8 +260,8 @@ public class PrintController : ControllerBase
     {
         if (!_current.HasPermission("SalePurchase.Print"))
             return StatusCode(403, new { message = "You do not have 'SalePurchase.Print' permission." });
-        if (format is not ("excel" or "final" or "preview"))
-            return BadRequest(new { message = "format must be excel, final or preview." });
+        if (format is not ("excel" or "final" or "preview" or "dotmatrix"))
+            return BadRequest(new { message = "format must be excel, final, preview or dotmatrix." });
         var sale = await _db.SalePurchases.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
         if (sale == null) return NotFound(new { message = $"SalePurchase {id} not found." });
         if (sale.WeighmentStatus != "COMPLETED")
@@ -260,6 +271,17 @@ public class PrintController : ControllerBase
             if (format == "excel")
                 return File(await _saleInvoice.BuildExcelAsync(id),
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"Sale-Invoice-{id}.xlsx");
+
+            if (format == "dotmatrix")
+            {
+                var raw = await _saleInvoice.BuildDotMatrixNativeAsync(id,
+                    string.Equals(Request.Query["rawProfile"], "epson", StringComparison.OrdinalIgnoreCase));
+                sale.GrossPrintCount++;
+                await _db.SaveChangesAsync();
+                await _audit.LogAsync("Print", "SalePurchase", "SaleInvoice", id.ToString(),
+                    newValue: new { target = "DotMatrix", format = "NativeTextInvoice", sale.GrossPrintCount });
+                return File(raw, "application/octet-stream", $"Sale-Invoice-{id}.prn");
+            }
 
             var pdf = await _saleInvoice.BuildPdfAsync(id);
             if (format == "final")
@@ -320,7 +342,7 @@ public class PrintController : ControllerBase
             ? await _engine.BuildTareSlipAsync(id, _current.Username ?? "", resolvedTarget.target != "DotMatrix")
             : await _engine.BuildGrossSlipAsync(id, _current.Username ?? "", resolvedTarget.target != "DotMatrix");
         MarkDuplicate(doc);
-        var rendered = _engine.Render(doc, resolvedTarget.target!, format == "preview");
+        var rendered = RenderDocument(doc, resolvedTarget.target!, format == "preview");
         if (format == "final")
         {
             if (stage == "TARE") purchase.TarePrintCount++; else purchase.GrossPrintCount++;
@@ -349,7 +371,7 @@ public class PrintController : ControllerBase
         var stage = sale.WeighmentStatus == "COMPLETED" && sale.GrossDateTime.HasValue ? "GROSS" : "TARE";
         var doc = await _engine.BuildSalePurchaseSlipAsync(id, stage, _current.Username ?? "", resolvedTarget.target != "DotMatrix");
         MarkDuplicate(doc);
-        var rendered = _engine.Render(doc, resolvedTarget.target!, format == "preview");
+        var rendered = RenderDocument(doc, resolvedTarget.target!, format == "preview");
         if (format == "final")
         {
             if (stage == "TARE") sale.TarePrintCount++; else sale.GrossPrintCount++;
@@ -395,7 +417,7 @@ public class PrintController : ControllerBase
         // It must not force the operator to use a different ID or advice-number workflow.
         var doc = await _engine.BuildPaymentSlipAsync(id, _current.Username ?? "");
         MarkDuplicate(doc);
-        var rendered = _engine.Render(doc, resolvedTarget.target!, format == "preview");
+        var rendered = RenderDocument(doc, resolvedTarget.target!, format == "preview");
         if (format == "final")
         {
             payment.PrintCount++;
@@ -445,7 +467,7 @@ public class PrintController : ControllerBase
         if (format is not ("final" or "preview")) return BadRequest(new { message = "format must be final or preview." });
 
         var doc = await _engine.BuildTestDocumentAsync(language ?? "hi", _current.Username ?? "Developer");
-        var (bytes, contentType, ext) = _engine.Render(doc, target ?? "DotMatrix", format == "preview");
+        var (bytes, contentType, ext) = RenderDocument(doc, target ?? "DotMatrix", format == "preview");
         return File(bytes, contentType, $"PrintTest.{ext}");
     }
 
@@ -459,7 +481,7 @@ public class PrintController : ControllerBase
             return BadRequest(new { message = "format must be final or preview." });
 
         var doc = await _engine.BuildDotMatrixCalibrationDocumentAsync(_current.Username ?? "Developer");
-        var (bytes, contentType, ext) = _engine.Render(doc, "DotMatrix", format == "preview");
+        var (bytes, contentType, ext) = RenderDocument(doc, "DotMatrix", format == "preview");
         return File(bytes, contentType, $"DotMatrixCalibration.{ext}");
     }
 }

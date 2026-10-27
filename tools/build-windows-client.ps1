@@ -10,7 +10,14 @@ param(
     [ValidatePattern('^$|^https?://[^/]+(?::\d+)?/?$')]
     [string]$CameraEdgeApiBaseUrl = '',
 
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\artifacts\windows-client')
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\artifacts\windows-client'),
+
+    # Optional production Authenticode certificate from CurrentUser/My or
+    # LocalMachine/My. A timestamp keeps the signature valid after expiry.
+    [string]$CodeSigningCertificateThumbprint = '',
+
+    [ValidatePattern('^https?://')]
+    [string]$TimestampServerUrl = 'http://timestamp.digicert.com'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,6 +51,41 @@ if ((Test-Path -LiteralPath $OutputDirectory) -and
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 Get-ChildItem -LiteralPath $releaseFolder -Force |
     Copy-Item -Destination $OutputDirectory -Recurse -Force
+
+# Ship a safe first-run launcher with every portable Windows package. It only
+# removes the Mark-of-the-Web from this trusted package; it never creates an
+# antivirus exclusion or grants broad write permissions to the install folder.
+$launcherTemplate = Join-Path $PSScriptRoot 'windows-client-run.bat'
+if (!(Test-Path -LiteralPath $launcherTemplate)) {
+    throw "Windows launcher template was not found: $launcherTemplate"
+}
+Copy-Item -LiteralPath $launcherTemplate `
+    -Destination (Join-Path $OutputDirectory 'run.bat') -Force
+
+if (![string]::IsNullOrWhiteSpace($CodeSigningCertificateThumbprint)) {
+    $normalizedThumbprint = $CodeSigningCertificateThumbprint.Replace(' ', '').ToUpperInvariant()
+    $certificate = @(
+        Get-Item -LiteralPath "Cert:\CurrentUser\My\$normalizedThumbprint" -ErrorAction SilentlyContinue
+        Get-Item -LiteralPath "Cert:\LocalMachine\My\$normalizedThumbprint" -ErrorAction SilentlyContinue
+    ) | Select-Object -First 1
+    if (!$certificate) {
+        throw "Code-signing certificate was not found for thumbprint $normalizedThumbprint."
+    }
+    if (!$certificate.HasPrivateKey) {
+        throw 'The selected code-signing certificate has no accessible private key.'
+    }
+    $clientExe = Join-Path $OutputDirectory 'cane_factory_app.exe'
+    $signature = Set-AuthenticodeSignature -FilePath $clientExe `
+        -Certificate $certificate -HashAlgorithm SHA256 `
+        -TimestampServer $TimestampServerUrl
+    if ($signature.Status -ne 'Valid') {
+        throw "Authenticode signing failed: $($signature.StatusMessage)"
+    }
+    Write-Host "Authenticode signature applied: $($certificate.Subject)"
+}
+else {
+    Write-Warning 'Client EXE is unsigned. Use -CodeSigningCertificateThumbprint for production SmartScreen reputation.'
+}
 
 Write-Host "Client package created: $OutputDirectory"
 Write-Host "Configured API endpoint: $ApiBaseUrl"

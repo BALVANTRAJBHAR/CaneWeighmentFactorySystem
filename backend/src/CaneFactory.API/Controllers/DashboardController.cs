@@ -112,7 +112,9 @@ public class DashboardController : ControllerBase
     {
         var roles = (_current.Role ?? "").Split(',');
         bool dev = roles.Contains("Developer");
-        bool admin = roles.Contains("Admin") || dev;
+        bool administrator = roles.Contains("Administrator");
+        bool admin = roles.Contains("Admin") || administrator || dev;
+        bool fullHealth = dev || administrator;
         bool op = roles.Contains("Operator") || roles.Contains("SalePurchase") || admin;
         bool accountant = roles.Contains("Accountant") || admin;
 
@@ -138,23 +140,48 @@ public class DashboardController : ControllerBase
         catch { /* best effort */ }
 
         double storagePct = 0;
+        string storageName = "Storage";
+        string? storageValue = null;
         try
         {
-            var drive = new DriveInfo(Path.GetPathRoot(AppContext.BaseDirectory) ?? "/");
-            storagePct = Math.Round((1 - (double)drive.AvailableFreeSpace / drive.TotalSize) * 100, 1);
+            var azureHome = Environment.GetEnvironmentVariable("HOME");
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME")) &&
+                !string.IsNullOrWhiteSpace(azureHome) && Directory.Exists(azureHome))
+            {
+                // Azure's D: drive is shared by the worker. DriveInfo therefore
+                // reports the worker image usage (often 90%+) rather than this
+                // app's F1 quota. Show only files owned by this App Service.
+                long bytes = 0;
+                foreach (var file in Directory.EnumerateFiles(azureHome, "*", SearchOption.AllDirectories))
+                {
+                    try { bytes += new FileInfo(file).Length; } catch { /* file changed during scan */ }
+                }
+                storageName = "App Storage";
+                storageValue = $"{Math.Round(bytes / 1024d / 1024d, 1)} MB used";
+            }
+            else
+            {
+                var drive = new DriveInfo(Path.GetPathRoot(AppContext.BaseDirectory) ?? "/");
+                storagePct = Math.Round((1 - (double)drive.AvailableFreeSpace / drive.TotalSize) * 100, 1);
+            }
         }
         catch { /* best effort */ }
 
         bool dbOk;
         try { dbOk = await _db.Database.CanConnectAsync(); } catch { dbOk = false; }
 
-        if (dev || admin)
+        if (fullHealth || admin)
         {
             if (ram.HasValue) items.Add(new { name = "RAM", value = $"{ram}%", color = Level(ram.Value, 70, 90).Item1 });
-            items.Add(new { name = "Storage", value = $"{storagePct}%", color = Level(storagePct, 75, 85).Item1 });
+            items.Add(new
+            {
+                name = storageName,
+                value = storageValue ?? $"{storagePct}%",
+                color = storageValue != null ? "Green" : Level(storagePct, 75, 85).Item1
+            });
             if (cpu.HasValue) items.Add(new { name = "CPU", value = $"{cpu}%", color = Level(cpu.Value, 70, 90).Item1 });
         }
-        if (op || accountant || dev)
+        if (op || accountant || fullHealth)
             items.Add(new { name = "Database", value = dbOk ? "Connected" : "Down", color = dbOk ? "Green" : "Red" });
         if (op)
         {
@@ -165,7 +192,7 @@ public class DashboardController : ControllerBase
             var print = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(p => !p.IsDeleted);
             items.Add(new { name = "Printer", value = print?.PrinterName ?? "Not configured", color = print != null ? "Green" : "Yellow" });
         }
-        if (dev)
+        if (fullHealth)
         {
             var sms = await _db.SmsConfigs.AsNoTracking().FirstOrDefaultAsync(s => !s.IsDeleted);
             items.Add(new { name = "SMS", value = sms?.Enabled == true ? "Enabled" : "Disabled", color = sms?.Enabled == true ? "Green" : "Yellow" });
@@ -173,7 +200,7 @@ public class DashboardController : ControllerBase
             items.Add(new { name = "Backup Schedule", value = backup?.Enabled == true ? $"{backup.Frequency} @ {backup.TimeOfDay}" : "Disabled", color = backup?.Enabled == true ? "Green" : "Red" });
         }
         // Farmer receives only basic service status
-        if (!dev && !admin && !op && !accountant)
+        if (!fullHealth && !admin && !op && !accountant)
             items.Add(new { name = "Service", value = "Online", color = "Green" });
 
         return Ok(new { items });

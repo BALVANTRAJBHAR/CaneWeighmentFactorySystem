@@ -29,3 +29,6 @@ android/key.properties
 .vs/
 .vscode/
 .idea/
+
+# Generated deployment packages; keep source scans and Git status small.
+artifacts/

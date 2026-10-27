@@ -25,6 +25,7 @@ void Check(bool condition, string message)
 }
 
 var developerRole = new Role { Name = "Developer", IsSystem = true };
+var administratorRole = new Role { Name = "Administrator", IsSystem = true };
 var adminRole = new Role { Name = "Admin", IsSystem = true };
 var developer = new User
 {
@@ -36,10 +37,16 @@ var admin = new User
     Username = "admin1", FullName = "Admin One", Mobile = "8888888888",
     PasswordHash = "test", Status = true, MustChangePassword = false
 };
-db.AddRange(developerRole, adminRole, developer, admin);
+var administrator = new User
+{
+    Username = "administrator1", FullName = "Administrator One", Mobile = "6666666666",
+    PasswordHash = "test", Status = true, MustChangePassword = false
+};
+db.AddRange(developerRole, administratorRole, adminRole, developer, administrator, admin);
 await db.SaveChangesAsync();
 db.UserRoles.AddRange(
     new UserRole { UserId = developer.Id, RoleId = developerRole.Id },
+    new UserRole { UserId = administrator.Id, RoleId = administratorRole.Id },
     new UserRole { UserId = admin.Id, RoleId = adminRole.Id });
 db.SystemSettings.Add(new SystemSetting { Key = "WeighbridgePlatformClearRequired", Value = "1" });
 await db.SaveChangesAsync();
@@ -54,12 +61,16 @@ Check(listJson.Contains("developer", StringComparison.OrdinalIgnoreCase),
     "Developer identity must appear for a Developer caller");
 Check(listJson.Contains("admin1", StringComparison.OrdinalIgnoreCase),
     "Normal users must remain visible in User Management list");
+Check(listJson.Contains("administrator1", StringComparison.OrdinalIgnoreCase),
+    "Administrator identity must appear for a Developer caller");
 
 userController.ControllerContext = AdminControllerContext(admin.Id);
 var adminList = (OkObjectResult)await userController.List(null, null, null, true, 1, 50);
 var adminListJson = JsonSerializer.Serialize(adminList.Value);
 Check(!adminListJson.Contains("developer", StringComparison.OrdinalIgnoreCase),
     "Developer identity must remain hidden from an Admin caller");
+Check(!adminListJson.Contains("administrator1", StringComparison.OrdinalIgnoreCase),
+    "Administrator identity must remain hidden from an Admin caller");
 Check(adminListJson.Contains("admin1", StringComparison.OrdinalIgnoreCase),
     "Normal users must remain visible to an Admin caller");
 userController.ControllerContext = DeveloperControllerContext(developer.Id);
@@ -75,6 +86,20 @@ var createDeveloper = await userController.Create(new CreateUserRequest
 });
 Check(createDeveloper is BadRequestObjectResult,
     "Developer role assignment must be blocked even for a Developer caller");
+
+userController.ControllerContext = AdminControllerContext(admin.Id);
+var createAdministratorAsAdmin = await userController.Create(new CreateUserRequest
+{
+    Username = "forbiddenadministrator",
+    FullName = "Forbidden Administrator",
+    Mobile = "5555555555",
+    Email = "forbidden@example.com",
+    TemporaryPassword = "Temporary@123",
+    RoleIds = new List<int> { administratorRole.Id }
+});
+Check(createAdministratorAsAdmin is ObjectResult { StatusCode: 403 },
+    "Admin must not be able to create or assign the Administrator role");
+userController.ControllerContext = DeveloperControllerContext(developer.Id);
 
 var audit = new RecordingAudit();
 var configController = new ConfigController(db, audit, new CurrentDeveloper(developer.Id), null!, null!,

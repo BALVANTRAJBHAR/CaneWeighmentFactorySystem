@@ -40,6 +40,12 @@ public class UsersController : ControllerBase
     private Task<bool> IsDeveloperUserAsync(int userId) =>
         _db.UserRoles.AnyAsync(ur => ur.UserId == userId && ur.Role.Name == "Developer");
 
+    private Task<bool> IsAdministratorUserAsync(int userId) =>
+        _db.UserRoles.AnyAsync(ur => ur.UserId == userId && ur.Role.Name == "Administrator");
+
+    private IActionResult RejectAdministratorRoleAttempt() =>
+        StatusCode(403, new { message = "Only a Developer may create, assign, view, or manage Administrator users." });
+
     [HasPermission("User.View")]
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] string? search, [FromQuery] string? category,
@@ -51,7 +57,8 @@ public class UsersController : ControllerBase
         // but it remains reserved and cannot be edited from User Management.
         var q = _db.Users.Where(u => !u.IsDeleted);
         if (!IsDeveloper)
-            q = q.Where(u => !u.UserRoles.Any(ur => ur.Role.Name == "Developer"));
+            q = q.Where(u => !u.UserRoles.Any(ur =>
+                ur.Role.Name == "Developer" || ur.Role.Name == "Administrator"));
         if (!includeInactive) q = q.Where(u => u.Status);
         var normalizedCategory = category?.Trim().ToUpperInvariant();
         if (normalizedCategory == "SYSTEM")
@@ -119,6 +126,8 @@ public class UsersController : ControllerBase
         if (validRoles.Count != req.RoleIds.Count) return BadRequest(new { message = "One or more roles do not exist." });
         if (validRoles.Any(r => r.Name == "Developer"))
             return BadRequest(new { message = "Developer role is reserved for the system developer and cannot be assigned from User Management." });
+        if (!IsDeveloper && validRoles.Any(r => r.Name == "Administrator"))
+            return RejectAdministratorRoleAttempt();
         if (validRoles.Any(r => r.Name == "Farmer"))
             return BadRequest(new { message = "Farmer accounts are created automatically from the Grower master and cannot be created manually." });
 
@@ -157,6 +166,8 @@ public class UsersController : ControllerBase
         var targetIsDeveloper = await _db.UserRoles.AnyAsync(ur => ur.UserId == id && ur.Role.Name == "Developer");
         if (targetIsDeveloper || validRoles.Any(r => r.Name == "Developer"))
             return BadRequest(new { message = "Developer accounts and the Developer role cannot be managed from User Management." });
+        if (!IsDeveloper && (await IsAdministratorUserAsync(id) || validRoles.Any(r => r.Name == "Administrator")))
+            return RejectAdministratorRoleAttempt();
         if (validRoles.Any(r => r.Name == "Farmer"))
             return BadRequest(new { message = "Farmer role is assigned only by automatic Grower account provisioning." });
         if (req.CanApproveRateOverrides.HasValue && !IsDeveloper)
@@ -197,6 +208,8 @@ public class UsersController : ControllerBase
         if (user == null) return NotFound(new { message = "User not found." });
         if (!IsDeveloper && await IsDeveloperUserAsync(id))
             return await RejectDeveloperRoleAttemptAsync("ResetPassword", id.ToString(), Array.Empty<int>());
+        if (!IsDeveloper && await IsAdministratorUserAsync(id))
+            return RejectAdministratorRoleAttempt();
         var temp = body.GetValueOrDefault("temporaryPassword") ?? "";
         if (temp.Length < 8) return BadRequest(new { message = "Temporary password must be at least 8 characters." });
         user.PasswordHash = Hasher.HashPassword(user, temp);
@@ -221,6 +234,8 @@ public class UsersController : ControllerBase
         if (user.Username == "developer") return BadRequest(new { message = "The initial developer account cannot be deleted." });
         if (!IsDeveloper && await IsDeveloperUserAsync(id))
             return await RejectDeveloperRoleAttemptAsync("Delete", id.ToString(), Array.Empty<int>());
+        if (!IsDeveloper && await IsAdministratorUserAsync(id))
+            return RejectAdministratorRoleAttempt();
         user.IsDeleted = true;
         user.DeletedAt = DateTime.UtcNow;
         user.Status = false;
@@ -248,7 +263,9 @@ public class RolesController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> List()
     {
-        var roles = await _db.Roles.Where(r => !r.IsDeleted)
+        var includeReservedRoles = IsDeveloper;
+        var roles = await _db.Roles.Where(r => !r.IsDeleted &&
+                (includeReservedRoles || (r.Name != "Developer" && r.Name != "Administrator")))
             .Select(r => new
             {
                 r.Id, r.Name, r.Description, r.IsSystem,

@@ -140,6 +140,9 @@ public class SalePurchaseWeighmentController : ControllerBase
     public async Task<IActionResult> SaveTare(SalePurchaseTareSaveRequest req)
     {
         if (Deny("Create") is { } denied) return denied;
+        var taxSupplyType = (req.TaxSupplyType ?? "").Trim().ToUpperInvariant();
+        if (taxSupplyType is not ("INTRA_STATE" or "INTER_STATE"))
+            return BadRequest(new { message = "Tax Supply Type must be INTRA_STATE or INTER_STATE." });
         if (await WeightSaveAccessErrorAsync() is { } accessError) return StatusCode(403, new { message = accessError });
         var (scaleReading, deviceError) = await _scaleReadings.ResolveAsync(req);
         if (scaleReading == null) return Conflict(new { message = deviceError });
@@ -176,6 +179,7 @@ public class SalePurchaseWeighmentController : ControllerBase
             record = new SalePurchase
             {
                 Id = id, ItemId = req.ItemId, PartyId = req.PartyId, VehicleTypeId = req.VehicleTypeId,
+                TaxSupplyType = taxSupplyType,
             VehicleNumber = vehicle, DriverName = driver, Remark = Validators.Norm(req.Remark),
             ScaleReadingTareKg = WeightCalculator.R2(liveKg), TareWeightQuintal = tare,
             TareDateTime = now, TareByUserId = _current.UserId!.Value, TareByUserName = _current.Username ?? "",
@@ -390,16 +394,27 @@ public class SalePurchaseWeighmentController : ControllerBase
         var useInvoice = stage.Equals("GROSS", StringComparison.OrdinalIgnoreCase) && cfg.SalePurchaseInvoiceEnabled;
         if (useInvoice)
         {
+            var invoiceTarget = cfg.SalePurchaseInvoicePrinterType == "DotMatrix" ? "DotMatrix" : "A4";
             return new
             {
-                printerType = "A4",
-                printerName = cfg.A4PrinterName,
+                printerType = invoiceTarget,
+                printerName = invoiceTarget == "DotMatrix" ? cfg.DotMatrixPrinterName : cfg.A4PrinterName,
                 copies,
                 language = cfg.Language,
                 stage,
                 invoice = true,
                 invoiceUrl = $"/api/print/sale-purchase/{id}/invoice?format=excel",
-                documentUrl = $"/api/print/sale-purchase/{id}/invoice?format=final",
+                nativeTextInvoice = invoiceTarget == "DotMatrix",
+                documentUrl = invoiceTarget == "DotMatrix"
+                    ? $"/api/print/sale-purchase/{id}/invoice?format=dotmatrix"
+                    : $"/api/print/sale-purchase/{id}/invoice?format=final",
+                // Native invoice ends with one form-feed. Let the printer's
+                // hardware Auto Tear-Off handle the perforation; do not append
+                // the weighment slip's temporary forward/reverse parking.
+                dotMatrixTearOffParkingEnabled = false,
+                dotMatrixTearOffFeedLines = cfg.DotMatrixTearOffFeedLines,
+                dotMatrixLineSpacingUnits = cfg.DotMatrixLineSpacingUnits,
+                dotMatrixDriverRenderDpi = cfg.DotMatrixDriverRenderDpi,
                 shouldAutoPrint = cfg.AutoPrint && copies > 0
             };
         }
@@ -408,6 +423,7 @@ public class SalePurchaseWeighmentController : ControllerBase
             dotMatrixTearOffParkingEnabled = cfg.DotMatrixTearOffParkingEnabled,
             dotMatrixTearOffFeedLines = cfg.DotMatrixTearOffFeedLines,
             dotMatrixLineSpacingUnits = cfg.DotMatrixLineSpacingUnits,
+            dotMatrixDriverRenderDpi = cfg.DotMatrixDriverRenderDpi,
             shouldAutoPrint = cfg.AutoPrint && copies > 0,
             documentUrl = $"/api/print/sale-purchase/{id}?stage={stage}&format=final" +
                 (cfg.AutoPrint && copies > 0 ? "" : "&target=A4") };

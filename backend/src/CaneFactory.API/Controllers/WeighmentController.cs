@@ -461,6 +461,7 @@ public class WeighmentController : ControllerBase
             dotMatrixTearOffParkingEnabled = cfg.DotMatrixTearOffParkingEnabled,
             dotMatrixTearOffFeedLines = cfg.DotMatrixTearOffFeedLines,
             dotMatrixLineSpacingUnits = cfg.DotMatrixLineSpacingUnits,
+            dotMatrixDriverRenderDpi = cfg.DotMatrixDriverRenderDpi,
             shouldAutoPrint = cfg.AutoPrint && copies > 0,
             // Dot-matrix final output is ESC/P bytes, not a PDF. When physical
             // auto-print is off the client must receive an actual A4 PDF to open.

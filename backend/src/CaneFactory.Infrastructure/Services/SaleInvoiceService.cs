@@ -9,6 +9,7 @@ using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 using System.Globalization;
+using System.Text;
 
 namespace CaneFactory.Infrastructure.Services;
 
@@ -149,7 +150,12 @@ public sealed class SaleInvoiceService(AppDbContext db) : ISaleInvoiceService
         ws.Range("A37:M37").Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
 
         ws.PageSetup.PageOrientation = XLPageOrientation.Portrait;
+        ws.PageSetup.PaperSize = XLPaperSize.A4Paper;
         ws.PageSetup.FitToPages(1, 1);
+        ws.PageSetup.PrintAreas.Clear();
+        ws.PageSetup.PrintAreas.Add("A1:N37");
+        ws.PageSetup.CenterHorizontally = true;
+        ws.PageSetup.CenterVertically = false;
         ws.PageSetup.Margins.Top = 0.15; ws.PageSetup.Margins.Bottom = 0.15;
         ws.PageSetup.Margins.Left = 0.18; ws.PageSetup.Margins.Right = 0.18;
         using var stream = new MemoryStream();
@@ -256,6 +262,107 @@ public sealed class SaleInvoiceService(AppDbContext db) : ISaleInvoiceService
                 });
             });
         }).GeneratePdf();
+    }
+
+    /// <summary>
+    /// Fast Sale Invoice for impact printers.  This intentionally contains no
+    /// PNG/PDF/raster data: the queue receives resident-font ESC/P text, so an
+    /// 80-column invoice is quick, cannot be clipped on the right and consumes
+    /// exactly one logical continuous-paper page.
+    /// </summary>
+    public async Task<byte[]> BuildDotMatrixNativeAsync(int salePurchaseId, bool avoidCarriageReturn = false)
+    {
+        var data = await LoadAsync(salePurchaseId);
+        const int width = 80;
+        const int pageLines = 66;
+        var lines = new List<string>();
+        void Add(string value = "") => lines.Add(Ascii(value, width));
+        void Rule(char value = '-') => Add(new string(value, width));
+        void Pair(string left, string right)
+        {
+            const int half = width / 2;
+            lines.Add(Ascii(left, half - 1).PadRight(half) + Ascii(right, half));
+        }
+
+        Add(Center(Ascii(data.Company.CompanyName, width), width));
+        Add(Center(Ascii(string.Join(", ", InvoiceCompanyLines(data.Company)), width), width));
+        Pair($"Phone: {ValueOrZero(data.Company.InvoicePhone)}", $"GSTIN: {ValueOrZero(data.Company.InvoiceGstin)}");
+        Rule('=');
+        Add(Center("TAX INVOICE", width));
+        Rule('=');
+        Pair($"Invoice No: {data.Sale.Id}", $"Date: {data.Date:dd-MM-yyyy} {data.Date:HH:mm:ss}");
+        Pair($"Party: {data.Party.PartyName}", $"Mobile: {data.Party.Mobile}");
+        Pair($"Address: {ValueOrZero(data.Party.Address)}", $"Party GSTIN: {ValueOrZero(data.Party.Gst)}");
+        Pair($"Vehicle: {data.Sale.VehicleNumber}", $"HSN/SAC: {ValueOrZero(data.Item.HsnSacCode)}");
+        Rule();
+        Add(Fixed("SL", 3) + Fixed("ITEM", 18) + Fixed("HSN/SAC", 10) + Fixed("VEHICLE", 12) +
+            Fixed("QTY", 9, true) + Fixed("RATE", 11, true) + Fixed("AMOUNT", 17, true));
+        Rule();
+        Add(Fixed("1", 3) + Fixed(data.Item.ItemName, 18) + Fixed(ValueOrZero(data.Item.HsnSacCode), 10) +
+            Fixed(data.Sale.VehicleNumber, 12) + Fixed(data.Quantity.ToString("F2"), 9, true) +
+            Fixed(Money(data.Rate), 11, true) + Fixed(Money(data.BaseAmount), 17, true));
+        Rule();
+        Pair($"GST Rate: {data.Sale.GstPercent:F2}%", $"Sub Total: {Money(data.BaseAmount)}");
+        Pair($"GST Amount: {Money(data.GstAmount)}", "Discount: 0.00");
+        Pair("Received: 0.00", $"TOTAL: {Money(data.FinalAmount)}");
+        Pair("Balance: 0.00", $"Quantity: {data.Quantity:F2} Qtl");
+        Rule();
+        Add($"Amount in words: {AmountInWords(data.FinalAmount)}");
+        Add($"Terms: {ValueOrZero(data.Company.InvoiceTermsAndConditions)}");
+        Add();
+        Pair("Receiver Signature", $"For {data.Company.CompanyName}");
+        Pair("", "Authorised Signatory");
+        Add();
+        Add(Center("POWERED BY WARRIOR SOFTECH", width));
+
+        // Guarantee one and only one logical page.  Long user-entered values
+        // are clipped per field, never wrapped into a second page.
+        if (lines.Count > pageLines - 1) lines = lines.Take(pageLines - 1).ToList();
+        while (lines.Count < pageLines - 1) lines.Add(string.Empty);
+
+        using var stream = new MemoryStream();
+        void Write(params byte[] bytes) => stream.Write(bytes, 0, bytes.Length);
+        Write(0x1B, 0x40);             // ESC @: initialise
+        Write(0x1B, 0x50);             // ESC P: 10 CPI resident font
+        Write(0x1B, 0x32);             // ESC 2: 1/6-inch line spacing
+        Write(0x1B, 0x43, (byte)pageLines);  // ESC C n: one 66-line form
+        foreach (var line in lines)
+        {
+            var bytes = Encoding.ASCII.GetBytes(line);
+            stream.Write(bytes, 0, bytes.Length);
+            // Epson Auto LF can turn CR+LF into two paper advances.
+            if (!avoidCarriageReturn) Write(0x0D);
+            Write(0x0A);
+        }
+        Write(0x0C);                    // exactly one form feed/page
+        return stream.ToArray();
+    }
+
+    private static string Fixed(string? value, int width, bool right = false)
+    {
+        var text = Ascii(value ?? string.Empty, width);
+        return right ? text.PadLeft(width) : text.PadRight(width);
+    }
+
+    private static string Center(string value, int width)
+    {
+        var text = Ascii(value, width);
+        var left = Math.Max(0, (width - text.Length) / 2);
+        return new string(' ', left) + text;
+    }
+
+    private static string Ascii(string value, int width)
+    {
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(normalized.Length);
+        foreach (var ch in normalized)
+        {
+            var category = CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (category == UnicodeCategory.NonSpacingMark) continue;
+            builder.Append(ch is >= ' ' and <= '~' ? ch : '?');
+            if (builder.Length == width) break;
+        }
+        return builder.ToString();
     }
 
     private async Task<InvoiceData> LoadAsync(int salePurchaseId)

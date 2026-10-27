@@ -56,6 +56,10 @@ public class PrintConfig : BaseEntity
     /// <summary>When enabled, a completed Sale Weighment opens the configured tax-invoice
     /// workbook and auto-prints the matching A4 invoice instead of the standard slip PDF.</summary>
     public bool SalePurchaseInvoiceEnabled { get; set; }
+    /// <summary>Dedicated destination for the completed Sale Weighment invoice.
+    /// A4 prints the one-page PDF through the configured laser queue; DotMatrix
+    /// emits a compact one-page resident-font ESC/P text invoice.</summary>
+    public string SalePurchaseInvoicePrinterType { get; set; } = "A4";
     public string Language { get; set; } = "hi";
     /// <summary>Dot-matrix only. When false, the physical pre-printed header area is
     /// left blank while transaction rows keep the same vertical starting position.</summary>
@@ -86,6 +90,25 @@ public class PrintConfig : BaseEntity
     /// <summary>Weighment slips only. Skips blank raster columns and bands while preserving
     /// clear 120-DPI double-density text output.</summary>
     public bool DotMatrixFastPrint { get; set; } = true;
+    /// <summary>Bundled raster font weight used by every dot-matrix model. Regular is
+    /// the clearest default for Hindi; Bold is available for worn ribbons.</summary>
+    public string DotMatrixFontWeight { get; set; } = "Regular";
+    /// <summary>Bundled raster font family. Sans is the clearest Devanagari/Latin option;
+    /// Serif is intended for English slips and falls back to Sans for Hindi glyphs.</summary>
+    public string DotMatrixFontStyle { get; set; } = "Sans";
+    /// <summary>Raster black-pixel threshold. Light removes anti-alias edge dots before
+    /// impact printing and reduces ribbon ink spread on V4/Class-driver printers.</summary>
+    public string DotMatrixInkDensity { get; set; } = "Light";
+    /// <summary>Resolution used only when a Windows V4/Class driver renders the preview.
+    /// Native ESC/P queues continue to use their required 120-DPI bit-image mode.</summary>
+    public int DotMatrixDriverRenderDpi { get; set; } = 240;
+    /// <summary>
+    /// JSON map of the quality controls per installed dot-matrix printer.  The
+    /// active controls above remain the compatibility contract used by the
+    /// print engine; this map prevents an Epson change from overwriting the
+    /// TVS profile (and vice versa).
+    /// </summary>
+    public string DotMatrixPrinterProfilesJson { get; set; } = "{}";
 }
 
 public class SmsConfig : BaseEntity

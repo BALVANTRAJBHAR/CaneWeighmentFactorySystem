@@ -131,6 +131,52 @@ var customSpacingFeed = InspectEscP(renderer.RenderFinal(customSpacingDocument).
 Check(customSpacingFeed.TotalBands == halfPageLines,
     "Configurable ESC/P line spacing changed the logical half-page band count");
 
+var driverQualityDocument = Build("Epson V4 240 DPI", 12);
+driverQualityDocument.DotMatrixDriverRenderDpi = 240;
+using (var driverQualityPreview = SKBitmap.Decode(renderer.RenderPreview(driverQualityDocument).bytes))
+{
+    Check(driverQualityPreview.Width == width * 2,
+        "Windows V4 driver preview is not a true 240-DPI source");
+    Check(driverQualityPreview.Height == halfPagePixels * 2,
+        "Windows V4 driver preview changed the physical half-page aspect ratio");
+}
+Check(InspectEscP(renderer.RenderFinal(driverQualityDocument).bytes).TotalBands == halfPageLines,
+    "240-DPI Windows preview setting changed native ESC/P feed output");
+
+var epsonRawDocument = Build("Epson RAW", 12);
+epsonRawDocument.DotMatrixAvoidCarriageReturn = true;
+var epsonRawFeed = InspectEscP(renderer.RenderFinal(epsonRawDocument).bytes);
+Check(epsonRawFeed.TotalBands == halfPageLines && epsonRawFeed.PhysicalFeedUnits216 == 6 * 216,
+    "Epson RAW slip did not preserve the calibrated half-page feed");
+Check(epsonRawFeed.CarriageReturns == 0,
+    "Epson RAW slip contains CR controls that can trigger a second LF with Auto LF enabled");
+Check(InspectEscP(renderer.RenderFinal(documents[0]).bytes).CarriageReturns > 0,
+    "TVS RAW stream lost its legacy CR controls");
+
+foreach (var style in new[] { "Sans", "SansCompact", "Serif", "SerifCompact" })
+{
+    var styledDocument = Build($"{style} font", 12);
+    styledDocument.DotMatrixDriverRenderDpi = 240;
+    styledDocument.DotMatrixFontStyle = style;
+    styledDocument.DotMatrixFontWeight = "Light";
+    styledDocument.DotMatrixInkDensity = "Light";
+    using var styledPreview = SKBitmap.Decode(renderer.RenderPreview(styledDocument).bytes);
+    Check(styledPreview.Width == width * 2 && CountBlack(styledPreview, 0, styledPreview.Height) > 200,
+        $"{style} font profile did not produce a valid 240-DPI impact-printer preview");
+}
+
+var extraLightInkDocument = Build("Extra-light ink", 12);
+extraLightInkDocument.DotMatrixDriverRenderDpi = 240;
+extraLightInkDocument.DotMatrixInkDensity = "ExtraLight";
+using var extraLightInkPreview = SKBitmap.Decode(renderer.RenderPreview(extraLightInkDocument).bytes);
+var darkInkDocument = Build("Dark ink", 12);
+darkInkDocument.DotMatrixDriverRenderDpi = 240;
+darkInkDocument.DotMatrixInkDensity = "Dark";
+using var darkInkPreview = SKBitmap.Decode(renderer.RenderPreview(darkInkDocument).bytes);
+Check(CountBlack(extraLightInkPreview, 0, extraLightInkPreview.Height) <
+      CountBlack(darkInkPreview, 0, darkInkPreview.Height),
+    "Ink Density does not change the number of edge dots in the Windows driver raster");
+
 var calibrationDocument = Build("Calibration", 0);
 calibrationDocument.IsDotMatrixCalibrationSheet = true;
 calibrationDocument.DotMatrixFastPrint = false;
@@ -316,6 +362,7 @@ static EscPFeedResult InspectEscP(byte[] raw, int baseSpacingUnits = 24)
     var rasterPayloadBytes = 0;
     var formFeeds = 0;
     var physicalFeedUnits216 = 0;
+    var carriageReturns = 0;
 
     while (index < raw.Length)
     {
@@ -356,6 +403,7 @@ static EscPFeedResult InspectEscP(byte[] raw, int baseSpacingUnits = 24)
         }
         if (raw[index] == 0x0D)
         {
+            carriageReturns++;
             index++;
             continue;
         }
@@ -390,7 +438,7 @@ static EscPFeedResult InspectEscP(byte[] raw, int baseSpacingUnits = 24)
         throw new InvalidOperationException("Raster command was not followed by a line feed.");
     return new EscPFeedResult(rasterBands + fastFeedBands, fastFeedBands, zeroRasterBands,
         singleDensitySegments, doubleDensitySegments, rasterPayloadBytes, formFeeds,
-        physicalFeedUnits216);
+        physicalFeedUnits216, carriageReturns);
 }
 
 static int ToPrinterUnits216(int physicalUnits180) =>
@@ -398,4 +446,4 @@ static int ToPrinterUnits216(int physicalUnits180) =>
 
 readonly record struct EscPFeedResult(int TotalBands, int FastFeedBands, int ZeroRasterBands,
     int SingleDensitySegments, int DoubleDensitySegments, int RasterPayloadBytes, int FormFeeds,
-    int PhysicalFeedUnits216);
+    int PhysicalFeedUnits216, int CarriageReturns);

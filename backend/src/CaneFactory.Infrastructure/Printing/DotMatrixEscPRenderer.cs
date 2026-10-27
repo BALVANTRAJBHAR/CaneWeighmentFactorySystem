@@ -2,6 +2,7 @@ using CaneFactory.Application.DTOs;
 using CaneFactory.Application.Interfaces;
 using SkiaSharp;
 using SkiaSharp.HarfBuzz;
+using System.Runtime.InteropServices;
 
 namespace CaneFactory.Infrastructure.Printing;
 
@@ -23,7 +24,17 @@ public class DotMatrixEscPRenderer : IPrintRenderer
 
     public (byte[] bytes, string contentType, string fileExtension) RenderPreview(PrintDocument doc)
     {
-        using var bmp = Draw(doc);
+        // Windows V4/Class drivers do not accept ESC/P bit images reliably. Use the selected
+        // source resolution, but always send a strictly two-colour image. This prevents the
+        // driver from dithering anti-aliased edge pixels into the visible halo/ghost dots that
+        // do not occur on Windows' native printer-test text.
+        var previewScale = Math.Clamp(doc.DotMatrixDriverRenderDpi / 120, 1, 4);
+        using var bmp = Draw(doc, previewScale);
+        BinarizeForImpactPrinter(bmp, InkThreshold(doc.DotMatrixInkDensity));
+        // Native ESC/P preview regression remains byte-for-byte representative
+        // at 120 DPI. The extra cleanup is only for the Epson V4/Class bitmap
+        // path, where a lone pixel can become an unwanted physical pin strike.
+        if (doc.DotMatrixDriverRenderDpi >= 240) RemoveIsolatedImpactDots(bmp);
         using var image = SKImage.FromBitmap(bmp);
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         return (data.ToArray(), "image/png", "png");
@@ -31,20 +42,21 @@ public class DotMatrixEscPRenderer : IPrintRenderer
 
     public (byte[] bytes, string contentType, string fileExtension) RenderFinal(PrintDocument doc)
     {
-        using var bmp = Draw(doc);
+        using var bmp = Draw(doc, 1);
         var layout = GetLayout(doc);
         return (ToEscP(bmp, doc.UseHalfPageDotMatrixLayout || doc.IsDotMatrixCalibrationSheet,
-            UseFastBody(doc), layout.LineSpacingUnits),
+            UseFastBody(doc), layout.LineSpacingUnits, InkThreshold(doc.DotMatrixInkDensity),
+            doc.DotMatrixAvoidCarriageReturn),
             "application/octet-stream", "prn");
     }
 
     private static bool UseFastBody(PrintDocument doc) =>
         doc.UseHalfPageDotMatrixLayout && !doc.IsDotMatrixCalibrationSheet && doc.DotMatrixFastPrint;
 
-    private static SKBitmap Draw(PrintDocument doc) =>
+    private static SKBitmap Draw(PrintDocument doc, int scale) =>
         doc.IsDotMatrixCalibrationSheet
-            ? DrawCalibrationPage(doc)
-            : doc.UseHalfPageDotMatrixLayout ? DrawHalfPage(doc) : DrawLegacy(doc);
+            ? DrawCalibrationPage(doc, scale)
+            : doc.UseHalfPageDotMatrixLayout ? DrawHalfPage(doc, scale) : DrawLegacy(doc, scale);
 
     private static DotMatrixLayout GetLayout(PrintDocument doc)
     {
@@ -82,13 +94,16 @@ public class DotMatrixEscPRenderer : IPrintRenderer
     /// <summary>Fixed-height production layout for cane gross/final and sale tare/final.
     /// One render advances exactly half of the configured continuous page, so two consecutive
     /// weighment jobs occupy the two pre-printed sections without state or an intermediate FF.</summary>
-    private static SKBitmap DrawHalfPage(PrintDocument doc)
+    private static SKBitmap DrawHalfPage(PrintDocument doc, int scale)
     {
         var hindi = string.Equals(doc.Language, "hi", StringComparison.OrdinalIgnoreCase);
-        var regular = PrintFonts.Get(doc.Language, bold: false);
+        var regular = PrintFonts.Get(doc.Language, bold: false, doc.DotMatrixFontStyle,
+            doc.DotMatrixFontWeight);
         // Impact-printer raster text is clearer with a normal-weight face. Bold glyphs create
         // adjacent pin strikes that can visually merge on multipart/continuous stationery.
-        var bold = regular;
+        var bold = PrintFonts.Get(doc.Language,
+            bold: true,
+            doc.DotMatrixFontStyle, doc.DotMatrixFontWeight);
         var rows = ExpandRows(doc);
 
         var layout = GetLayout(doc);
@@ -96,9 +111,14 @@ public class DotMatrixEscPRenderer : IPrintRenderer
         var headerHeight = layout.HeaderReservedLines * 8;
         var tearY = layout.TearLinePosition * 8 - 3;
 
-        var bmp = new SKBitmap(WidthPx, height);
+        scale = Math.Clamp(scale, 1, 4);
+        var bmp = new SKBitmap(WidthPx * scale, height * scale);
         using var canvas = new SKCanvas(bmp);
         canvas.Clear(SKColors.White);
+        canvas.Scale(scale, scale);
+        // Dot-matrix output must be hard-edged before it reaches a V4 driver.
+        // Anti-aliased edge pixels survive thresholding as connected black
+        // pixels and become the remaining one-pin halo on LX-310.
         using var paint = new SKPaint { Color = SKColors.Black, IsAntialias = false };
         using var titleFont = new SKFont(bold, 18);
         using var labelFont = new SKFont(bold, 15);
@@ -175,16 +195,21 @@ public class DotMatrixEscPRenderer : IPrintRenderer
     /// <summary>One complete form, printed without FF, for physically matching software feed bands
     /// to the MSP 270 tractor stationery. The output deliberately uses the same ESC/P line spacing
     /// and feed path as production slips.</summary>
-    private static SKBitmap DrawCalibrationPage(PrintDocument doc)
+    private static SKBitmap DrawCalibrationPage(PrintDocument doc, int scale)
     {
         var layout = GetLayout(doc);
         var height = layout.PageLines * 8;
-        var bmp = new SKBitmap(WidthPx, height);
+        scale = Math.Clamp(scale, 1, 4);
+        var bmp = new SKBitmap(WidthPx * scale, height * scale);
         using var canvas = new SKCanvas(bmp);
         canvas.Clear(SKColors.White);
+        canvas.Scale(scale, scale);
         using var paint = new SKPaint { Color = SKColors.Black, IsAntialias = false };
-        var regular = PrintFonts.Get("en", bold: false);
-        var bold = PrintFonts.Get("en", bold: true);
+        var regular = PrintFonts.Get("en", bold: false, doc.DotMatrixFontStyle,
+            doc.DotMatrixFontWeight);
+        var bold = PrintFonts.Get("en",
+            bold: true,
+            doc.DotMatrixFontStyle, doc.DotMatrixFontWeight);
         using var shaper = new SKShaper(bold);
 
         void Zone(int topLine, int bottomLine, string label)
@@ -327,11 +352,13 @@ public class DotMatrixEscPRenderer : IPrintRenderer
             SKTextAlign.Left, font, paint);
     }
 
-    private static SKBitmap DrawLegacy(PrintDocument doc)
+    private static SKBitmap DrawLegacy(PrintDocument doc, int scale)
     {
         var hindi = string.Equals(doc.Language, "hi", StringComparison.OrdinalIgnoreCase);
-        var regular = PrintFonts.Get(doc.Language, bold: false);
-        var bold = PrintFonts.Get(doc.Language, bold: true);
+        var regular = PrintFonts.Get(doc.Language, bold: false, doc.DotMatrixFontStyle,
+            doc.DotMatrixFontWeight);
+        var bold = PrintFonts.Get(doc.Language, bold: true,
+            doc.DotMatrixFontStyle, doc.DotMatrixFontWeight);
 
         var rows = ExpandRows(doc);
         var headerH = doc.IsDuplicate ? 150 : 120;
@@ -340,9 +367,11 @@ public class DotMatrixEscPRenderer : IPrintRenderer
         var height = headerH + pairRows * rowH + footerH;
         height = ((height + 7) / 8) * 8; // pad to a multiple of 8 rows for clean ESC* banding
 
-        var bmp = new SKBitmap(WidthPx, height);
+        scale = Math.Clamp(scale, 1, 4);
+        var bmp = new SKBitmap(WidthPx * scale, height * scale);
         using var canvas = new SKCanvas(bmp);
         canvas.Clear(SKColors.White);
+        canvas.Scale(scale, scale);
         using var paint = new SKPaint { Color = SKColors.Black, IsAntialias = false };
         using var titleFont = new SKFont(bold, 26);
         using var subFont = new SKFont(bold, 18);
@@ -364,9 +393,9 @@ public class DotMatrixEscPRenderer : IPrintRenderer
                 {
                     var logoBoxWidth = Math.Clamp(doc.LogoWidth, 40, 400);
                     var logoBoxHeight = Math.Clamp(doc.LogoHeight, 20, headerH - 12);
-                    var scale = Math.Min((float)logoBoxWidth / logo.Width,
+                    var logoScale = Math.Min((float)logoBoxWidth / logo.Width,
                         (float)logoBoxHeight / logo.Height);
-                    var destination = new SKRect(10, 4, 10 + logo.Width * scale, 4 + logo.Height * scale);
+                    var destination = new SKRect(10, 4, 10 + logo.Width * logoScale, 4 + logo.Height * logoScale);
                     canvas.DrawBitmap(logo, destination, new SKSamplingOptions(SKFilterMode.Linear));
                 }
             }
@@ -477,7 +506,7 @@ public class DotMatrixEscPRenderer : IPrintRenderer
     /// (stored in 1/180-inch units) is converted before sending. All glyphs stay in m=1 120-dpi
     /// double density; no horizontal pixel merging is used.</summary>
     private static byte[] ToEscP(SKBitmap bmp, bool fixedHeight, bool optimizeWhitespace,
-        byte physicalLineSpacingUnits180)
+        byte physicalLineSpacingUnits180, int inkThreshold, bool avoidCarriageReturn)
     {
         using var ms = new MemoryStream();
         void W(params byte[] b) => ms.Write(b, 0, b.Length);
@@ -491,7 +520,7 @@ public class DotMatrixEscPRenderer : IPrintRenderer
             // ESC 3 accepts one byte. Group as many blank bands as fit in that command.
             // CR keeps the next raster line at the same left edge; restoring normal spacing
             // ensures the following inked band still advances by exactly one 8-dot band.
-            W(0x0D);
+            if (!avoidCarriageReturn) W(0x0D);
             while (bandCount > 0)
             {
                 var chunkBands = Math.Min(Math.Max(1, 255 / printerLineSpacingUnits216), bandCount);
@@ -560,7 +589,7 @@ public class DotMatrixEscPRenderer : IPrintRenderer
                 {
                     var py = band + bit;
                     if (py >= height) continue;
-                    if (IsBlack(bmp, outputX, py))
+                    if (IsBlack(bmp, outputX, py, inkThreshold))
                     {
                         col |= (byte)(1 << (7 - bit));
                     }
@@ -581,7 +610,11 @@ public class DotMatrixEscPRenderer : IPrintRenderer
                 WriteSegmentedRaster(line, graphicsMode);
             else
                 WriteRasterSegment(line, 0, line.Length, graphicsMode);
-            W(0x0D, 0x0A); // CR LF - advances one calibrated physical raster band
+            // Epson Auto LF may turn CR into an additional physical LF. Every
+            // raster segment starts with ESC $ absolute positioning, so CR is
+            // unnecessary for its RAW profile.
+            if (!avoidCarriageReturn) W(0x0D);
+            W(0x0A);
         }
         FeedBlankBands(blankBands);
         if (!fixedHeight)
@@ -589,9 +622,57 @@ public class DotMatrixEscPRenderer : IPrintRenderer
         return ms.ToArray();
     }
 
-    private static bool IsBlack(SKBitmap bmp, int x, int y)
+    private static int InkThreshold(string? density) => density switch
+    {
+        "ExtraLight" => 64,
+        "Light" => 96,
+        "Dark" => 176,
+        _ => 128
+    };
+
+    private static void BinarizeForImpactPrinter(SKBitmap bmp, int threshold)
+    {
+        // Removing gray anti-alias edge pixels prevents a monochrome Windows V4 driver from
+        // dithering them into extra pin strikes. The Light profile therefore keeps the glyph
+        // core while noticeably reducing ribbon spread around Hindi headline strokes.
+        var pixels = MemoryMarshal.Cast<byte, SKColor>(bmp.GetPixelSpan());
+        for (var index = 0; index < pixels.Length; index++)
+        {
+            var color = pixels[index];
+            var luminance = (color.Red + color.Green + color.Blue) / 3;
+            pixels[index] = luminance < threshold ? SKColors.Black : SKColors.White;
+        }
+    }
+
+    /// <summary>
+    /// A Windows V4 queue can still turn a lone black source pixel into a full pin strike.
+    /// Remove only isolated one-pixel speckles after binarisation; connected glyph strokes,
+    /// rules, QR modules and the dotted tear line remain unchanged.
+    /// </summary>
+    private static void RemoveIsolatedImpactDots(SKBitmap bmp)
+    {
+        var width = bmp.Width;
+        var height = bmp.Height;
+        var remove = new List<(int X, int Y)>();
+        for (var y = 1; y < height - 1; y++)
+        for (var x = 1; x < width - 1; x++)
+        {
+            if (bmp.GetPixel(x, y) != SKColors.Black) continue;
+            var neighbors = 0;
+            for (var dy = -1; dy <= 1; dy++)
+            for (var dx = -1; dx <= 1; dx++)
+            {
+                if (dx == 0 && dy == 0) continue;
+                if (bmp.GetPixel(x + dx, y + dy) == SKColors.Black) neighbors++;
+            }
+            if (neighbors == 0) remove.Add((x, y));
+        }
+        foreach (var (x, y) in remove) bmp.SetPixel(x, y, SKColors.White);
+    }
+
+    private static bool IsBlack(SKBitmap bmp, int x, int y, int threshold)
     {
         var c = bmp.GetPixel(x, y);
-        return (c.Red + c.Green + c.Blue) / 3 < 128;
+        return (c.Red + c.Green + c.Blue) / 3 < threshold;
     }
 }

@@ -67,8 +67,8 @@ public class ConfigController : ControllerBase
         return Ok(new { message = $"Weight rules saved. Minimum weight: {r.MinimumWeightQuintal:F2} Quintal." });
     }
 
-    /// <summary>Developer-only status for the persisted vehicle/platform safety lock.</summary>
-    [Authorize(Roles = "Developer")]
+    /// <summary>Operational status for the persisted vehicle/platform safety lock.</summary>
+    [Authorize(Roles = "Developer,Administrator,Admin")]
     [HasPermission("WeightRule.Configure")]
     [HttpGet("weighbridge-platform-lock")]
     public async Task<IActionResult> GetWeighbridgePlatformLock()
@@ -84,10 +84,11 @@ public class ConfigController : ControllerBase
     }
 
     /// <summary>
-    /// Manual safety override for recovery after an application/digitizer restart. The developer
-    /// must first physically verify that the weighbridge is empty and provide an audit reason.
+    /// Manual safety override for recovery after an application/digitizer restart. An authorised
+    /// operational user must first physically verify that the weighbridge is empty and provide an
+    /// audit reason.
     /// </summary>
-    [Authorize(Roles = "Developer")]
+    [Authorize(Roles = "Developer,Administrator,Admin")]
     [HasPermission("WeightRule.Configure")]
     [HttpPost("weighbridge-platform-lock/unlock")]
     public async Task<IActionResult> UnlockWeighbridgePlatform([FromBody] Dictionary<string, string> body)
@@ -639,6 +640,8 @@ public class ConfigController : ControllerBase
     {
         var p = await _db.PrintConfigs.FirstAsync(x => !x.IsDeleted);
         if (src.PrinterType is not ("DotMatrix" or "A4")) return BadRequest(new { message = "PrinterType must be DotMatrix or A4." });
+        if (src.SalePurchaseInvoicePrinterType is not ("DotMatrix" or "A4"))
+            return BadRequest(new { message = "Sale Weighment Invoice Printer Type must be DotMatrix or A4." });
         if (src.DotMatrixPageLines is < 80 or > 180 || src.DotMatrixPageLines % 2 != 0)
             return BadRequest(new { message = "Dot Matrix Page Lines must be an even value between 80 and 180." });
         if (src.DotMatrixHalfPageLines is < 40 or > 90 || src.DotMatrixHalfPageLines * 2 != src.DotMatrixPageLines)
@@ -647,6 +650,26 @@ public class ConfigController : ControllerBase
             return BadRequest(new { message = "Next Form/TOF Position must equal Page/Form Lines to prevent progressive drift." });
         if (src.DotMatrixLineSpacingUnits is < 12 or > 30)
             return BadRequest(new { message = "ESC/P Line Spacing must be between 12 and 30 units (1/180 inch each)." });
+        if (src.DotMatrixFontWeight is not ("Light" or "Regular" or "Medium" or "Bold"))
+            return BadRequest(new { message = "Dot Matrix Font Weight must be Light, Regular, Medium or Bold." });
+        if (src.DotMatrixFontStyle is not ("LegacyTVS" or "Sans" or "SansCompact" or "Serif" or "SerifCompact"
+            or "TimesNewRoman" or "CourierNew" or "Monospace"))
+            return BadRequest(new { message = "Dot Matrix Font Style is not supported." });
+        if (src.DotMatrixInkDensity is not ("ExtraLight" or "Light" or "Normal" or "Dark"))
+            return BadRequest(new { message = "Dot Matrix Ink Density must be ExtraLight, Light, Normal or Dark." });
+        if (src.DotMatrixDriverRenderDpi is not (120 or 240 or 360 or 480))
+            return BadRequest(new { message = "Dot Matrix Windows Driver Resolution must be 120, 240, 360 or 480 DPI." });
+        if (src.DotMatrixPrinterProfilesJson is { Length: > 16000 })
+            return BadRequest(new { message = "Dot Matrix printer profiles are too large." });
+        try
+        {
+            using var _ = System.Text.Json.JsonDocument.Parse(
+                string.IsNullOrWhiteSpace(src.DotMatrixPrinterProfilesJson) ? "{}" : src.DotMatrixPrinterProfilesJson);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return BadRequest(new { message = "Dot Matrix printer profiles are invalid." });
+        }
         if (src.DotMatrixTearOffFeedLines is < 1m or > 18m ||
             src.DotMatrixTearOffFeedLines * 2m != decimal.Truncate(src.DotMatrixTearOffFeedLines * 2m))
             return BadRequest(new { message = "Tear-Off Parking Feed must be between 1 and 18 lines in 0.5-line steps." });
@@ -676,6 +699,7 @@ public class ConfigController : ControllerBase
             p.SalePurchaseGrossCopies,
             p.SalePurchaseTareCopies,
             p.SalePurchaseInvoiceEnabled,
+            p.SalePurchaseInvoicePrinterType,
             p.DotMatrixPrintHeader,
             p.DotMatrixPageLines,
             p.DotMatrixHalfPageLines,
@@ -687,7 +711,12 @@ public class ConfigController : ControllerBase
             p.DotMatrixLineSpacingUnits,
             p.DotMatrixTearOffParkingEnabled,
             p.DotMatrixTearOffFeedLines,
-            p.DotMatrixFastPrint
+            p.DotMatrixFastPrint,
+            p.DotMatrixFontWeight,
+            p.DotMatrixFontStyle,
+            p.DotMatrixInkDensity,
+            p.DotMatrixDriverRenderDpi,
+            p.DotMatrixPrinterProfilesJson
         };
         p.PrinterType = src.PrinterType;
         p.DotMatrixPrinterName = src.DotMatrixPrinterName?.Trim() ?? "";
@@ -706,6 +735,7 @@ public class ConfigController : ControllerBase
         p.SalePurchaseGrossCopies = Math.Clamp(src.SalePurchaseGrossCopies, 0, 5);
         p.SalePurchaseTareCopies = Math.Clamp(src.SalePurchaseTareCopies, 0, 5);
         p.SalePurchaseInvoiceEnabled = src.SalePurchaseInvoiceEnabled;
+        p.SalePurchaseInvoicePrinterType = src.SalePurchaseInvoicePrinterType;
         p.Language = src.Language;
         p.DotMatrixPrintHeader = src.DotMatrixPrintHeader;
         p.DotMatrixPageLines = src.DotMatrixPageLines;
@@ -719,6 +749,12 @@ public class ConfigController : ControllerBase
         p.DotMatrixTearOffParkingEnabled = src.DotMatrixTearOffParkingEnabled;
         p.DotMatrixTearOffFeedLines = src.DotMatrixTearOffFeedLines;
         p.DotMatrixFastPrint = src.DotMatrixFastPrint;
+        p.DotMatrixFontWeight = src.DotMatrixFontWeight;
+        p.DotMatrixFontStyle = src.DotMatrixFontStyle;
+        p.DotMatrixInkDensity = src.DotMatrixInkDensity;
+        p.DotMatrixDriverRenderDpi = src.DotMatrixDriverRenderDpi;
+        p.DotMatrixPrinterProfilesJson = string.IsNullOrWhiteSpace(src.DotMatrixPrinterProfilesJson)
+            ? "{}" : src.DotMatrixPrinterProfilesJson;
         p.UpdatedAt = DateTime.UtcNow;
         p.UpdatedBy = _current.UserId;
         await _db.SaveChangesAsync();

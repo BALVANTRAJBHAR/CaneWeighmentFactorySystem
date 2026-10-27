@@ -115,7 +115,16 @@ class _AppShellState extends State<AppShell> {
     _NavItem('Weighing Device', Icons.settings_input_component_outlined,
         'Device.Configure', () => const DeviceConfigScreen()),
     _NavItem('Configuration', Icons.tune_outlined, 'WeightRule.Configure',
-        () => const DeveloperSettingsScreen()),
+        () => const DeveloperSettingsScreen(),
+        anyPermissions: [
+          'Sound.Configure',
+          'Camera.Configure',
+          'Print.Configure',
+          'Sms.Configure',
+          'Backup.Configure',
+          'Company.Configure',
+          'SystemSetting.Configure'
+        ]),
     _NavItem('Audit Log', Icons.history_outlined, 'Audit.View',
         () => const AuditScreen()),
     _NavItem('User Guide', Icons.menu_book_outlined, 'UserGuide.View',
