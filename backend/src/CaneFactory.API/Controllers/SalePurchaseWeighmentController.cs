@@ -216,8 +216,6 @@ public class SalePurchaseWeighmentController : ControllerBase
         if (await WeightSaveAccessErrorAsync() is { } accessError) return StatusCode(403, new { message = accessError });
         if (req.GstPercent is < 0 or > 100)
             return BadRequest(new { message = "GST % must be between 0 and 100." });
-        if (req.SalesPercent is < 0 or > 100)
-            return BadRequest(new { message = "Sales % must be between 0 and 100." });
         var taxSupplyType = (req.TaxSupplyType ?? "").Trim().ToUpperInvariant();
         if (taxSupplyType is not ("INTRA_STATE" or "INTER_STATE"))
             return BadRequest(new { message = "Tax Supply Type must be INTRA_STATE or INTER_STATE." });
@@ -284,8 +282,10 @@ public class SalePurchaseWeighmentController : ControllerBase
                 record.GstPercent = WeightCalculator.R2(req.GstPercent);
                 record.GstAmount = WeightCalculator.R2(record.Amount.Value * record.GstPercent / 100m);
                 record.FinalAmount = WeightCalculator.R2(record.Amount.Value + record.GstAmount.Value);
-                record.SalesPercent = WeightCalculator.R2(req.SalesPercent);
-                record.SalesAmount = WeightCalculator.R2(record.Amount.Value * record.SalesPercent / 100m);
+                // The GST field is the single operator-entered percentage. Keep
+                // legacy Sales report columns aligned with the saved tax values.
+                record.SalesPercent = record.GstPercent;
+                record.SalesAmount = record.GstAmount;
                 record.TaxSupplyType = taxSupplyType;
                 if (taxSupplyType == "INTRA_STATE")
                 {

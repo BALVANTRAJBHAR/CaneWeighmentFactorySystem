@@ -55,6 +55,7 @@ class _GrowerSearchScreenState extends State<GrowerSearchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 600;
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -69,25 +70,31 @@ class _GrowerSearchScreenState extends State<GrowerSearchScreen> {
             padding: const EdgeInsets.all(14),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                const Text('Search by: ',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
-                RadioGroup<String>(
-                  groupValue: _searchBy,
-                  onChanged: (v) => setState(() => _searchBy = v!),
+              SizedBox(
+                width: double.infinity,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
                   child: Row(children: [
-                    for (final opt in [
-                      ('name', 'Name'),
-                      ('father', 'Father Name'),
-                      ('village', 'Village')
-                    ])
-                      Row(mainAxisSize: MainAxisSize.min, children: [
-                        Radio<String>(value: opt.$1),
-                        Text(opt.$2),
+                    const Text('Search by: ',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+                    RadioGroup<String>(
+                      groupValue: _searchBy,
+                      onChanged: (v) => setState(() => _searchBy = v!),
+                      child: Row(children: [
+                        for (final opt in [
+                          ('name', 'Name'),
+                          ('father', 'Father Name'),
+                          ('village', 'Village')
+                        ])
+                          Row(mainAxisSize: MainAxisSize.min, children: [
+                            Radio<String>(value: opt.$1),
+                            Text(opt.$2),
+                          ]),
                       ]),
+                    ),
                   ]),
                 ),
-              ]),
+              ),
               TextField(
                 autofocus: true,
                 decoration: const InputDecoration(
@@ -150,7 +157,8 @@ class _GrowerSearchScreenState extends State<GrowerSearchScreen> {
                             title: Text('${g['id']} — ${g['growerName']}'),
                             subtitle: Text(
                                 'S/o ${g['fatherName']} • Village: ${g['villageName']} • Mobile: ${g['mobile']}'),
-                            trailing: Text('${g['bankName'] ?? ''}'),
+                            trailing:
+                                compact ? null : Text('${g['bankName'] ?? ''}'),
                           );
                         },
                       ),

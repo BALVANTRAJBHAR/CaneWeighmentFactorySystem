@@ -15,6 +15,7 @@ import '../screens/developer/device_config_screen.dart';
 import '../screens/developer/settings_screens.dart';
 import '../screens/expenses/expense_screen.dart';
 import '../screens/farmer/farmer_dashboard_screen.dart';
+import '../screens/public/company_public_screen.dart';
 import '../screens/guide/user_guide_screen.dart';
 import '../screens/images/image_view_screen.dart';
 import '../screens/loans/loan_screens.dart';
@@ -129,6 +130,8 @@ class _AppShellState extends State<AppShell> {
         () => const AuditScreen()),
     _NavItem('User Guide', Icons.menu_book_outlined, 'UserGuide.View',
         () => const UserGuideScreen()),
+    _NavItem('Contact / About Us', Icons.contact_support_outlined, '',
+        () => const CompanyPublicScreen()),
   ];
 
   @override
@@ -165,8 +168,12 @@ class _AppShellState extends State<AppShell> {
     final theme = context.watch<ThemeProvider>();
     final items = _allItems
         .where((i) =>
-            (!auth.hasRole('Farmer') || i.roleOnly == 'Farmer') &&
-            (auth.can(i.permission) || i.anyPermissions.any(auth.can)) &&
+            (!auth.hasRole('Farmer') ||
+                i.roleOnly == 'Farmer' ||
+                i.permission.isEmpty) &&
+            (i.permission.isEmpty ||
+                auth.can(i.permission) ||
+                i.anyPermissions.any(auth.can)) &&
             (i.roleOnly == null || auth.hasRole(i.roleOnly!)) &&
             // A restriction such as Cash Book/Expenses for Operator applies only
             // to an operator-only account. A user with Operator plus Accountant,
@@ -187,10 +194,12 @@ class _AppShellState extends State<AppShell> {
     }
     final safeIndex = _index.clamp(0, items.length - 1);
     final wide = MediaQuery.of(context).size.width > 900;
+    final companyName =
+        (_header?['companyName'] ?? 'AUTHENTIC FOOD FARM').toString();
 
     return Scaffold(
       appBar: AppBar(
-        titleSpacing: 12,
+        titleSpacing: wide ? 12 : 0,
         title: Row(children: [
           Icon(Icons.factory_outlined,
               color: Theme.of(context).colorScheme.primary),
@@ -198,10 +207,17 @@ class _AppShellState extends State<AppShell> {
           Flexible(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(_header?['companyName'] ?? 'Sugarcane Factory',
-                  style: const TextStyle(
-                      fontSize: 15, fontWeight: FontWeight.w700),
-                  overflow: TextOverflow.ellipsis),
+              SizedBox(
+                height: 20,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(companyName,
+                      maxLines: 1,
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w700)),
+                ),
+              ),
               Text('Season: ${_header?['season'] ?? '-'}',
                   style: const TextStyle(fontSize: 11)),
             ]),
@@ -289,10 +305,42 @@ class _AppShellState extends State<AppShell> {
               child: SafeArea(
                 child: ListView(
                   children: [
-                    const DrawerHeader(
-                        child: Text('Navigation',
-                            style: TextStyle(
-                                fontSize: 22, fontWeight: FontWeight.w700))),
+                    DrawerHeader(
+                      child: Row(children: [
+                        Container(
+                          width: 58,
+                          height: 58,
+                          padding: const EdgeInsets.all(7),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Image.network(
+                            '${ApiClient.baseUrl}/api/public/company/logo',
+                            errorBuilder: (_, __, ___) =>
+                                Image.asset('assets/images/app_logo.png'),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(companyName,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w800)),
+                              const SizedBox(height: 4),
+                              Text('Season ${_header?['season'] ?? '-'}',
+                                  style: Theme.of(context).textTheme.bodySmall),
+                            ],
+                          ),
+                        ),
+                      ]),
+                    ),
                     for (var i = 0; i < items.length; i++)
                       ListTile(
                         leading: Icon(items[i].icon),

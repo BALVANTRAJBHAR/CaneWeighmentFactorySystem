@@ -146,8 +146,9 @@ Check(InspectEscP(renderer.RenderFinal(driverQualityDocument).bytes).TotalBands 
 var epsonRawDocument = Build("Epson RAW", 12);
 epsonRawDocument.DotMatrixAvoidCarriageReturn = true;
 var epsonRawFeed = InspectEscP(renderer.RenderFinal(epsonRawDocument).bytes);
-Check(epsonRawFeed.TotalBands == halfPageLines && epsonRawFeed.PhysicalFeedUnits216 == 6 * 216,
-    "Epson RAW slip did not preserve the calibrated half-page feed");
+Check(epsonRawFeed.TotalBands == halfPageLines + 1 &&
+    epsonRawFeed.PhysicalFeedUnits216 == 6 * 216 + ToPrinterUnits216(epsonRawDocument.DotMatrixLineSpacingUnits),
+    "Epson RAW slip must feed one extra blank line after the half-page tear mark");
 Check(epsonRawFeed.CarriageReturns == 0,
     "Epson RAW slip contains CR controls that can trigger a second LF with Auto LF enabled");
 Check(InspectEscP(renderer.RenderFinal(documents[0]).bytes).CarriageReturns > 0,

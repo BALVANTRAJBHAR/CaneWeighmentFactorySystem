@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -13,6 +14,7 @@ import 'providers/theme_provider.dart';
 import 'screens/auth/change_password_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/splash/splash_screen.dart';
+import 'screens/public/company_public_screen.dart';
 import 'widgets/app_shell.dart';
 
 void main() {
@@ -76,6 +78,7 @@ class _RootGateState extends State<RootGate> {
   bool _apiError = false;
   String _status = 'Initializing...';
   String? _companyName;
+  bool _webLoginRequested = false;
 
   @override
   void initState() {
@@ -124,8 +127,8 @@ class _RootGateState extends State<RootGate> {
       setState(() {
         _apiError = true;
         _status = statusCode != null && statusCode >= 500
-            ? 'IIS is reachable at ${ApiClient.baseUrl}, but the API failed to start (HTTP $statusCode). Restore the server configuration and check the IIS application log.'
-            : 'Cannot reach ${ApiClient.baseUrl}. Check the IIS binding/port, server firewall, and the API application pool.';
+            ? 'Cannot reach the server. Please try again in a moment.'
+            : 'Cannot reach the server. Check your internet connection and try again.';
       });
       return;
     }
@@ -144,7 +147,7 @@ class _RootGateState extends State<RootGate> {
         setState(() {
           _apiError = true;
           _status =
-              'Server is reachable at ${ApiClient.baseUrl}, but its database is ${database ?? 'unavailable'} (HTTP ${health.statusCode}). Check the server connection string and SQL Server.';
+              'The server is temporarily unavailable because its database is ${database ?? 'unavailable'} (HTTP ${health.statusCode}). Please try again later.';
         });
         return;
       }
@@ -154,7 +157,7 @@ class _RootGateState extends State<RootGate> {
       setState(() {
         _apiError = true;
         _status =
-            'Server is reachable at ${ApiClient.baseUrl}, but the database health check failed.';
+            'The server is temporarily unavailable because the database health check failed. Please try again later.';
       });
       return;
     }
@@ -216,7 +219,13 @@ class _RootGateState extends State<RootGate> {
           onRetry: _apiError ? _startup : null,
           companyName: _companyName);
     }
-    if (!auth.isLoggedIn) return const LoginScreen();
+    if (!auth.isLoggedIn) {
+      if (kIsWeb && !_webLoginRequested) {
+        return CompanyPublicScreen(
+            onLogin: () => setState(() => _webLoginRequested = true));
+      }
+      return const LoginScreen();
+    }
     if (auth.mustChangePassword)
       return const ChangePasswordScreen(forced: true);
     return const AppShell();

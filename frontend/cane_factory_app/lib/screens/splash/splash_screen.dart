@@ -95,7 +95,7 @@ class _SplashScreenState extends State<SplashScreen>
                               fit: BoxFit.contain),
                         ),
                         const SizedBox(height: 28),
-                        Text('Cane Factory Management System',
+                        Text('Sugarcane Factory Management System',
                             textAlign: TextAlign.center,
                             style: TextStyle(
                                 fontSize: 22,

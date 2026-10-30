@@ -223,51 +223,94 @@ class _WeighmentCorrectionsScreenState
         _detailCell(secondValue, header: false),
       ]);
 
-  Widget _detailsTable(Map<String, dynamic> record) => SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SizedBox(
-          width: 1040,
-          child: Table(
+  TableRow _mobileDetailRow(String label, String value) => TableRow(children: [
+        _detailCell(label, header: true),
+        _detailCell(value, header: false),
+      ]);
+
+  Widget _detailsTable(Map<String, dynamic> record) =>
+      LayoutBuilder(builder: (context, constraints) {
+        if (constraints.maxWidth < 700) {
+          return Table(
             border: TableBorder.all(
               color: Theme.of(context).dividerColor,
               borderRadius: BorderRadius.circular(6),
             ),
             columnWidths: const {
-              0: FixedColumnWidth(155),
-              1: FlexColumnWidth(),
-              2: FixedColumnWidth(175),
-              3: FlexColumnWidth(),
+              0: FlexColumnWidth(1.05),
+              1: FlexColumnWidth(1.35),
             },
             defaultVerticalAlignment: TableCellVerticalAlignment.middle,
             children: [
-              _detailRow('Purchase ID', '${record['id']}', 'Grower ID / Item',
+              _mobileDetailRow('Purchase ID', '${record['id']}'),
+              _mobileDetailRow('Grower ID / Item',
                   '${record['growerId'] ?? record['itemName'] ?? '-'}'),
-              _detailRow('Name / Party', '${record['name'] ?? '-'}', 'Status',
-                  '${record['status'] ?? '-'}'),
-              _detailRow(
-                  'Gross Weight',
-                  '${_money(record['grossWeightQuintal'])} Qtl',
-                  'Tare Weight',
-                  '${_money(record['tareWeightQuintal'])} Qtl'),
-              _detailRow(
-                  'Final Weight',
-                  '${_money(record['finalWeightQuintal'])} Qtl',
-                  'Currently Saved Rate',
-                  '${_money(record['rate'])} / Qtl'),
-              _detailRow(
-                  'Currently Saved Amount',
-                  _money(record['amount']),
-                  'Original Gross Date',
+              _mobileDetailRow('Name / Party', '${record['name'] ?? '-'}'),
+              _mobileDetailRow('Status', '${record['status'] ?? '-'}'),
+              _mobileDetailRow('Gross Weight',
+                  '${_money(record['grossWeightQuintal'])} Qtl'),
+              _mobileDetailRow(
+                  'Tare Weight', '${_money(record['tareWeightQuintal'])} Qtl'),
+              _mobileDetailRow('Final Weight',
+                  '${_money(record['finalWeightQuintal'])} Qtl'),
+              _mobileDetailRow(
+                  'Currently Saved Rate', '${_money(record['rate'])} / Qtl'),
+              _mobileDetailRow(
+                  'Currently Saved Amount', _money(record['amount'])),
+              _mobileDetailRow('Original Gross Date',
                   _date(record['rateDate']).split(' ').first),
-              _detailRow(
-                  'Last Updated By',
-                  '${_updater ?? record['updatedBy'] ?? '-'}',
-                  'Last Updated At',
-                  _date(record['updatedAt'])),
+              _mobileDetailRow('Last Updated By',
+                  '${_updater ?? record['updatedBy'] ?? '-'}'),
+              _mobileDetailRow('Last Updated At', _date(record['updatedAt'])),
             ],
+          );
+        }
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            width: 1040,
+            child: Table(
+              border: TableBorder.all(
+                color: Theme.of(context).dividerColor,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              columnWidths: const {
+                0: FixedColumnWidth(155),
+                1: FlexColumnWidth(),
+                2: FixedColumnWidth(175),
+                3: FlexColumnWidth(),
+              },
+              defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+              children: [
+                _detailRow('Purchase ID', '${record['id']}', 'Grower ID / Item',
+                    '${record['growerId'] ?? record['itemName'] ?? '-'}'),
+                _detailRow('Name / Party', '${record['name'] ?? '-'}', 'Status',
+                    '${record['status'] ?? '-'}'),
+                _detailRow(
+                    'Gross Weight',
+                    '${_money(record['grossWeightQuintal'])} Qtl',
+                    'Tare Weight',
+                    '${_money(record['tareWeightQuintal'])} Qtl'),
+                _detailRow(
+                    'Final Weight',
+                    '${_money(record['finalWeightQuintal'])} Qtl',
+                    'Currently Saved Rate',
+                    '${_money(record['rate'])} / Qtl'),
+                _detailRow(
+                    'Currently Saved Amount',
+                    _money(record['amount']),
+                    'Original Gross Date',
+                    _date(record['rateDate']).split(' ').first),
+                _detailRow(
+                    'Last Updated By',
+                    '${_updater ?? record['updatedBy'] ?? '-'}',
+                    'Last Updated At',
+                    _date(record['updatedAt'])),
+              ],
+            ),
           ),
-        ),
-      );
+        );
+      });
 
   Widget _dropdown(
     String label,
@@ -275,30 +318,27 @@ class _WeighmentCorrectionsScreenState
     int? value,
     void Function(int?) changed,
   ) =>
-      SizedBox(
-        width: 255,
-        child: DropdownButtonFormField<int>(
-          // Recreate after a type/search change; never retain a variety from another type.
-          key: ValueKey('$label-$value-${_record?['id']}'),
-          initialValue: options.any((x) => x['id'] == value) ? value : null,
-          isExpanded: true,
-          decoration: InputDecoration(labelText: label),
-          items: options
-              .map(
-                (x) => DropdownMenuItem<int>(
-                  value: x['id'],
-                  child: Text(x['name'], overflow: TextOverflow.ellipsis),
-                ),
-              )
-              .toList(),
-          onChanged: _busy
-              ? null
-              : (value) => setState(() {
-                    changed(value);
-                    _preview = null;
-                    _message = null;
-                  }),
-        ),
+      DropdownButtonFormField<int>(
+        // Recreate after a type/search change; never retain a variety from another type.
+        key: ValueKey('$label-$value-${_record?['id']}'),
+        initialValue: options.any((x) => x['id'] == value) ? value : null,
+        isExpanded: true,
+        decoration: InputDecoration(labelText: label),
+        items: options
+            .map(
+              (x) => DropdownMenuItem<int>(
+                value: x['id'],
+                child: Text(x['name'], overflow: TextOverflow.ellipsis),
+              ),
+            )
+            .toList(),
+        onChanged: _busy
+            ? null
+            : (value) => setState(() {
+                  changed(value);
+                  _preview = null;
+                  _message = null;
+                }),
       );
 
   @override
@@ -310,181 +350,193 @@ class _WeighmentCorrectionsScreenState
       );
     }
     final record = _record;
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          'Weighment Corrections',
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Admin / Developer only. Paid cane purchases cannot be edited. Gross, tare and final weights remain unchanged.',
-        ),
-        const SizedBox(height: 12),
-        RadioGroup<String>(
-          groupValue: _kind,
-          onChanged: (value) {
-            if (_busy || value == null) return;
-            setState(() {
-              _kind = value;
-              _record = null;
-              _preview = null;
-              _message = null;
-              _id.clear();
-            });
-          },
-          child: Wrap(
-            spacing: 12,
-            children: [
-              for (final kind in ['purchase', 'sale'])
-                SizedBox(
-                  width: 220,
-                  child: RadioListTile<String>(
-                    title: Text(
-                      kind == 'purchase' ? 'Cane Purchase' : 'Sale / Purchase',
-                    ),
-                    value: kind,
-                    enabled: !_busy,
-                  ),
-                ),
-            ],
+    return LayoutBuilder(builder: (context, constraints) {
+      final compact = constraints.maxWidth < 700;
+      return ListView(
+        padding: EdgeInsets.all(compact ? 12 : 20),
+        children: [
+          Text(
+            'Weighment Corrections',
+            style: Theme.of(context).textTheme.headlineSmall,
           ),
-        ),
-        if (!_cane)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 14),
-            child: Text(
-              'Sale / Purchase uses Item and Party, not cane varieties. Only vehicle details can be corrected here. This module has no linked payment status; rate and amount remain unchanged.',
+          const SizedBox(height: 8),
+          const Text(
+            'Admin / Developer only. Paid cane purchases cannot be edited. Gross, tare and final weights remain unchanged.',
+          ),
+          const SizedBox(height: 12),
+          RadioGroup<String>(
+            groupValue: _kind,
+            onChanged: (value) {
+              if (_busy || value == null) return;
+              setState(() {
+                _kind = value;
+                _record = null;
+                _preview = null;
+                _message = null;
+                _id.clear();
+              });
+            },
+            child: Wrap(
+              spacing: compact ? 4 : 12,
+              children: [
+                for (final kind in ['purchase', 'sale'])
+                  SizedBox(
+                    width: compact ? (constraints.maxWidth - 32) / 2 : 220,
+                    child: RadioListTile<String>(
+                      dense: compact,
+                      contentPadding: compact
+                          ? EdgeInsets.zero
+                          : const EdgeInsets.symmetric(horizontal: 8),
+                      title: Text(
+                        kind == 'purchase'
+                            ? 'Cane Purchase'
+                            : 'Sale / Purchase',
+                        maxLines: 2,
+                      ),
+                      value: kind,
+                      enabled: !_busy,
+                    ),
+                  ),
+              ],
             ),
           ),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            SizedBox(
-              width: 255,
-              child: TextField(
-                controller: _id,
-                enabled: !_busy,
-                decoration: InputDecoration(
-                  labelText: _cane ? 'Purchase ID' : 'Sale / Purchase ID',
-                ),
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                onChanged: (_) => setState(() {
-                  _record = null;
-                  _preview = null;
-                  _message = null;
-                }),
-                onSubmitted: (_) => _search(),
+          if (!_cane)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 14),
+              child: Text(
+                'Sale / Purchase uses Item and Party, not cane varieties. Only vehicle details can be corrected here. This module has no linked payment status; rate and amount remain unchanged.',
               ),
             ),
-            FilledButton.icon(
+          LayoutBuilder(builder: (context, rowConstraints) {
+            final searchField = TextField(
+              controller: _id,
+              enabled: !_busy,
+              decoration: InputDecoration(
+                labelText: _cane ? 'Purchase ID' : 'Sale / Purchase ID',
+              ),
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              onChanged: (_) => setState(() {
+                _record = null;
+                _preview = null;
+                _message = null;
+              }),
+              onSubmitted: (_) => _search(),
+            );
+            final searchButton = FilledButton.icon(
               onPressed: _busy ? null : _search,
               icon: const Icon(Icons.search),
               label: const Text('Search'),
+            );
+            return Row(children: [
+              Expanded(child: searchField),
+              const SizedBox(width: 10),
+              SizedBox(height: 52, child: searchButton),
+            ]);
+          }),
+          if (_busy)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: LinearProgressIndicator(),
             ),
-          ],
-        ),
-        if (_busy)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: LinearProgressIndicator(),
-          ),
-        if (_message != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            child: Text(
-              _message!,
-              style: TextStyle(
-                color: _error
-                    ? Theme.of(context).colorScheme.error
-                    : Theme.of(context).colorScheme.primary,
+          if (_message != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              child: Text(
+                _message!,
+                style: TextStyle(
+                  color: _error
+                      ? Theme.of(context).colorScheme.error
+                      : Theme.of(context).colorScheme.primary,
+                ),
               ),
             ),
-          ),
-        if (record != null) ...[
-          const SizedBox(height: 18),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${_cane ? 'Cane Purchase' : 'Sale / Purchase'} Details',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  _detailsTable(record),
-                  if (_cane)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 10),
-                      child: Text(
-                        'Variety Type, Variety, Rate and Amount are locked. Only Vehicle Type and Vehicle Number can be corrected.',
-                      ),
+          if (record != null) ...[
+            const SizedBox(height: 18),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${_cane ? 'Cane Purchase' : 'Sale / Purchase'} Details',
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
-                ],
+                    const SizedBox(height: 8),
+                    _detailsTable(record),
+                    if (_cane)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 10),
+                        child: Text(
+                          'Variety Type, Variety, Rate and Amount are locked. Only Vehicle Type and Vehicle Number can be corrected.',
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 14,
-            runSpacing: 18,
-            children: [
-              _dropdown(
+            const SizedBox(height: 18),
+            LayoutBuilder(builder: (context, fieldConstraints) {
+              final vehicleType = _dropdown(
                 'Vehicle Type',
                 _vehicles,
                 _vehicleType,
                 (v) => _vehicleType = v,
-              ),
-              SizedBox(
-                width: 255,
-                child: TextField(
-                  controller: _vehicle,
-                  enabled: !_busy,
-                  decoration: const InputDecoration(
-                    labelText: 'Vehicle Number',
-                  ),
-                  onChanged: (_) => setState(() {
-                    _preview = null;
-                    _message = null;
-                  }),
+              );
+              final vehicleNumber = TextField(
+                controller: _vehicle,
+                enabled: !_busy,
+                decoration: const InputDecoration(
+                  labelText: 'Vehicle Number',
+                ),
+                onChanged: (_) => setState(() {
+                  _preview = null;
+                  _message = null;
+                }),
+              );
+              if (fieldConstraints.maxWidth < 360) {
+                return Column(children: [
+                  vehicleType,
+                  const SizedBox(height: 12),
+                  vehicleNumber,
+                ]);
+              }
+              return Row(children: [
+                Expanded(child: vehicleType),
+                const SizedBox(width: 12),
+                Expanded(child: vehicleNumber),
+              ]);
+            }),
+            const SizedBox(height: 20),
+            if (_preview != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: Text(
+                  'Vehicle preview: ${_preview!['vehicleNumber']}    Rate: ${_money(_preview!['rate'])}    Amount: ${_money(_preview!['amount'])}',
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          if (_preview != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: Text(
-                'Vehicle preview: ${_preview!['vehicleNumber']}    Rate: ${_money(_preview!['rate'])}    Amount: ${_money(_preview!['amount'])}',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                OutlinedButton(
+                  onPressed: _busy ? null : () => _calculateOrSave(false),
+                  child: const Text('Calculate / Preview'),
+                ),
+                FilledButton.icon(
+                  onPressed: _busy || _preview == null
+                      ? null
+                      : () => _calculateOrSave(true),
+                  icon: const Icon(Icons.save_outlined),
+                  label: const Text('Update'),
+                ),
+              ],
             ),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              OutlinedButton(
-                onPressed: _busy ? null : () => _calculateOrSave(false),
-                child: const Text('Calculate / Preview'),
-              ),
-              FilledButton.icon(
-                onPressed: _busy || _preview == null
-                    ? null
-                    : () => _calculateOrSave(true),
-                icon: const Icon(Icons.save_outlined),
-                label: const Text('Update'),
-              ),
-            ],
-          ),
+          ],
         ],
-      ],
-    );
+      );
+    });
   }
 }

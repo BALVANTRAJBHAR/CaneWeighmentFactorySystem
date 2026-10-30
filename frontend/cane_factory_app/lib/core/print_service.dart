@@ -18,8 +18,8 @@ class PrintOutcome {
 }
 
 /// Fetches the print-ready document from the centralized backend Print Engine and sends it to the
-/// local Windows printer via printing_ffi (winspool). A4 -> temp PDF file + printPdf(); DotMatrix ->
-/// raw ESC/P bytes + rawDataToPrinter(). Never throws - always returns a PrintOutcome so callers can
+/// local Windows printer. A4 -> temp PDF file + printPdf(); DotMatrix ->
+/// raw ESC/P bytes + Winspool WritePrinter. Never throws - always returns a PrintOutcome so callers can
 /// show a clear retry error instead of crashing when the backend or the printer is unreachable.
 class PrintService {
   static List<String> installedPrinterNames() => installedNativePrinterNames();
@@ -67,7 +67,24 @@ class PrintService {
       return PrintOutcome(false,
           'Configured printer "$printerName" is not installed or unavailable on this Windows PC.');
     }
-    final targetPrinterName = resolvedPrinterName;
+    // The Epson V4/Class queue can accept a RAW job and then discard it in
+    // its print pipeline. A separate WinPrint/RAW queue on the *same port*
+    // bypasses that pipeline while keeping the ESC/P bytes unchanged.
+    final epsonQueue = _isEpsonLx310(resolvedPrinterName);
+    final isRawCompanion = resolvedPrinterName.toLowerCase().endsWith(' raw');
+    final rawCompanion =
+        epsonQueue && !isRawCompanion && printerType == 'DotMatrix'
+            ? _resolveInstalledPrinterName('$resolvedPrinterName RAW')
+            : null;
+    if (epsonQueue &&
+        !isRawCompanion &&
+        printerType == 'DotMatrix' &&
+        rawCompanion == null &&
+        nativePrinterPrefersDriverRendering(resolvedPrinterName)) {
+      return PrintOutcome(false,
+          'Epson V4/Class queue may discard ESC/P RAW jobs after accepting them. Run tools\\configure-epson-raw-queue.ps1 on this client PC, then select "$resolvedPrinterName RAW" in Print Configuration.');
+    }
+    final targetPrinterName = rawCompanion ?? resolvedPrinterName;
     final driverPreferred = printerType == 'DotMatrix' &&
         !forceNativeDotMatrix &&
         nativePrinterPrefersDriverRendering(targetPrinterName);
@@ -76,8 +93,8 @@ class PrintService {
     // visible one-pin "ghost" dots around otherwise hard-edged glyphs. The
     // printer itself understands ESC/P, so preserve the server's exact 1-bit
     // dots and bypass PDF/PDFium/GDI for this model.
-    final epsonExactDotRaw = printerType == 'DotMatrix' &&
-        _isEpsonLx310(targetPrinterName);
+    final epsonExactDotRaw =
+        printerType == 'DotMatrix' && _isEpsonLx310(targetPrinterName);
     final useWindowsDriver = driverPreferred && !epsonExactDotRaw;
     List<int> bytes;
     try {
@@ -139,63 +156,44 @@ class PrintService {
           return PrintOutcome(false,
               'Windows driver for "$targetPrinterName" did not accept the job. Check printer status and paper settings.');
         }
-        if (dotMatrixTearOffParkingEnabled && confirmTearOff != null) {
-          // LX-310's ESC/P mode does not expose a software reverse-feed
-          // command. Its documented ESC j belongs to IBM-PPDS mode, while a
-          // Windows V4/Class ESC/P queue silently discards RAW reverse bytes.
-          // Epson's supported continuous-paper workflow is hardware Auto
-          // Tear-Off: the completed page parks at the perforation and the
-          // next Windows print job automatically retracts to TOF before
-          // printing. Keep TVS' immediate RAW reverse path separate below.
-          await _setPaperParked(targetPrinterName, true);
-          final confirmed = await confirmTearOff(safeCopies, true);
-          if (!confirmed) {
-            return PrintOutcome(false,
-                'Paper remains at the tear-off position. Use Recover Parked Paper before the next print.');
-          }
-          await _setPaperParked(targetPrinterName, false);
-          return PrintOutcome(true,
-              'Epson slip printed and torn. With LX-310 Auto Tear-Off ON, the next print job automatically retracts to the next TOF before printing.');
-        }
         return PrintOutcome(true,
             'Sent to printer "$targetPrinterName" through its Windows V4 driver and restored the next TOF.');
       }
 
       if (epsonExactDotRaw) {
-        final ok = await printNativeRaw(
-          targetPrinterName,
-          data,
-          copies: safeCopies,
-        );
-        if (!ok) {
-          return PrintOutcome(false,
-              'Epson exact-dot RAW job was not accepted. ${nativePrintLastError ?? 'Check printer status, RAW spool data type and paper settings.'}');
-        }
-        if (dotMatrixTearOffParkingEnabled && confirmTearOff != null) {
-          // LX-310 ESC/P has no dependable host-driven reverse-feed command.
-          // Auto Tear-Off is firmware-controlled: it parks the perforation and
-          // retracts to TOF when the next RAW job begins. Keep the confirmation
-          // dialog, but never send the TVS-only ESC j reverse sequence.
-          await _setPaperParked(targetPrinterName, true);
-          final confirmed = await confirmTearOff(safeCopies, true);
-          if (!confirmed) {
+        // Keep the forward motion in the final slip's RAW spool job. A separate
+        // motion job can be retracted by LX-310 Auto Tear-Off before it runs.
+        final parkedData = dotMatrixTearOffParkingEnabled
+            ? Uint8List.fromList([
+                ...data,
+                ..._epsonForwardFeedBytes(
+                    dotMatrixTearOffFeedLines, dotMatrixLineSpacingUnits),
+              ])
+            : data;
+        for (var copy = 1; copy <= safeCopies; copy++) {
+          final ok = await printNativeRaw(
+              targetPrinterName, copy == safeCopies ? parkedData : data,
+              copies: 1);
+          if (!ok) {
             return PrintOutcome(false,
-                'Paper remains at the Epson tear-off position. Tear the slip or press the printer Tear Off button before continuing.');
+                'Epson RAW slip $copy was not accepted. ${nativePrintLastError ?? 'Check printer status and RAW queue.'}');
           }
-          await _setPaperParked(targetPrinterName, false);
-          return PrintOutcome(true,
-              'RAW job ${nativePrintLastJobId ?? '?'} entered the Windows queue for "$targetPrinterName". After tearing, confirm the paper position on the printer; physical output and automatic reverse need a device check.');
         }
         return PrintOutcome(true,
-            'RAW job ${nativePrintLastJobId ?? '?'} entered the Windows queue for "$targetPrinterName". Check the printer for physical output.');
+            'RAW job ${nativePrintLastJobId ?? '?'} was submitted to "$targetPrinterName". Tear at the dotted line; use the Epson panel Tear Off button to return paper.');
       }
 
       if (dotMatrixTearOffParkingEnabled && confirmTearOff != null) {
+        // TVS needs one more band at the cutter. Parking is reversed after
+        // tear confirmation, so the next form's calibrated TOF is unchanged.
+        final parkingFeedLines = targetPrinterName.toLowerCase().contains('tvs')
+            ? (dotMatrixTearOffFeedLines + 1).clamp(1.0, 18.0).toDouble()
+            : dotMatrixTearOffFeedLines;
         return await _printDotMatrixWithTearOff(
           printerName: targetPrinterName,
           data: data,
           copies: safeCopies,
-          feedLines: dotMatrixTearOffFeedLines,
+          feedLines: parkingFeedLines,
           lineSpacingUnits: dotMatrixLineSpacingUnits,
           confirmTearOff: confirmTearOff,
         );
@@ -217,6 +215,24 @@ class PrintService {
     final query = Map<String, String>.from(uri.queryParameters);
     query['format'] = 'preview';
     return uri.replace(queryParameters: query).toString();
+  }
+
+  static List<int> _epsonForwardFeedBytes(
+      double feedLines, int lineSpacingUnits) {
+    // ESC J n advances n/216 inch without changing the existing ESC 3 band
+    // pitch. Append only to the last slip; no form feed or reverse command.
+    var remaining = (feedLines.clamp(0.0, 18.0) *
+            lineSpacingUnits.clamp(12, 30) *
+            216 /
+            180)
+        .round();
+    final motion = <int>[];
+    while (remaining > 0) {
+      final chunk = remaining > 108 ? 108 : remaining;
+      motion.addAll([0x1B, 0x4A, chunk]);
+      remaining -= chunk;
+    }
+    return motion;
   }
 
   static String _withEpsonRawProfile(String documentUrl) {

@@ -67,26 +67,13 @@ public class CameraCaptureService : ICameraCaptureService
             .Where(c => !c.IsDeleted && c.Status && c.CaptureEnabled && c.WeighmentCaptureEnabled)
             .OrderBy(c => c.CameraNumber).ToListAsync(ct);
 
-        foreach (var cam in cameras)
+        await foreach (var capture in CaptureCamerasAsync(cameras, ct))
         {
+            var cam = capture.camera;
             var result = new CameraCaptureResult { CameraConfigId = cam.Id, CameraNumber = cam.CameraNumber };
             try
             {
-                if (!await IsCameraReachableAsync(cam, ct))
-                {
-                    result.Error = $"Camera {cam.CameraNumber:D2} is offline at {cam.IpAddress}:{cam.Port}; skipped for evidence capture.";
-                    results.Add(result);
-                    continue;
-                }
-                var provider = ResolveProvider(cam.Protocol);
-                if (provider == null)
-                {
-                    result.Error = $"No capture provider registered for protocol '{cam.Protocol}'.";
-                    results.Add(result);
-                    continue;
-                }
-                var password = cam.PasswordEncrypted != null ? _protector.Unprotect(cam.PasswordEncrypted) : null;
-                var (ok, bytes, error) = await CaptureWithRetryAsync(provider, cam, password, ct);
+                var (ok, bytes, error) = capture.frame;
                 if (!ok || bytes == null)
                 {
                     result.Error = error;
@@ -95,14 +82,17 @@ public class CameraCaptureService : ICameraCaptureService
                         newValue: new { cam.CameraNumber, stage, error }, success: false, failureReason: error);
                     continue;
                 }
+                result.CaptureSucceeded = true;
+                result.StorageStatus = "FAILED";
                 var (imageId, imageName) = await SaveImageAsync(bytes, purchase, stage, cam, capturedByUserId, ct);
+                result.StorageStatus = _storage.LastSaveWasQueued ? "UPLOAD_QUEUED" : "SAVED";
                 result.Success = true;
                 result.ImageId = imageId;
                 result.ImageName = imageName;
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                result.Error = $"Camera {cam.CameraNumber:D2} did not return an evidence image within 8 seconds; skipped.";
+                result.Error = $"Camera {cam.CameraNumber:D2} did not return an evidence image within two 10-second attempts; skipped.";
             }
             catch (Exception ex)
             {
@@ -111,7 +101,7 @@ public class CameraCaptureService : ICameraCaptureService
             }
             results.Add(result);
         }
-        return results;
+        return results.OrderBy(r => r.CameraNumber).ToList();
     }
 
     /// <summary>Captures payment evidence using the dedicated payment camera when one is configured.
@@ -137,28 +127,13 @@ public class CameraCaptureService : ICameraCaptureService
                 .OrderBy(c => c.CameraNumber).ToListAsync(ct)
             : new List<CameraConfig> { configuredCamera };
 
-        foreach (var cam in cameras)
+        await foreach (var capture in CaptureCamerasAsync(cameras, ct))
         {
+            var cam = capture.camera;
             var result = new CameraCaptureResult { CameraConfigId = cam.Id, CameraNumber = cam.CameraNumber };
             try
             {
-                if (!await IsCameraReachableAsync(cam, ct))
-                {
-                    result.Error = $"Camera {cam.CameraNumber:D2} is offline at {cam.IpAddress}:{cam.Port}; skipped for payment evidence.";
-                    results.Add(result);
-                    continue;
-                }
-                var provider = ResolveProvider(cam.Protocol);
-                if (provider == null)
-                {
-                    result.Error = $"No capture provider registered for protocol '{cam.Protocol}'.";
-                    results.Add(result);
-                    continue;
-                }
-                var password = cam.PasswordEncrypted != null ? _protector.Unprotect(cam.PasswordEncrypted) : null;
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeout.CancelAfter(TimeSpan.FromSeconds(8));
-                var (ok, bytes, error) = await provider.CaptureAsync(cam, password, timeout.Token);
+                var (ok, bytes, error) = capture.frame;
                 if (!ok || bytes == null)
                 {
                     result.Error = error;
@@ -168,18 +143,23 @@ public class CameraCaptureService : ICameraCaptureService
                     continue;
                 }
 
+                result.CaptureSucceeded = true;
+                result.StorageStatus = "FAILED";
+                var uploadQueued = false;
                 foreach (var purchaseId in purchaseIds)
                 {
                     var saved = await SavePaymentImageAsync(bytes, payment, purchaseId, cam, capturedByUserId,
                         replaceExisting: false, ct);
+                    uploadQueued |= _storage.LastSaveWasQueued;
                     result.ImageId ??= saved.imageId;
                     result.ImageName ??= saved.imageName;
                 }
+                result.StorageStatus = uploadQueued ? "UPLOAD_QUEUED" : "SAVED";
                 result.Success = true;
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                result.Error = $"Camera {cam.CameraNumber:D2} did not return a payment evidence image within 8 seconds.";
+                result.Error = $"Camera {cam.CameraNumber:D2} did not return a payment evidence image within two 10-second attempts.";
             }
             catch (Exception ex)
             {
@@ -188,7 +168,7 @@ public class CameraCaptureService : ICameraCaptureService
             }
             results.Add(result);
         }
-        return results;
+        return results.OrderBy(r => r.CameraNumber).ToList();
     }
 
     /// <summary>Captures one selected paid purchase from the payment-evidence live-view dialog.
@@ -232,16 +212,17 @@ public class CameraCaptureService : ICameraCaptureService
                 return result;
             }
             var password = cam.PasswordEncrypted != null ? _protector.Unprotect(cam.PasswordEncrypted) : null;
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(8));
-            var (ok, bytes, error) = await provider.CaptureAsync(cam, password, timeout.Token);
+            var (ok, bytes, error) = await CaptureWithRetryAsync(provider, cam, password, ct);
             if (!ok || bytes == null)
             {
                 result.Error = error ?? "Camera did not return an image.";
                 return result;
             }
+            result.CaptureSucceeded = true;
+            result.StorageStatus = "FAILED";
             var saved = await SavePaymentImageAsync(bytes, payment, purchaseId, cam, capturedByUserId,
                 replaceExisting, ct);
+            result.StorageStatus = _storage.LastSaveWasQueued ? "UPLOAD_QUEUED" : "SAVED";
             result.Success = true;
             result.ImageId = saved.imageId;
             result.ImageName = saved.imageName;
@@ -249,7 +230,7 @@ public class CameraCaptureService : ICameraCaptureService
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            result.Error = "Payment evidence camera did not return an image within 8 seconds.";
+            result.Error = "Payment evidence camera did not return an image within two 10-second attempts.";
             return result;
         }
         catch (Exception ex)
@@ -269,21 +250,13 @@ public class CameraCaptureService : ICameraCaptureService
         if (sale == null) return results;
         var cameras = await _db.Cameras.AsNoTracking().Where(c => !c.IsDeleted && c.Status && c.CaptureEnabled && c.WeighmentCaptureEnabled)
             .OrderBy(c => c.CameraNumber).ToListAsync(ct);
-        foreach (var cam in cameras)
+        await foreach (var capture in CaptureCamerasAsync(cameras, ct))
         {
+            var cam = capture.camera;
             var result = new CameraCaptureResult { CameraConfigId = cam.Id, CameraNumber = cam.CameraNumber };
             try
             {
-                if (!await IsCameraReachableAsync(cam, ct))
-                {
-                    result.Error = $"Camera {cam.CameraNumber:D2} is offline at {cam.IpAddress}:{cam.Port}; skipped for evidence capture.";
-                    results.Add(result);
-                    continue;
-                }
-                var provider = ResolveProvider(cam.Protocol);
-                if (provider == null) { result.Error = $"No capture provider registered for protocol '{cam.Protocol}'."; results.Add(result); continue; }
-                var password = cam.PasswordEncrypted != null ? _protector.Unprotect(cam.PasswordEncrypted) : null;
-                var (ok, bytes, error) = await CaptureWithRetryAsync(provider, cam, password, ct);
+                var (ok, bytes, error) = capture.frame;
                 if (!ok || bytes == null)
                 {
                     result.Error = error;
@@ -291,18 +264,23 @@ public class CameraCaptureService : ICameraCaptureService
                 }
                 else
                 {
+                    result.CaptureSucceeded = true;
+                    result.StorageStatus = "FAILED";
                     var (imageId, imageName) = await SaveSalePurchaseImageAsync(bytes, salePurchaseId, stage, cam, capturedByUserId, ct);
-                    result.Success = true; result.ImageId = imageId; result.ImageName = imageName;
+                    result.StorageStatus = _storage.LastSaveWasQueued ? "UPLOAD_QUEUED" : "SAVED";
+                    result.Success = true;
+                    result.ImageId = imageId;
+                    result.ImageName = imageName;
                 }
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                result.Error = $"Camera {cam.CameraNumber:D2} did not return an evidence image within 8 seconds; skipped.";
+                result.Error = $"Camera {cam.CameraNumber:D2} did not return an evidence image within two 10-second attempts; skipped.";
             }
             catch (Exception ex) { result.Error = ex.Message; _log.LogWarning(ex, "Camera capture failed for SalePurchase {SalePurchaseId}", salePurchaseId); }
             results.Add(result);
         }
-        return results;
+        return results.OrderBy(r => r.CameraNumber).ToList();
     }
 
     public async Task<CameraCaptureResult> CaptureSingleAsync(int cameraConfigId, CancellationToken ct = default)
@@ -337,10 +315,48 @@ public class CameraCaptureService : ICameraCaptureService
             cam.StreamType = "Sub";
         }
         var (ok, bytes, error) = await provider.CaptureAsync(cam, password, ct);
+        result.CaptureSucceeded = ok;
         result.Success = ok;
         result.Error = error;
         result.ImageBytes = bytes;
         return result;
+    }
+
+    // Start every camera before awaiting any result. Only capture/network work runs
+    // concurrently: persistence and auditing retain exclusive use of the scoped DbContext.
+    // Yield completion order so a slow/offline camera cannot delay saving a ready frame.
+    private async IAsyncEnumerable<(CameraConfig camera, (bool ok, byte[]? bytes, string? error) frame)>
+        CaptureCamerasAsync(List<CameraConfig> cameras,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var pending = cameras.Select(CaptureCameraAsync).ToList();
+        while (pending.Count > 0)
+        {
+            var completed = await Task.WhenAny(pending);
+            pending.Remove(completed);
+            yield return await completed;
+        }
+
+        async Task<(CameraConfig camera, (bool ok, byte[]? bytes, string? error) frame)>
+            CaptureCameraAsync(CameraConfig camera)
+        {
+            try
+            {
+                if (!SimulatorMode && !await IsCameraReachableAsync(camera, ct))
+                    return (camera, (false, null, $"Camera {camera.CameraNumber:D2} is offline; evidence capture failed."));
+                var provider = ResolveProvider(camera.Protocol);
+                if (provider == null)
+                    return (camera, (false, null, $"No capture provider registered for protocol '{camera.Protocol}'."));
+                var password = camera.PasswordEncrypted == null ? null : _protector.Unprotect(camera.PasswordEncrypted);
+                return (camera, await CaptureWithRetryAsync(provider, camera, password, ct));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Evidence capture failed for camera {CameraId}", camera.Id);
+                return (camera, (false, null, ex.Message));
+            }
+        }
     }
 
     private async Task<bool> SettingTrueAsync(string key)

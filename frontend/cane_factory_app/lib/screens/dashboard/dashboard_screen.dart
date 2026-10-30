@@ -104,35 +104,70 @@ class _DashboardScreenState extends State<DashboardScreen> {
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ]),
         const SizedBox(height: 12),
-        Wrap(spacing: 12, runSpacing: 12, children: [
-          for (final c in cards)
-            SizedBox(
-              width: 240,
-              child: Card(
+        LayoutBuilder(builder: (context, constraints) {
+          return GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: cards.length,
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 260,
+              mainAxisExtent: 118,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+            ),
+            itemBuilder: (_, index) {
+              final c = cards[index];
+              return Card(
+                clipBehavior: Clip.antiAlias,
                 child: Padding(
-                  padding: const EdgeInsets.all(18),
+                  padding: const EdgeInsets.all(12),
                   child: Row(children: [
-                    Icon(c.$3,
-                        size: 34, color: Theme.of(context).colorScheme.primary),
-                    const SizedBox(width: 14),
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(c.$3,
+                          size: 26,
+                          color: Theme.of(context).colorScheme.primary),
+                    ),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(c.$2,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(c.$2,
                                 style: Theme.of(context)
                                     .textTheme
-                                    .headlineSmall
+                                    .titleLarge
                                     ?.copyWith(fontWeight: FontWeight.w800)),
-                            Text(c.$1,
-                                style: Theme.of(context).textTheme.bodySmall),
-                          ]),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(c.$1,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(height: 1.15)),
+                        ],
+                      ),
                     ),
                   ]),
                 ),
-              ),
-            ),
-        ]),
+              );
+            },
+          );
+        }),
         const SizedBox(height: 20),
         Text('System Health (role-aware)',
             style: Theme.of(context)
@@ -140,20 +175,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 .titleMedium
                 ?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
-        Wrap(spacing: 10, runSpacing: 10, children: [
-          for (final h in effectiveHealth)
-            Chip(
-              avatar: CircleAvatar(
-                  radius: 6,
-                  backgroundColor: switch (h['color']) {
-                    'Green' => const Color(0xFF2E7D32),
-                    'Yellow' => Colors.orange,
-                    _ => Colors.red,
-                  }),
-              label: Text('${h['name']}: ${h['value']}',
-                  style: const TextStyle(fontSize: 12)),
-            ),
-        ]),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: effectiveHealth.length,
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 430,
+            mainAxisExtent: 64,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+          ),
+          itemBuilder: (_, index) {
+            final h = effectiveHealth[index];
+            final statusColor = switch (h['color']) {
+              'Green' => const Color(0xFF2E7D32),
+              'Yellow' => Colors.orange,
+              _ => Colors.red,
+            };
+            return Card(
+              margin: EdgeInsets.zero,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                        color: statusColor, shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${h['name']}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 11, fontWeight: FontWeight.w700)),
+                        Text('${h['value']}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.circle, size: 7, color: statusColor),
+                ]),
+              ),
+            );
+          },
+        ),
       ]),
     );
   }

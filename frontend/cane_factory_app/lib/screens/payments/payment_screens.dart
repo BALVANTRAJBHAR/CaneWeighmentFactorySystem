@@ -351,6 +351,11 @@ class _PaymentScreenState extends State<PaymentScreen> {
                 ? 'Tear at the dotted line. If paper has not returned to TOF, press Tear Off on the Epson printer panel.'
                 : 'Wait until the dotted line comes outside the printer cover. Tear ${totalCopies == 1 ? 'the payment slip' : 'all $totalCopies payment slips'} on that line, then reset the remaining paper to the next TOF.'),
             actions: [
+              if (isEpson)
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('No paper printed'),
+                ),
               FilledButton.icon(
                 onPressed: () => Navigator.pop(dialogContext, true),
                 icon: const Icon(Icons.content_cut),
@@ -591,20 +596,96 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   fontWeight: FontWeight.w800,
                   color: Theme.of(context).colorScheme.primary)),
           const SizedBox(height: 10),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'SINGLE', label: Text('Single Purchase')),
-              ButtonSegment(
-                  value: 'DATE_RANGE', label: Text('Date Range (All Farmers)')),
-              ButtonSegment(
-                  value: 'FARMER', label: Text('Farmer-wise (All Pending)')),
-            ],
-            selected: {_mode},
-            onSelectionChanged: (s) => setState(() {
-              _mode = s.first;
-              _invalidatePreview();
-            }),
-          ),
+          LayoutBuilder(builder: (context, constraints) {
+            final compact = constraints.maxWidth < 560;
+            if (compact) {
+              const choices = [
+                (
+                  'SINGLE',
+                  'Single Purchase',
+                  Icons.receipt_long_outlined,
+                  170.0
+                ),
+                (
+                  'DATE_RANGE',
+                  'Date Range (All Farmers)',
+                  Icons.date_range_outlined,
+                  220.0
+                ),
+                (
+                  'FARMER',
+                  'Farmer-wise (All Pending)',
+                  Icons.agriculture_outlined,
+                  220.0
+                ),
+              ];
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: [
+                  for (var index = 0; index < choices.length; index++) ...[
+                    if (index > 0) const SizedBox(width: 8),
+                    SizedBox(
+                      width: choices[index].$4,
+                      child: ChoiceChip(
+                        avatar: Icon(choices[index].$3, size: 18),
+                        label: SizedBox(
+                          width: double.infinity,
+                          child: Text(choices[index].$2,
+                              maxLines: 1,
+                              textAlign: TextAlign.center,
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                        selected: _mode == choices[index].$1,
+                        showCheckmark: true,
+                        onSelected: (_) => setState(() {
+                          _mode = choices[index].$1;
+                          _invalidatePreview();
+                        }),
+                      ),
+                    ),
+                  ],
+                ]),
+              );
+            }
+            final selector = SegmentedButton<String>(
+              showSelectedIcon: true,
+              segments: [
+                ButtonSegment(
+                    value: 'SINGLE',
+                    icon: null,
+                    label: SizedBox(
+                        width: null,
+                        child: const Text('Single Purchase',
+                            maxLines: 2,
+                            textAlign: TextAlign.center,
+                            overflow: TextOverflow.ellipsis))),
+                ButtonSegment(
+                    value: 'DATE_RANGE',
+                    icon: null,
+                    label: SizedBox(
+                        width: null,
+                        child: const Text('Date Range\n(All Farmers)',
+                            maxLines: 2,
+                            textAlign: TextAlign.center,
+                            overflow: TextOverflow.ellipsis))),
+                ButtonSegment(
+                    value: 'FARMER',
+                    icon: null,
+                    label: SizedBox(
+                        width: null,
+                        child: const Text('Farmer-wise\n(All Pending)',
+                            maxLines: 2,
+                            textAlign: TextAlign.center,
+                            overflow: TextOverflow.ellipsis))),
+              ],
+              selected: {_mode},
+              onSelectionChanged: (s) => setState(() {
+                _mode = s.first;
+                _invalidatePreview();
+              }),
+            );
+            return selector;
+          }),
           const SizedBox(height: 12),
           Wrap(
               spacing: 12,
@@ -1052,9 +1133,20 @@ class _PaymentEvidenceDialogState extends State<_PaymentEvidenceDialog> {
         await _reloadContext();
         await _refreshPreview();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(res.data['message']?.toString() ??
-                  (retake ? 'Evidence retaken.' : 'Evidence captured.'))));
+          final result = res.data is Map ? res.data['result'] : null;
+          final camera = result is Map
+              ? ((result['cameraNumber'] as num?)?.toInt() ?? 0)
+              : 0;
+          final cameraLabel = 'CAM${camera.toString().padLeft(2, '0')}';
+          final storageStatus = result is Map ? result['storageStatus'] : null;
+          final statusMessage = result is! Map
+              ? (res.data['message']?.toString() ??
+                  (retake ? 'Evidence retaken.' : 'Evidence captured.'))
+              : storageStatus == 'UPLOAD_QUEUED'
+                  ? '$cameraLabel captured; cloud upload queued.'
+                  : '$cameraLabel captured and saved.';
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(statusMessage)));
         }
       } else {
         setState(() => _previewError = ApiClient.errorMessage(res));

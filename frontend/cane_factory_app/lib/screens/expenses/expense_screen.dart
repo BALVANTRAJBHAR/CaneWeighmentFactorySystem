@@ -113,104 +113,120 @@ class _ExpenseScreenState extends State<ExpenseScreen> {
     final canCreate = auth.can('Expense.Create');
     final canEdit = auth.can('Expense.Edit');
     final canDelete = auth.can('Expense.Delete');
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Row(children: [
-          Text('Expense Management',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w700)),
-          const Spacer(),
-          if (canCreate)
+    return LayoutBuilder(builder: (context, constraints) {
+      final compact = constraints.maxWidth < 600;
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            Expanded(
+              child: Text('Expense Management',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w700)),
+            ),
+            if (!compact && canCreate) ...[
+              FilledButton.icon(
+                  onPressed: () => _openForm(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add Expense')),
+              const SizedBox(width: 8),
+            ],
+            IconButton(
+                onPressed: _load,
+                tooltip: 'Refresh',
+                icon: const Icon(Icons.refresh)),
+          ]),
+          if (compact && canCreate) ...[
+            const SizedBox(height: 8),
             FilledButton.icon(
                 onPressed: () => _openForm(),
                 icon: const Icon(Icons.add),
                 label: const Text('Add Expense')),
-          const SizedBox(width: 8),
-          IconButton(
-              onPressed: _load,
-              tooltip: 'Refresh',
-              icon: const Icon(Icons.refresh)),
-        ]),
-        const SizedBox(height: 10),
-        if (_error != null)
-          Text(_error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        if (_totals.isNotEmpty)
-          Card(
-            color: Theme.of(context).colorScheme.primaryContainer,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Wrap(spacing: 24, runSpacing: 8, children: [
-                Text('Records: ${_totals['totalCount'] ?? 0}',
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
-                Text('Total Expense: ₹${_money(_totals['totalAmount'])}',
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
-              ]),
+          ],
+          const SizedBox(height: 10),
+          if (_error != null)
+            Text(_error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          if (_totals.isNotEmpty)
+            Card(
+              color: Theme.of(context).colorScheme.primaryContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Wrap(spacing: 24, runSpacing: 8, children: [
+                  Text('Records: ${_totals['totalCount'] ?? 0}',
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  Text('Total Expense: ₹${_money(_totals['totalAmount'])}',
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                ]),
+              ),
             ),
-          ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: Card(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _items.isEmpty
-                    ? const Center(child: Text('No expenses saved yet.'))
-                    : SingleChildScrollView(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: DataTable(
-                            columns: [
-                              const DataColumn(label: Text('Date')),
-                              const DataColumn(label: Text('Expense Name')),
-                              const DataColumn(label: Text('Quantity')),
-                              const DataColumn(label: Text('Per Unit (₹)')),
-                              const DataColumn(label: Text('Total (₹)')),
-                              const DataColumn(label: Text('Remarks')),
-                              if (canEdit || canDelete)
-                                const DataColumn(label: Text('Actions')),
-                            ],
-                            rows: [
-                              for (final item in _items)
-                                DataRow(cells: [
-                                  DataCell(Text(_date(item['expenseDate']))),
-                                  DataCell(
-                                      Text('${item['expenseName'] ?? ''}')),
-                                  DataCell(Text('${item['quantity'] ?? ''}')),
-                                  DataCell(Text(_money(item['unitCharge']))),
-                                  DataCell(Text(_money(item['totalAmount']))),
-                                  DataCell(Text('${item['remarks'] ?? '-'}')),
-                                  if (canEdit || canDelete)
-                                    DataCell(Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          if (canEdit)
-                                            IconButton(
-                                                tooltip: 'Edit',
-                                                icon: const Icon(
-                                                    Icons.edit_outlined,
-                                                    size: 18),
-                                                onPressed: () =>
-                                                    _openForm(existing: item)),
-                                          if (canDelete)
-                                            IconButton(
-                                                tooltip: 'Delete',
-                                                icon: const Icon(
-                                                    Icons.delete_outline,
-                                                    size: 18),
-                                                onPressed: () => _delete(item)),
-                                        ])),
-                                ]),
-                            ],
+          const SizedBox(height: 8),
+          Expanded(
+            child: Card(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _items.isEmpty
+                      ? const Center(child: Text('No expenses saved yet.'))
+                      : SingleChildScrollView(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: DataTable(
+                              columns: [
+                                const DataColumn(label: Text('Date')),
+                                const DataColumn(label: Text('Expense Name')),
+                                const DataColumn(label: Text('Quantity')),
+                                const DataColumn(label: Text('Per Unit (₹)')),
+                                const DataColumn(label: Text('Total (₹)')),
+                                const DataColumn(label: Text('Remarks')),
+                                if (canEdit || canDelete)
+                                  const DataColumn(label: Text('Actions')),
+                              ],
+                              rows: [
+                                for (final item in _items)
+                                  DataRow(cells: [
+                                    DataCell(Text(_date(item['expenseDate']))),
+                                    DataCell(
+                                        Text('${item['expenseName'] ?? ''}')),
+                                    DataCell(Text('${item['quantity'] ?? ''}')),
+                                    DataCell(Text(_money(item['unitCharge']))),
+                                    DataCell(Text(_money(item['totalAmount']))),
+                                    DataCell(Text('${item['remarks'] ?? '-'}')),
+                                    if (canEdit || canDelete)
+                                      DataCell(Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (canEdit)
+                                              IconButton(
+                                                  tooltip: 'Edit',
+                                                  icon: const Icon(
+                                                      Icons.edit_outlined,
+                                                      size: 18),
+                                                  onPressed: () => _openForm(
+                                                      existing: item)),
+                                            if (canDelete)
+                                              IconButton(
+                                                  tooltip: 'Delete',
+                                                  icon: const Icon(
+                                                      Icons.delete_outline,
+                                                      size: 18),
+                                                  onPressed: () =>
+                                                      _delete(item)),
+                                          ])),
+                                  ]),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
+            ),
           ),
-        ),
-      ]),
-    );
+        ]),
+      );
+    });
   }
 }
 
@@ -305,15 +321,20 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
   @override
   Widget build(BuildContext context) {
     final df = DateFormat('dd-MM-yyyy');
+    final screen = MediaQuery.sizeOf(context);
     return AlertDialog(
+      insetPadding: EdgeInsets.symmetric(
+          horizontal: screen.width < 600 ? 12 : 40, vertical: 24),
       title: Text(widget.existing == null ? 'Add Expense' : 'Edit Expense'),
       content: SizedBox(
-        width: 460,
+        width: screen.width < 600 ? screen.width : 460,
+        height: screen.height < 700 ? screen.height * 0.62 : null,
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               DropdownButtonFormField<int>(
+                isExpanded: true,
                 value: widget.types.any((x) => x['id'] == _typeId)
                     ? _typeId
                     : null,
@@ -322,7 +343,8 @@ class _ExpenseFormDialogState extends State<_ExpenseFormDialog> {
                   for (final type in widget.types)
                     DropdownMenuItem<int>(
                         value: type['id'],
-                        child: Text('${type['expenseName'] ?? ''}')),
+                        child: Text('${type['expenseName'] ?? ''}',
+                            overflow: TextOverflow.ellipsis)),
                 ],
                 validator: (v) => v == null ? 'Expense name is required' : null,
                 onChanged: (v) => setState(() => _typeId = v),

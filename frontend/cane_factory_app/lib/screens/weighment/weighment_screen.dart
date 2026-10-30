@@ -91,8 +91,9 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
     if (!mounted) return;
     final reading = _liveWeightProvider.current;
     unawaited(_sound.onWeight(reading.weightQuintal,
-        readingValid:
-            reading.deviceConnected && reading.readerRunning && reading.isLive));
+        readingValid: reading.deviceConnected &&
+            reading.readerRunning &&
+            reading.isLive));
   }
 
   Future<void> _loadRefs() async {
@@ -192,9 +193,14 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
             content: Text(isEpson
                 ? 'Tear at the dotted line. If paper has not returned to TOF, press Tear Off on the Epson printer panel.'
                 : totalCopies == 1
-                ? 'Wait until the final dotted line comes outside the printer cover. Tear the paper on that line, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'
-                : 'All $totalCopies configured slips have printed continuously. Wait until the final dotted line comes outside the printer cover, tear the paper there, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'),
+                    ? 'Wait until the final dotted line comes outside the printer cover. Tear the paper on that line, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'
+                    : 'All $totalCopies configured slips have printed continuously. Wait until the final dotted line comes outside the printer cover, tear the paper there, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'),
             actions: [
+              if (isEpson)
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('No paper printed'),
+                ),
               FilledButton.icon(
                 onPressed: () {
                   // Give immediate feedback before the raw ESC/P reverse-feed
@@ -278,9 +284,8 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
           .post('/api/purchases/$purchaseId/images/capture',
               data: {'stage': stage},
               options: Options(
-                // Cameras are captured sequentially so that RTSP/ONVIF devices and
-                // the shared database are not overloaded. Three slow cameras can
-                // legitimately take longer than the camera preview timeout.
+                // Camera network work runs in parallel on the edge API. The longer
+                // timeout covers two attempts and any durable upload-queue write.
                 receiveTimeout: const Duration(seconds: 75),
                 sendTimeout: const Duration(seconds: 15),
               ));
@@ -289,10 +294,24 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         if (results is List) {
           final saved =
               results.where((x) => x is Map && x['success'] == true).length;
-          if (mounted && saved < results.length) {
+          if (mounted && results.isNotEmpty) {
+            final statuses = results.whereType<Map>().map((result) {
+              final camera = (result['cameraNumber'] as num?)?.toInt() ?? 0;
+              final label = 'CAM${camera.toString().padLeft(2, '0')}';
+              if (result['storageStatus'] == 'UPLOAD_QUEUED') {
+                return '$label upload queued';
+              }
+              if (result['success'] == true) {
+                return '$label saved';
+              }
+              if (result['captureSucceeded'] == true) {
+                return '$label storage failed';
+              }
+              return '$label capture failed';
+            }).join(', ');
             _toast(
-              'Weight saved. Camera evidence: $saved of ${results.length} image(s) saved. Check the offline camera(s).',
-              error: true,
+              'Camera evidence: $statuses.',
+              error: saved < results.length,
             );
           }
           return saved > 0;
@@ -498,53 +517,65 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
 
     return SafeArea(
       child: LayoutBuilder(builder: (context, constraints) {
+        final mobile = constraints.maxWidth < 700;
         final compactHeader = constraints.maxWidth < 1100;
         final showCameraBesideForm = constraints.maxWidth >= 1200;
         final gridHeight = constraints.maxHeight < 700 ? 170.0 : 210.0;
+        final header = Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: compactHeader
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                        _modeSelector(scheme),
+                        const SizedBox(height: 8),
+                        _liveWeightDisplay(live),
+                        const SizedBox(height: 8),
+                        _deviceStatus(live, auth),
+                      ])
+                : Row(children: [
+                    _modeSelector(scheme),
+                    const SizedBox(width: 20),
+                    Expanded(child: _liveWeightDisplay(live)),
+                    const SizedBox(width: 14),
+                    _deviceStatus(live, auth),
+                  ]),
+          ),
+        );
+        final entryPanel = _grossMode ? _grossPanel() : _tarePanel();
+
+        if (mobile) {
+          return ListView(
+            padding: const EdgeInsets.all(8),
+            children: [
+              header,
+              const SizedBox(height: 8),
+              entryPanel,
+              if (_cameras.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                SizedBox(height: 390, child: _cameraPanel()),
+              ],
+              const SizedBox(height: 8),
+              SizedBox(height: 300, child: _pendingGrid()),
+            ],
+          );
+        }
         return Padding(
           padding: const EdgeInsets.all(10),
           child: Column(children: [
             // ---------- TOP: mode radio + live weight + status ----------
-            Card(
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                child: compactHeader
-                    ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                            _modeSelector(scheme),
-                            const SizedBox(height: 8),
-                            _liveWeightDisplay(live),
-                            const SizedBox(height: 8),
-                            _deviceStatus(live, auth),
-                          ])
-                    : Row(children: [
-                        _modeSelector(scheme),
-                        const SizedBox(width: 20),
-                        // LIVE WEIGHT display
-                        Expanded(
-                          child: _liveWeightDisplay(live),
-                        ),
-                        const SizedBox(width: 14),
-                        _deviceStatus(live, auth),
-                      ]),
-              ),
-            ),
+            header,
             const SizedBox(height: 6),
             // ---------- CENTER: entry panel + cameras ----------
             Expanded(
               child: _cameras.isEmpty
-                  ? (_grossMode ? _grossPanel() : _tarePanel())
+                  ? entryPanel
                   : showCameraBesideForm
                       ? Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                              Expanded(
-                                  flex: 3,
-                                  child: _grossMode
-                                      ? _grossPanel()
-                                      : _tarePanel()),
+                              Expanded(flex: 3, child: entryPanel),
                               const SizedBox(width: 6),
                               SizedBox(
                                   width: 576,
@@ -559,11 +590,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                               // two live cameras (20% wider than the previous
                               // 25% allocation) while retaining enough room
                               // for all entry controls.
-                              Expanded(
-                                  flex: 7,
-                                  child: _grossMode
-                                      ? _grossPanel()
-                                      : _tarePanel()),
+                              Expanded(flex: 7, child: entryPanel),
                               const SizedBox(width: 6),
                               Expanded(
                                   flex: 3,
@@ -677,6 +704,16 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         ],
       );
 
+  double _entryFieldWidth(double desktopWidth) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    return screenWidth < 700 ? (screenWidth - 68) / 2 : desktopWidth;
+  }
+
+  double _entryWideWidth(double desktopWidth) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    return screenWidth < 700 ? screenWidth - 52 : desktopWidth;
+  }
+
   Widget _grossPanel() {
     // A standard operator must use the configured default.  Management users
     // retain the existing controlled override workflow.
@@ -696,52 +733,71 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                     fontWeight: FontWeight.w800,
                     color: Theme.of(context).colorScheme.primary)),
             const SizedBox(height: 10),
-            Row(children: [
-              SizedBox(
-                width: 200,
-                child: TextField(
-                  controller: _growerId,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  maxLength: 6,
-                  autofocus: true,
-                  decoration: const InputDecoration(
-                      labelText: 'Grower ID',
-                      hintText: 'Example: 100001',
-                      counterText: '',
-                      prefixIcon: Icon(Icons.badge_outlined, size: 18)),
-                  onSubmitted: (_) => _lookupGrower(),
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.tonal(
+            LayoutBuilder(builder: (context, constraints) {
+              final compact = constraints.maxWidth < 620;
+              final lookupField = TextField(
+                controller: _growerId,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                maxLength: 6,
+                autofocus: true,
+                decoration: const InputDecoration(
+                    labelText: 'Grower ID',
+                    hintText: 'Example: 100001',
+                    counterText: '',
+                    prefixIcon: Icon(Icons.badge_outlined, size: 18)),
+                onSubmitted: (_) => _lookupGrower(),
+              );
+              final button = FilledButton.tonalIcon(
                   onPressed: _lookupGrower,
-                  child: const Text('Lookup (Enter)')),
-              const SizedBox(width: 14),
-              if (_grower != null)
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                        color: const Color(0xFF2E7D32).withValues(alpha: 0.10),
-                        borderRadius: BorderRadius.circular(8)),
-                    child: Text(
-                      '${_grower!['growerName']}  S/o ${_grower!['fatherName']}  •  Village: ${_grower!['villageName']}  •  '
-                      'Bank: ${_grower!['bankName'] ?? '-'} ${_grower!['accountMasked'] ?? ''}',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ),
-              if (_growerError != null)
-                Expanded(
-                    child: Text(_growerError!,
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error))),
-            ]),
+                  icon: const Icon(Icons.search, size: 18),
+                  label: Text(compact ? 'Lookup' : 'Lookup (Enter)'));
+              final details = _grower != null
+                  ? Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                          color:
+                              const Color(0xFF2E7D32).withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(8)),
+                      child: Text(
+                        '${_grower!['growerName']}  S/o ${_grower!['fatherName']}  •  Village: ${_grower!['villageName']}  •  '
+                        'Bank: ${_grower!['bankName'] ?? '-'} ${_grower!['accountMasked'] ?? ''}',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    )
+                  : _growerError != null
+                      ? Text(_growerError!,
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.error))
+                      : null;
+              if (compact) {
+                return Column(children: [
+                  Row(children: [
+                    Expanded(child: lookupField),
+                    const SizedBox(width: 8),
+                    button,
+                  ]),
+                  if (details != null) ...[
+                    const SizedBox(height: 8),
+                    details,
+                  ],
+                ]);
+              }
+              return Row(children: [
+                SizedBox(width: 200, child: lookupField),
+                const SizedBox(width: 8),
+                button,
+                if (details != null) ...[
+                  const SizedBox(width: 14),
+                  Expanded(child: details),
+                ],
+              ]);
+            }),
             const SizedBox(height: 12),
             Wrap(spacing: 12, runSpacing: 12, children: [
               SizedBox(
-                width: 190,
+                width: _entryFieldWidth(190),
                 child: DropdownButtonFormField<int>(
                   value: _vehicleTypeId,
                   isExpanded: true,
@@ -759,7 +815,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 ),
               ),
               SizedBox(
-                width: 190,
+                width: _entryFieldWidth(190),
                 child: TextField(
                   controller: _vehicleNumber,
                   textCapitalization: TextCapitalization.characters,
@@ -769,7 +825,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 ),
               ),
               SizedBox(
-                width: 190,
+                width: _entryFieldWidth(190),
                 child: DropdownButtonFormField<int>(
                   value: _cropId,
                   isExpanded: true,
@@ -787,7 +843,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 ),
               ),
               SizedBox(
-                width: 190,
+                width: _entryFieldWidth(190),
                 child: DropdownButtonFormField<int>(
                   value: _varietyTypeId,
                   isExpanded: true,
@@ -813,7 +869,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 ),
               ),
               SizedBox(
-                width: 190,
+                width: _entryFieldWidth(190),
                 child: DropdownButtonFormField<int>(
                   value: _varietyId,
                   isExpanded: true,
@@ -830,7 +886,7 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                 ),
               ),
               SizedBox(
-                width: 252,
+                width: _entryWideWidth(252),
                 child: Row(children: [
                   Expanded(
                     child: TextField(
@@ -900,34 +956,36 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
                     fontWeight: FontWeight.w800,
                     color: Theme.of(context).colorScheme.primary)),
             const SizedBox(height: 10),
-            Row(children: [
-              SizedBox(
-                width: 210,
-                child: TextField(
-                  controller: _purchaseIdCtl,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(
-                      labelText: 'Purchase ID',
-                      hintText: 'Example: 15482',
-                      prefixIcon: Icon(Icons.receipt_long, size: 18)),
-                  onSubmitted: (v) {
-                    final id = int.tryParse(v);
-                    if (id != null) _selectPurchase(id);
-                  },
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.tonal(
-                  onPressed: () {
-                    final id = int.tryParse(_purchaseIdCtl.text);
-                    if (id != null) _selectPurchase(id);
-                  },
-                  child: const Text('Fetch (Enter)')),
-              const SizedBox(width: 10),
-              const Text('or double-click a row in the pending grid below',
-                  style: TextStyle(fontSize: 12)),
-            ]),
+            Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  SizedBox(
+                    width: _entryWideWidth(210),
+                    child: TextField(
+                      controller: _purchaseIdCtl,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      decoration: const InputDecoration(
+                          labelText: 'Purchase ID',
+                          hintText: 'Example: 15482',
+                          prefixIcon: Icon(Icons.receipt_long, size: 18)),
+                      onSubmitted: (v) {
+                        final id = int.tryParse(v);
+                        if (id != null) _selectPurchase(id);
+                      },
+                    ),
+                  ),
+                  FilledButton.tonal(
+                      onPressed: () {
+                        final id = int.tryParse(_purchaseIdCtl.text);
+                        if (id != null) _selectPurchase(id);
+                      },
+                      child: const Text('Fetch (Enter)')),
+                  const Text('or double-click a row in the pending grid below',
+                      style: TextStyle(fontSize: 12)),
+                ]),
             if (_tareError != null)
               Padding(
                   padding: const EdgeInsets.only(top: 8),
@@ -1085,13 +1143,16 @@ class _WeighmentScreenState extends State<WeighmentScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
           child: Row(children: [
-            Text(
-                _grossMode
-                    ? 'Today\'s Gross (Pending Tare)'
-                    : 'Pending Gross — double-click to select for Tare',
-                style:
-                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-            const Spacer(),
+            Expanded(
+              child: Text(
+                  _grossMode
+                      ? 'Today\'s Gross (Pending Tare)'
+                      : 'Pending Gross — double-click to select for Tare',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 13)),
+            ),
             Text('${_pending.length} pending',
                 style: const TextStyle(fontSize: 12)),
             IconButton(

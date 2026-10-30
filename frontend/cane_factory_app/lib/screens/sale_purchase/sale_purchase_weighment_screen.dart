@@ -27,7 +27,6 @@ class _SalePurchaseWeighmentScreenState
   final _remark = TextEditingController();
   final _id = TextEditingController();
   final _gst = TextEditingController(text: '0.00');
-  final _salesPercent = TextEditingController(text: '0.00');
   List _items = [], _parties = [], _vehicles = [], _pending = [], _cameras = [];
   int? _itemId, _partyId, _vehicleTypeId;
   Map<String, dynamic>? _selected;
@@ -56,7 +55,6 @@ class _SalePurchaseWeighmentScreenState
     _remark.dispose();
     _id.dispose();
     _gst.dispose();
-    _salesPercent.dispose();
     super.dispose();
   }
 
@@ -123,8 +121,6 @@ class _SalePurchaseWeighmentScreenState
       _driver.text = data['driverName'] ?? '';
       _remark.text = data['remark'] ?? '';
       _gst.text = ((data['gstPercent'] as num?) ?? 0).toStringAsFixed(2);
-      _salesPercent.text =
-          ((data['salesPercent'] as num?) ?? 0).toStringAsFixed(2);
       _taxSupplyType = data['taxSupplyType']?.toString() == 'INTER_STATE'
           ? 'INTER_STATE'
           : 'INTRA_STATE';
@@ -203,9 +199,14 @@ class _SalePurchaseWeighmentScreenState
             content: Text(isEpson
                 ? 'Tear at the dotted line. If paper has not returned to TOF, press Tear Off on the Epson printer panel.'
                 : totalCopies == 1
-                ? 'Wait until the final dotted line comes outside the printer cover. Tear the paper on that line, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'
-                : 'All $totalCopies configured slips have printed continuously. Wait until the final dotted line comes outside the printer cover, tear the paper there, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'),
+                    ? 'Wait until the final dotted line comes outside the printer cover. Tear the paper on that line, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'
+                    : 'All $totalCopies configured slips have printed continuously. Wait until the final dotted line comes outside the printer cover, tear the paper there, then press the button below. The printer will automatically reverse the remaining paper to the next TOF.'),
             actions: [
+              if (isEpson)
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('No paper printed'),
+                ),
               FilledButton.icon(
                 onPressed: () => Navigator.pop(dialogContext, true),
                 icon: const Icon(Icons.content_cut),
@@ -265,10 +266,24 @@ class _SalePurchaseWeighmentScreenState
         if (results is List) {
           final saved =
               results.where((x) => x is Map && x['success'] == true).length;
-          if (mounted && saved < results.length) {
+          if (mounted && results.isNotEmpty) {
+            final statuses = results.whereType<Map>().map((result) {
+              final camera = (result['cameraNumber'] as num?)?.toInt() ?? 0;
+              final label = 'CAM${camera.toString().padLeft(2, '0')}';
+              if (result['storageStatus'] == 'UPLOAD_QUEUED') {
+                return '$label upload queued';
+              }
+              if (result['success'] == true) {
+                return '$label saved';
+              }
+              if (result['captureSucceeded'] == true) {
+                return '$label storage failed';
+              }
+              return '$label capture failed';
+            }).join(', ');
             _toast(
-              'Weight saved. Camera evidence: $saved of ${results.length} image(s) saved. Check the offline camera(s).',
-              error: true,
+              'Camera evidence: $statuses.',
+              error: saved < results.length,
             );
           }
           return saved > 0;
@@ -412,7 +427,6 @@ class _SalePurchaseWeighmentScreenState
           .post('/api/sale-purchase-weighment/gross', data: {
         'salePurchaseId': _selected!['salePurchaseId'],
         'gstPercent': double.tryParse(_gst.text.trim()) ?? 0,
-        'salesPercent': double.tryParse(_salesPercent.text.trim()) ?? 0,
         'taxSupplyType': _taxSupplyType,
         ...live.saveProof,
         ...rateOverride,
@@ -434,7 +448,6 @@ class _SalePurchaseWeighmentScreenState
         _id.clear();
         _itemRate = null;
         _gst.text = '0.00';
-        _salesPercent.text = '0.00';
         _taxSupplyType = 'INTRA_STATE';
         _gross = false;
       });
@@ -447,10 +460,20 @@ class _SalePurchaseWeighmentScreenState
     }
   }
 
+  double _formFieldWidth(double desktopWidth) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    return screenWidth < 700 ? (screenWidth - 68) / 2 : desktopWidth;
+  }
+
+  double _formWideWidth(double desktopWidth) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    return screenWidth < 700 ? screenWidth - 52 : desktopWidth;
+  }
+
   Widget _dropdown(String label, int? value, List data,
           ValueChanged<int?> onChanged, String name) =>
       SizedBox(
-          width: 230,
+          width: _formFieldWidth(230),
           child: DropdownButtonFormField<int>(
               isExpanded: true,
               value: value,
@@ -472,39 +495,58 @@ class _SalePurchaseWeighmentScreenState
         : live.weightQuintal -
             ((_selected!['tareWeightQuintal'] ?? 0) as num).toDouble();
     return SafeArea(
-        child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(children: [
+      child: LayoutBuilder(builder: (context, constraints) {
+        final mobile = constraints.maxWidth < 700;
+        final form = Card(
+          child: Padding(
+            padding: EdgeInsets.all(mobile ? 12 : 16),
+            child: _gross ? _grossForm(finalWeight) : _tareForm(),
+          ),
+        );
+        final camera = CameraLivePreviewPanel(
+            cameras: _cameras, compact: true, squareCards: true);
+        if (mobile) {
+          return ListView(
+            padding: const EdgeInsets.all(8),
+            children: [
               _weighmentHeader(live),
               const SizedBox(height: 8),
-              Expanded(
-                  child: SingleChildScrollView(
-                      child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                    Expanded(
-                        flex: 3,
-                        child: Card(
-                            child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: _gross
-                                    ? _grossForm(finalWeight)
-                                    : _tareForm()))),
-                    if (_cameras.isNotEmpty) ...[
-                      const SizedBox(width: 8),
-                      Expanded(
-                          flex: 2,
-                          child: SizedBox(
-                              height: 520,
-                              child: CameraLivePreviewPanel(
-                                  cameras: _cameras,
-                                  compact: true,
-                                  squareCards: true))),
-                    ],
-                  ]))),
+              form,
+              if (_cameras.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                SizedBox(height: 390, child: camera),
+              ],
               const SizedBox(height: 8),
-              SizedBox(height: 210, child: Card(child: _pendingGrid()))
-            ])));
+              SizedBox(height: 300, child: Card(child: _pendingGrid())),
+            ],
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(children: [
+            _weighmentHeader(live),
+            const SizedBox(height: 8),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 3, child: form),
+                      if (_cameras.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                            flex: 2,
+                            child: SizedBox(height: 520, child: camera)),
+                      ],
+                    ]),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(height: 210, child: Card(child: _pendingGrid())),
+          ]),
+        );
+      }),
+    );
   }
 
   /// Uses the same three-part hierarchy as Cane Weighment: mode on the left,
@@ -620,20 +662,20 @@ class _SalePurchaseWeighmentScreenState
             _dropdown('Vehicle Type', _vehicleTypeId, _vehicles,
                 (v) => setState(() => _vehicleTypeId = v), 'vehicleTypeName'),
             SizedBox(
-                width: 200,
+                width: _formFieldWidth(200),
                 child: TextField(
                     controller: _vehicle,
                     textCapitalization: TextCapitalization.characters,
                     decoration:
                         const InputDecoration(labelText: 'Vehicle Number'))),
             SizedBox(
-                width: 200,
+                width: _formFieldWidth(200),
                 child: TextField(
                     controller: _driver,
                     decoration:
                         const InputDecoration(labelText: 'Driver Name'))),
             SizedBox(
-                width: 260,
+                width: _formWideWidth(260),
                 child: TextField(
                     controller: _remark,
                     decoration:
@@ -662,7 +704,7 @@ class _SalePurchaseWeighmentScreenState
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               SizedBox(
-                  width: 230,
+                  width: _formWideWidth(230),
                   child: TextField(
                       controller: _id,
                       keyboardType: TextInputType.number,
@@ -730,17 +772,6 @@ class _SalePurchaseWeighmentScreenState
                 onChanged: (_) => setState(() {}),
               ),
             ),
-            SizedBox(
-              width: 160,
-              child: TextField(
-                controller: _salesPercent,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                    labelText: 'Sales % (report)', hintText: 'Example: 5.00'),
-                onChanged: (_) => setState(() {}),
-              ),
-            ),
             _taxSupplySelector(),
           ]),
           const SizedBox(height: 6),
@@ -749,47 +780,46 @@ class _SalePurchaseWeighmentScreenState
       ]);
 
   Widget _taxSupplySelector() => SizedBox(
-        width: 470,
+        width: _formWideWidth(470),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('GST supply type'),
           RadioGroup<String>(
             groupValue: _taxSupplyType,
             onChanged: (value) => setState(() => _taxSupplyType = value!),
             child: Wrap(spacing: 12, runSpacing: 4, children: [
-            SizedBox(
-              width: 215,
-              child: RadioListTile<String>(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Intra-State'),
-                subtitle: const Text('Same State/UT · CGST + SGST'),
-                value: 'INTRA_STATE',
+              SizedBox(
+                width: 215,
+                child: RadioListTile<String>(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Intra-State'),
+                  subtitle: const Text('Same State/UT · CGST + SGST'),
+                  value: 'INTRA_STATE',
+                ),
               ),
-            ),
-            SizedBox(
-              width: 215,
-              child: RadioListTile<String>(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Inter-State'),
-                subtitle: const Text('Different State/UT · IGST'),
-                value: 'INTER_STATE',
+              SizedBox(
+                width: 215,
+                child: RadioListTile<String>(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Inter-State'),
+                  subtitle: const Text('Different State/UT · IGST'),
+                  value: 'INTER_STATE',
+                ),
               ),
-            ),
             ]),
           ),
-          const Text('Choose from supplier location and place of supply; a different city in the same State is still Intra-State.'),
+          const Text(
+              'Choose from supplier location and place of supply; a different city in the same State is still Intra-State.'),
         ]),
       );
 
   Widget _saleAmountEstimate(double? finalWeight) {
     final rate = (_itemRate?['rate'] as num?)?.toDouble();
     final gst = double.tryParse(_gst.text.trim()) ?? 0;
-    final sales = double.tryParse(_salesPercent.text.trim()) ?? 0;
     if (rate == null || finalWeight == null) return const SizedBox.shrink();
     final base = finalWeight * rate;
     final gstAmount = base * gst / 100;
-    final salesAmount = base * sales / 100;
     final intra = _taxSupplyType == 'INTRA_STATE';
     return Wrap(spacing: 16, children: [
       Text('Base: ₹${base.toStringAsFixed(2)}'),
@@ -797,7 +827,6 @@ class _SalePurchaseWeighmentScreenState
       Text(intra
           ? 'CGST / SGST: ₹${(gstAmount / 2).toStringAsFixed(2)} each'
           : 'IGST: ₹${gstAmount.toStringAsFixed(2)}'),
-      Text('Sales: ₹${salesAmount.toStringAsFixed(2)}'),
       Text('Final: ₹${(base + gstAmount).toStringAsFixed(2)}',
           style: const TextStyle(fontWeight: FontWeight.bold)),
     ]);
@@ -811,7 +840,7 @@ class _SalePurchaseWeighmentScreenState
   }
 
   Widget _calculationBox(String label, String value) => SizedBox(
-      width: 220,
+      width: _formFieldWidth(220),
       child: InputDecorator(
           decoration: InputDecoration(labelText: label),
           child: Text(value,
@@ -825,10 +854,13 @@ class _SalePurchaseWeighmentScreenState
       Padding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
         child: Row(children: [
-          Text(heading,
-              style:
-                  const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-          const Spacer(),
+          Expanded(
+            child: Text(heading,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+          ),
           Text('${_pending.length} pending',
               style: const TextStyle(fontSize: 12)),
           IconButton(

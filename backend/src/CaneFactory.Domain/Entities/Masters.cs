@@ -137,6 +137,20 @@ public class CompanyConfig : BaseEntity
     public string? CompanyNameHi { get; set; }
     public string? Address { get; set; }
     public string? AddressHi { get; set; }
+    public string? ContactMobile1 { get; set; }
+    public string? ContactMobile2 { get; set; }
+    public string? ContactEmail { get; set; }
+    public string? InstagramUrl { get; set; }
+    public string? FacebookUrl { get; set; }
+    public string? TwitterUrl { get; set; }
+    public string? YoutubeUrl { get; set; }
+    public string? LinkedinUrl { get; set; }
+    public string? SmtpHost { get; set; }
+    public int SmtpPort { get; set; } = 587;
+    public string? SmtpUsername { get; set; }
+    public string? SmtpPasswordEncrypted { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? SmtpPassword { get; set; }
     public string? LogoPath { get; set; }
     /// <summary>Portable company logo used when the API runs in Azure or another host
     /// that cannot access the original factory-PC path.</summary>

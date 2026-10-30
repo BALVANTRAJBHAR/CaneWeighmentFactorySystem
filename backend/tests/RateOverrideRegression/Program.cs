@@ -146,6 +146,7 @@ sealed class ImageReader : ICurrentUser
 
 sealed class LocalImageStorage : IImageStorageService
 {
+    public bool LastSaveWasQueued => false;
     public bool IsCloudLocator(string? locator) => false;
     public Task<string> GetModeAsync(CancellationToken ct = default) => Task.FromResult("LOCAL");
     public Task EnsureCloudReadyAsync(string container, CancellationToken ct = default) => Task.CompletedTask;

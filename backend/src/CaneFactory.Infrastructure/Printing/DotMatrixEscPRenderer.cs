@@ -44,8 +44,18 @@ public class DotMatrixEscPRenderer : IPrintRenderer
     {
         using var bmp = Draw(doc, 1);
         var layout = GetLayout(doc);
+        if (doc.DotMatrixAvoidCarriageReturn)
+        {
+            // Epson's 9-pin head loses thin strokes when a hard-edged glyph is
+            // sampled straight onto the 120-dpi pin grid. Resolve antialiasing
+            // once here; the ESC/P stream remains strictly one-bit RAW dots.
+            // Do not remove isolated pixels: Hindi marks and punctuation can
+            // legitimately be one pin wide.
+            BinarizeForImpactPrinter(bmp, EpsonInkThreshold(doc.DotMatrixInkDensity));
+        }
         return (ToEscP(bmp, doc.UseHalfPageDotMatrixLayout || doc.IsDotMatrixCalibrationSheet,
-            UseFastBody(doc), layout.LineSpacingUnits, InkThreshold(doc.DotMatrixInkDensity),
+            UseFastBody(doc) && !doc.DotMatrixAvoidCarriageReturn, layout.LineSpacingUnits,
+            InkThreshold(doc.DotMatrixInkDensity),
             doc.DotMatrixAvoidCarriageReturn),
             "application/octet-stream", "prn");
     }
@@ -109,17 +119,34 @@ public class DotMatrixEscPRenderer : IPrintRenderer
         var layout = GetLayout(doc);
         var height = layout.HalfPageLines * 8;
         var headerHeight = layout.HeaderReservedLines * 8;
-        var tearY = layout.TearLinePosition * 8 - 3;
+        // The LX-310 begins the printable area about 1/2" below the physical
+        // top of this 6" form. Bring the footer and dotted tear mark up by
+        // that measured distance plus one more print band, as calibrated on
+        // the physical LX-310, without changing the 54-band paper advance.
+        // Each 8-dot band advances LineSpacingUnits/180 inch, not 8/120 inch.
+        var epsonFooterInsetPx = doc.DotMatrixAvoidCarriageReturn
+            ? (int)Math.Round(0.5 * 180 / layout.LineSpacingUnits * 8) + 4
+            : 0;
+        var tearY = layout.TearLinePosition * 8 -
+            (doc.DotMatrixAvoidCarriageReturn ? 11 : 3) - epsonFooterInsetPx;
 
         scale = Math.Clamp(scale, 1, 4);
         var bmp = new SKBitmap(WidthPx * scale, height * scale);
         using var canvas = new SKCanvas(bmp);
         canvas.Clear(SKColors.White);
         canvas.Scale(scale, scale);
-        // Dot-matrix output must be hard-edged before it reaches a V4 driver.
-        // Anti-aliased edge pixels survive thresholding as connected black
-        // pixels and become the remaining one-pin halo on LX-310.
-        using var paint = new SKPaint { Color = SKColors.Black, IsAntialias = false };
+        // Epson RAW output is antialiased only while building the bitmap; it
+        // is reduced to one-bit pin dots before ESC/P serialization. Keep the
+        // established TVS hard-edge rendering unchanged.
+        using var paint = new SKPaint
+        {
+            Color = SKColors.Black,
+            IsAntialias = doc.DotMatrixAvoidCarriageReturn
+        };
+        var headerBold = doc.DotMatrixAvoidCarriageReturn
+            ? PrintFonts.Get(doc.Language, bold: true, doc.DotMatrixFontStyle, "Bold")
+            : bold;
+        using var headerShaper = new SKShaper(headerBold);
         using var titleFont = new SKFont(bold, 18);
         using var labelFont = new SKFont(bold, 15);
         using var valueFont = new SKFont(regular, 15);
@@ -127,12 +154,12 @@ public class DotMatrixEscPRenderer : IPrintRenderer
         using var shaperRegular = new SKShaper(regular);
 
         if (doc.DotMatrixPrintHeader)
-            DrawReservedHeader(canvas, doc, regular, bold, paint, headerHeight);
+            DrawReservedHeader(canvas, doc, regular, headerBold, paint, headerHeight);
 
         // No separator is drawn beneath the company header. This keeps the QR quiet zone clear.
         var y = headerHeight + layout.ContentStartOffsetLines * 8 + 2;
         var title = hindi ? doc.TitleHindi : doc.TitleEnglish;
-        DrawFittedText(canvas, title, shaperBold, bold, 18, 12,
+        DrawFittedText(canvas, title, headerShaper, headerBold, 18, 12,
             new SKRect(10, y, WidthPx - 280, y + 24), paint, SKTextAlign.Left);
         if (!string.IsNullOrWhiteSpace(doc.SeasonName))
         {
@@ -617,7 +644,9 @@ public class DotMatrixEscPRenderer : IPrintRenderer
             W(0x0A);
         }
         FeedBlankBands(blankBands);
-        if (!fixedHeight)
+        if (fixedHeight && avoidCarriageReturn)
+            W(0x0A); // Epson RAW: one extra blank line below the dotted tear line
+        else if (!fixedHeight)
             W(0x0A, 0x0A, 0x0A, 0x0A); // preserve legacy spacing for non-weighment documents
         return ms.ToArray();
     }
@@ -628,6 +657,14 @@ public class DotMatrixEscPRenderer : IPrintRenderer
         "Light" => 96,
         "Dark" => 176,
         _ => 128
+    };
+
+    private static int EpsonInkThreshold(string? density) => density switch
+    {
+        "ExtraLight" => 112,
+        "Light" => 128,
+        "Dark" => 176,
+        _ => 144
     };
 
     private static void BinarizeForImpactPrinter(SKBitmap bmp, int threshold)

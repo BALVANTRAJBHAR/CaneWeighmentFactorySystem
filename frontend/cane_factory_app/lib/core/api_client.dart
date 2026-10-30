@@ -111,7 +111,8 @@ class ApiClient {
     final d = Dio(BaseOptions(
       baseUrl: _cameraEdgeBaseUrl,
       connectTimeout: const Duration(seconds: 5),
-      receiveTimeout: const Duration(seconds: 20),
+      sendTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 75),
       validateStatus: (s) => s != null && s < 500,
     ));
     d.interceptors.add(InterceptorsWrapper(onRequest: (options, handler) async {

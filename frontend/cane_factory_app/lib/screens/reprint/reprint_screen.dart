@@ -176,6 +176,11 @@ class _ReprintScreenState extends State<ReprintScreen> {
                 ? 'Tear at the dotted line. If the Epson paper has not returned to TOF, press its Tear Off button on the printer panel. The app cannot confirm a physical reverse feed.'
                 : 'Wait until the dotted line comes outside the printer cover. Tear the duplicate slip on that line, then reset the remaining paper to the next TOF.'),
             actions: [
+              if (isEpson)
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('No paper printed'),
+                ),
               FilledButton.icon(
                 onPressed: () => Navigator.pop(dialogContext, true),
                 icon: const Icon(Icons.content_cut),
@@ -233,11 +238,10 @@ class _ReprintScreenState extends State<ReprintScreen> {
                       Text('Document Type',
                           style: Theme.of(context).textTheme.titleMedium),
                       const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 18,
-                        runSpacing: 4,
-                        children: [
-                          for (final option in available)
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(children: [
+                          for (final option in available) ...[
                             InkWell(
                               borderRadius: BorderRadius.circular(8),
                               onTap: () => setState(() {
@@ -245,20 +249,23 @@ class _ReprintScreenState extends State<ReprintScreen> {
                                 _number.clear();
                               }),
                               child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Radio<_ReprintType>(
-                                      value: option,
-                                      groupValue: selected,
-                                      onChanged: (_) => setState(() {
-                                        _type = option;
-                                        _number.clear();
-                                      }),
-                                    ),
-                                    Text(option.label),
-                                  ]),
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Radio<_ReprintType>(
+                                    value: option,
+                                    groupValue: selected,
+                                    onChanged: (_) => setState(() {
+                                      _type = option;
+                                      _number.clear();
+                                    }),
+                                  ),
+                                  Text(option.label),
+                                ],
+                              ),
                             ),
-                        ],
+                            const SizedBox(width: 12),
+                          ],
+                        ]),
                       ),
                       const Divider(height: 24),
                       Text('Printer Type',

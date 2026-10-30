@@ -51,7 +51,9 @@ public static class PrintFonts
                     ? (bold ? DevanagariBold.Value : DevanagariRegular.Value)
                     : (bold ? LatinBold.Value : LatinRegular.Value),
                 "SansCompact" => Select(weight, SansCompactLight, SansCompactRegular, SansCompactMedium, SansCompactBold),
+                "HindiSans" => Select(weight, SansLight, SansRegular, SansMedium, SansBold),
                 "Serif" => Select(weight, SerifLight, SerifRegular, SerifMedium, SerifBold),
+                "HindiSerif" => Select(weight, SerifLight, SerifRegular, SerifMedium, SerifBold),
                 "SerifCompact" => Select(weight, SerifCompactLight, SerifCompactRegular, SerifCompactMedium, SerifCompactBold),
                 // These are portable bundled equivalents, not workstation-dependent Windows
                 // fonts. Tinos is metrically compatible with Times New Roman; the compact

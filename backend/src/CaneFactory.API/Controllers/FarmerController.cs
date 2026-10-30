@@ -185,53 +185,56 @@ public class FarmerController : ControllerBase
         if (to - from > TimeSpan.FromDays(366 * 5))
             return BadRequest(new { message = "Statement date range cannot exceed five years." });
 
-        var entries = new List<(DateTime Date, string Type, string Reference, string Details, decimal Amount)>();
+        var entries = new List<(DateTime Date, string Type, string Reference, string Details, decimal Amount, string PaymentStatus)>();
 
         var purchases = await _db.Purchases.Where(p => p.GrowerId == grower.Id && !p.IsDeleted
                 && p.GrossDateTime >= from && p.GrossDateTime <= to && p.PurchaseAmount != null)
-            .Select(p => new { p.Id, p.GrossDateTime, p.VehicleNumber, p.FinalWeightQuintal, p.PurchaseAmount })
+            .Select(p => new { p.Id, p.GrossDateTime, p.VehicleNumber, p.FinalWeightQuintal, p.PurchaseAmount, p.PaymentStatus })
             .ToListAsync();
         entries.AddRange(purchases.Select(p => (p.GrossDateTime, "Purchase", $"PUR-{p.Id}",
-            $"Vehicle {p.VehicleNumber}, {p.FinalWeightQuintal:F2} Qtl", p.PurchaseAmount ?? 0)));
+            $"Vehicle {p.VehicleNumber}, {p.FinalWeightQuintal:F2} Qtl", p.PurchaseAmount ?? 0, p.PaymentStatus)));
 
         var payments = await _db.Payments.Where(p => p.GrowerId == grower.Id && !p.IsDeleted
                 && p.PaymentDate >= from && p.PaymentDate <= to && p.PaymentStatus == "COMPLETED")
             .Select(p => new { p.Id, p.PaymentDate, p.AdviceNumber, p.NetPayableAmount })
             .ToListAsync();
-        entries.AddRange(payments.Select(p => (p.PaymentDate, "Payment", $"PAY-{p.Id}",
-            $"Advice No {p.AdviceNumber}", -p.NetPayableAmount)));
+        // Payments have their own screen; the statement shows each purchase's
+        // payment status without a second negative advice row.
 
         var loanIssues = await _db.Loans.Where(l => l.GrowerId == grower.Id && !l.IsDeleted
                 && l.IssueDate >= from && l.IssueDate <= to && l.LoanStatus != "CANCELLED")
             .Select(l => new { l.Id, l.IssueDate, l.LoanAmount })
             .ToListAsync();
-        entries.AddRange(loanIssues.Select(l => (l.IssueDate, "Loan Issued", $"LOAN-{l.Id}", "Loan disbursed", l.LoanAmount)));
+        entries.AddRange(loanIssues.Select(l => (l.IssueDate, "Loan Issued", $"LOAN-{l.Id}", "Loan disbursed", l.LoanAmount, "-")));
 
         var loanRecoveries = await _db.LoanRecoveries.Where(r => r.GrowerId == grower.Id && !r.IsDeleted
                 && r.RecoveryDate >= from && r.RecoveryDate <= to && r.RecoveryStatus == "ACTIVE")
             .Select(r => new { r.Id, r.RecoveryDate, r.LoanId, r.RecoveryAmount })
             .ToListAsync();
-        entries.AddRange(loanRecoveries.Select(r => (r.RecoveryDate, "Loan Recovery", $"LR-{r.Id}", $"Against Loan {r.LoanId}", -r.RecoveryAmount)));
+        entries.AddRange(loanRecoveries.Select(r => (r.RecoveryDate, "Loan Recovery", $"LR-{r.Id}", $"Against Loan {r.LoanId}", -r.RecoveryAmount, "-")));
 
         var sorted = entries.OrderBy(e => e.Date).ToList();
         var totalCredit = sorted.Where(e => e.Amount > 0).Sum(e => e.Amount);
-        var totalDebit = -sorted.Where(e => e.Amount < 0).Sum(e => e.Amount);
+        var totalPaid = payments.Sum(p => p.NetPayableAmount);
+        var totalDebit = -sorted.Where(e => e.Amount < 0).Sum(e => e.Amount) + totalPaid;
 
         if (format == "json")
             return Ok(new
             {
                 growerId = grower.Id, growerName = grower.GrowerName, fromDate = from, toDate = to,
-                entries = sorted.Select(e => new { date = e.Date, type = e.Type, reference = e.Reference, details = e.Details, amount = e.Amount }),
-                totals = new { totalCredit, totalDebit, netBalance = totalCredit - totalDebit }
+                entries = sorted.Select(e => new { date = e.Date, type = e.Type, reference = e.Reference, details = e.Details, amount = e.Amount, paymentStatus = e.PaymentStatus }),
+                totals = new { totalCredit, totalPaid, totalDebit, netBalance = totalCredit - totalDebit }
             });
 
-        var headers = new List<string> { "Date", "Type", "Reference", "Details", "Amount (Rs)" };
+        var headers = new List<string> { "Date", "Type", "Reference", "Details", "Amount (Rs)", "Paid" };
         var tableRows = sorted.Select(e => new List<string> {
-            e.Date.ToString("dd-MM-yyyy"), e.Type, e.Reference, e.Details, e.Amount.ToString("F2")
+            e.Date.ToString("dd-MM-yyyy"), e.Type, e.Reference, e.Details, e.Amount.ToString("F2"),
+            e.Type == "Purchase" ? (e.PaymentStatus == "PAID" ? "Yes" : "No") : "-"
         }).ToList();
         var totals = new List<(string, string)>
         {
             ("Total Credit (Rs)", totalCredit.ToString("F2")),
+            ("Paid (Rs)", totalPaid.ToString("F2")),
             ("Total Debit (Rs)", totalDebit.ToString("F2")),
             ("Net Balance (Rs)", (totalCredit - totalDebit).ToString("F2"))
         };

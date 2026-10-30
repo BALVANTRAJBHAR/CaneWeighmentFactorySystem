@@ -6,6 +6,8 @@ public class CameraCaptureResult
     public int CameraConfigId { get; set; }
     public int CameraNumber { get; set; }
     public bool Success { get; set; }
+    public bool CaptureSucceeded { get; set; }
+    public string StorageStatus { get; set; } = "NOT_ATTEMPTED";
     public string? Error { get; set; }
     public int? ImageId { get; set; }
     public string? ImageName { get; set; }

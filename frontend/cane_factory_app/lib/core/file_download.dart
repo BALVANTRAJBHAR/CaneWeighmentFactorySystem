@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'api_client.dart';
 import 'file_save_adapter.dart';
+import 'download_filename.dart';
 
 /// Phase 11/12/13: shared PDF/Excel/script download helper for Reports, Farmer Statement and
 /// Backup script generation - fetches bytes via Dio and saves next to the user's Downloads
@@ -21,7 +22,8 @@ Future<void> downloadAndNotify(
       }
       return;
     }
-    final savedPath = await saveDownloadedBytes(res.data!, filename);
+    final savedPath =
+        await saveDownloadedBytes(res.data!, datedDownloadName(filename));
     if (context.mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Saved: $savedPath')));
@@ -44,7 +46,7 @@ Future<String> downloadFile(String path, String filename,
   if (res.statusCode != 200 || res.data == null) {
     throw StateError(_downloadFailureMessage(res.data, res.statusCode));
   }
-  return saveDownloadedBytes(res.data!, filename);
+  return saveDownloadedBytes(res.data!, datedDownloadName(filename));
 }
 
 String _downloadFailureMessage(dynamic data, int? statusCode) {
@@ -93,7 +95,8 @@ Future<void> postDownloadAndNotify(
       }
       return;
     }
-    final savedPath = await saveDownloadedBytes(res.data!, filename);
+    final savedPath =
+        await saveDownloadedBytes(res.data!, datedDownloadName(filename));
     if (context.mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Saved: $savedPath')));

@@ -84,32 +84,48 @@ class _GrowerScreenState extends State<GrowerScreen> {
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Row(children: [
-          Text('Grower Master',
+        LayoutBuilder(builder: (context, constraints) {
+          final compact = constraints.maxWidth < 700;
+          final title = Text('Grower Master',
               style: Theme.of(context)
                   .textTheme
                   .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w700)),
-          const Spacer(),
-          SizedBox(
-            width: 300,
-            child: TextField(
-              decoration: const InputDecoration(
-                  hintText: 'Search by ID / name / father / village...',
-                  prefixIcon: Icon(Icons.search, size: 18)),
-              onChanged: (v) {
-                _search = v;
-                _load();
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-          if (auth.can('Grower.Create'))
-            FilledButton.icon(
-                onPressed: () => _openForm(),
-                icon: const Icon(Icons.add),
-                label: const Text('New Grower')),
-        ]),
+                  ?.copyWith(fontWeight: FontWeight.w700));
+          final search = TextField(
+            decoration: const InputDecoration(
+                hintText: 'Search by ID / name / father / village...',
+                prefixIcon: Icon(Icons.search, size: 18)),
+            onChanged: (v) {
+              _search = v;
+              _load();
+            },
+          );
+          final create = auth.can('Grower.Create')
+              ? FilledButton.icon(
+                  onPressed: () => _openForm(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('New Grower'))
+              : null;
+          if (compact) {
+            return Column(children: [
+              Row(children: [
+                Expanded(child: title),
+                if (create != null) create,
+              ]),
+              const SizedBox(height: 10),
+              search,
+            ]);
+          }
+          return Row(children: [
+            title,
+            const Spacer(),
+            SizedBox(width: 300, child: search),
+            if (create != null) ...[
+              const SizedBox(width: 8),
+              create,
+            ],
+          ]);
+        }),
         const SizedBox(height: 10),
         Expanded(
           child: Card(
@@ -306,25 +322,31 @@ class _GrowerFormState extends State<_GrowerForm> {
 
   @override
   Widget build(BuildContext context) {
+    final mobile = MediaQuery.sizeOf(context).width < 600;
     return AlertDialog(
+      insetPadding: EdgeInsets.symmetric(
+          horizontal: mobile ? 12 : 40, vertical: mobile ? 20 : 40),
       title: Text(widget.existing == null
           ? 'New Grower'
           : 'Edit Grower ID ${widget.existing!['id']}'),
       content: SizedBox(
-        width: 480,
+        width: mobile ? double.maxFinite : 480,
+        height: MediaQuery.sizeOf(context).height * (mobile ? 0.68 : 0.62),
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               DropdownButtonFormField<int>(
                 value: _villageId,
+                isExpanded: true,
                 decoration: const InputDecoration(
                     labelText: 'Village', hintText: 'Select Village'),
                 items: [
                   for (final v in _villages)
                     DropdownMenuItem(
                         value: v['id'] as int,
-                        child: Text('${v['id']} - ${v['villageName']}'))
+                        child: Text('${v['id']} - ${v['villageName']}',
+                            overflow: TextOverflow.ellipsis))
                 ],
                 validator: (v) => v == null ? 'Village is required' : null,
                 onChanged: widget.existing == null
@@ -344,13 +366,15 @@ class _GrowerFormState extends State<_GrowerForm> {
                   required: false),
               DropdownButtonFormField<int>(
                 value: _bankId,
+                isExpanded: true,
                 decoration: const InputDecoration(
                     labelText: 'Bank (optional)', hintText: 'Select Bank'),
                 items: [
                   for (final b in _banks)
                     DropdownMenuItem(
                         value: b['id'] as int,
-                        child: Text('${b['bankName']} - ${b['branchName']}'))
+                        child: Text('${b['bankName']} - ${b['branchName']}',
+                            overflow: TextOverflow.ellipsis))
                 ],
                 onChanged: (v) => setState(() {
                   _bankId = v;
@@ -466,34 +490,45 @@ class _GrowerFormState extends State<_GrowerForm> {
     }
 
     return StatefulBuilder(
-        builder: (context, setLocal) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Row(children: [
-                Expanded(
-                    child: TextFormField(
-                        controller: _c[key],
-                        onChanged: sync,
-                        decoration: InputDecoration(
-                            labelText: label, hintText: hint, counterText: ''),
-                        validator: (v) => v == null || v.trim().isEmpty
-                            ? '$label is required'
-                            : null)),
-                const SizedBox(width: 10),
-                Expanded(
-                    child: TextFormField(
-                        controller: _c['${key}Hi'],
-                        onChanged: (_) => manuallyEdited = true,
-                        decoration: InputDecoration(
-                            labelText: '$label (Hindi)',
-                            suffixIcon: IconButton(
-                                tooltip: auto
-                                    ? 'Switch to manual Hindi'
-                                    : 'Enable transliteration',
-                                icon: Icon(
-                                    auto ? Icons.auto_awesome : Icons.edit),
-                                onPressed: () =>
-                                    setLocal(() => auto = !auto))))),
-              ]),
+        builder: (context, setLocal) => LayoutBuilder(
+              builder: (context, constraints) {
+                final primary = TextFormField(
+                    controller: _c[key],
+                    onChanged: sync,
+                    decoration: InputDecoration(
+                        labelText: label, hintText: hint, counterText: ''),
+                    validator: (v) => v == null || v.trim().isEmpty
+                        ? '$label is required'
+                        : null);
+                final hindi = TextFormField(
+                    controller: _c['${key}Hi'],
+                    onChanged: (_) => manuallyEdited = true,
+                    decoration: InputDecoration(
+                        labelText: '$label (Hindi)',
+                        suffixIcon: IconButton(
+                            tooltip: auto
+                                ? 'Switch to manual Hindi'
+                                : 'Enable transliteration',
+                            icon: Icon(Icons.translate,
+                                color: auto
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null),
+                            onPressed: () => setLocal(() => auto = !auto))));
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: constraints.maxWidth < 440
+                      ? Column(children: [
+                          primary,
+                          const SizedBox(height: 10),
+                          hindi,
+                        ])
+                      : Row(children: [
+                          Expanded(child: primary),
+                          const SizedBox(width: 10),
+                          Expanded(child: hindi),
+                        ]),
+                );
+              },
             ));
   }
 }

@@ -42,6 +42,7 @@ MapEnv("CANE_IMAGE_STORAGE_ROOT", "Storage:ImageRoot");
 MapEnv("CANE_IMAGE_STORAGE_MODE", "Storage:ImageMode");
 MapEnv("CANE_AZURE_BLOB_CONNECTION_STRING", "Storage:AzureBlob:ConnectionString");
 MapEnv("CANE_AZURE_BLOB_SERVICE_URI", "Storage:AzureBlob:ServiceUri");
+MapEnv("CANE_EVIDENCE_UPLOAD_QUEUE_PATH", "Storage:UploadQueuePath");
 MapEnv("CANE_CAMERA_SIMULATOR", "Camera:SimulatorMode");
 MapEnv("CANE_CAMERA_CAPTURE_MODE", "Camera:CaptureExecutionMode");
 
@@ -90,6 +91,8 @@ builder.Services.AddSingleton<ICameraContinuousStreamProvider>(sp => sp.GetRequi
 builder.Services.AddSingleton<ICameraContinuousStreamProvider>(sp => sp.GetRequiredService<OnvifCaptureProvider>());
 builder.Services.AddSingleton<ICameraCaptureProvider, SimulatorCaptureProvider>();
 builder.Services.AddScoped<ICameraCaptureService, CameraCaptureService>();
+builder.Services.AddSingleton<DurableBlobUploadQueue>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DurableBlobUploadQueue>());
 builder.Services.AddScoped<IImageStorageService, ImageStorageService>();
 builder.Services.AddScoped<CaneFactory.API.Services.RateOverrideService>();
 builder.Services.AddScoped<CaneFactory.API.Services.ScaleReadingResolver>();

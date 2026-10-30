@@ -652,7 +652,7 @@ public class ConfigController : ControllerBase
             return BadRequest(new { message = "ESC/P Line Spacing must be between 12 and 30 units (1/180 inch each)." });
         if (src.DotMatrixFontWeight is not ("Light" or "Regular" or "Medium" or "Bold"))
             return BadRequest(new { message = "Dot Matrix Font Weight must be Light, Regular, Medium or Bold." });
-        if (src.DotMatrixFontStyle is not ("LegacyTVS" or "Sans" or "SansCompact" or "Serif" or "SerifCompact"
+        if (src.DotMatrixFontStyle is not ("LegacyTVS" or "Sans" or "SansCompact" or "HindiSans" or "Serif" or "HindiSerif" or "SerifCompact"
             or "TimesNewRoman" or "CourierNew" or "Monospace"))
             return BadRequest(new { message = "Dot Matrix Font Style is not supported." });
         if (src.DotMatrixInkDensity is not ("ExtraLight" or "Light" or "Normal" or "Dark"))
@@ -1006,6 +1006,10 @@ public class ConfigController : ControllerBase
         return Ok(new
         {
             c.Id, c.CompanyName, c.CompanyNameHi, c.Address, c.AddressHi, c.LogoPath,
+            c.ContactMobile1, c.ContactMobile2, c.ContactEmail,
+            c.InstagramUrl, c.FacebookUrl, c.TwitterUrl, c.YoutubeUrl, c.LinkedinUrl,
+            c.SmtpHost, c.SmtpPort, c.SmtpUsername,
+            smtpPasswordSet = !string.IsNullOrEmpty(c.SmtpPasswordEncrypted),
             hasUploadedLogo = c.LogoData != null && c.LogoData.Length > 0,
             c.LogoContentType, c.ReportLogoWidth, c.ReportLogoHeight,
             c.DefaultLanguage, c.ThemeColor,
@@ -1078,6 +1082,19 @@ public class ConfigController : ControllerBase
         c.CompanyNameHi = string.IsNullOrWhiteSpace(src.CompanyNameHi) ? null : src.CompanyNameHi.Trim();
         c.Address = src.Address;
         c.AddressHi = string.IsNullOrWhiteSpace(src.AddressHi) ? null : src.AddressHi.Trim();
+        c.ContactMobile1 = NullIfBlank(src.ContactMobile1);
+        c.ContactMobile2 = NullIfBlank(src.ContactMobile2);
+        c.ContactEmail = NullIfBlank(src.ContactEmail);
+        c.InstagramUrl = NullIfBlank(src.InstagramUrl);
+        c.FacebookUrl = NullIfBlank(src.FacebookUrl);
+        c.TwitterUrl = NullIfBlank(src.TwitterUrl);
+        c.YoutubeUrl = NullIfBlank(src.YoutubeUrl);
+        c.LinkedinUrl = NullIfBlank(src.LinkedinUrl);
+        c.SmtpHost = NullIfBlank(src.SmtpHost);
+        c.SmtpPort = src.SmtpPort is >= 1 and <= 65535 ? src.SmtpPort : 587;
+        c.SmtpUsername = NullIfBlank(src.SmtpUsername);
+        if (!string.IsNullOrWhiteSpace(src.SmtpPassword))
+            c.SmtpPasswordEncrypted = _protector.Protect(src.SmtpPassword);
         c.LogoPath = src.LogoPath;
         if (string.IsNullOrWhiteSpace(src.LogoPath) ||
             !src.LogoPath.StartsWith("database://company-logo/", StringComparison.OrdinalIgnoreCase))
@@ -1105,6 +1122,9 @@ public class ConfigController : ControllerBase
         c.UpdatedAt = DateTime.UtcNow;
         c.UpdatedBy = _current.UserId;
         await _db.SaveChangesAsync();
+        // The audit record must never contain the SMTP secret supplied by the UI.
+        src.SmtpPassword = null;
+        src.SmtpPasswordEncrypted = null;
         await _audit.LogAsync("SystemSettingChange", "Company", "CompanyConfig", c.Id.ToString(), oldValue: old, newValue: src);
         return Ok(new { message = $"Company '{c.CompanyName}' configuration saved successfully." });
     }

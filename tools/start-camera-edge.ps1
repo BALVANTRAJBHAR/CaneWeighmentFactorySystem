@@ -33,6 +33,7 @@ Import-ServerSetting 'CANE_ENCRYPTION_KEY' -Required
 Import-ServerSetting 'CANE_SEED_DEV_PASSWORD'
 Import-ServerSetting 'CANE_AZURE_BLOB_CONNECTION_STRING'
 Import-ServerSetting 'CANE_AZURE_BLOB_SERVICE_URI'
+Import-ServerSetting 'CANE_EVIDENCE_UPLOAD_QUEUE_PATH'
 Import-ServerSetting 'CANE_IMAGE_STORAGE_MODE'
 
 if ([string]::IsNullOrWhiteSpace($env:CANE_AZURE_BLOB_CONNECTION_STRING) -and

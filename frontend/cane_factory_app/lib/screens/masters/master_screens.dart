@@ -339,62 +339,70 @@ class _SaleItemRateScreenState extends State<SaleItemRateScreen> {
     final save = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
-          title: Text(
-              revisionOf == null ? 'New Sale Rate Period' : 'Revise Sale Rate'),
-          content: SizedBox(
-            width: 400,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              DropdownButtonFormField<int>(
-                value: itemId,
-                decoration: const InputDecoration(labelText: 'Item'),
-                items: [
-                  for (final item in _items)
-                    DropdownMenuItem(
-                        value: item['id'] as int,
-                        child: Text('${item['itemName']}')),
-                ],
-                onChanged: revisionOf == null
-                    ? (value) => setD(() => itemId = value)
-                    : null,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: rateCtl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                    labelText: 'Rate (per Quintal)',
-                    hintText: 'Example: 375.00'),
-              ),
-              const SizedBox(height: 12),
-              Row(children: [
-                Expanded(
-                    child: Text(
-                        'Effective From: ${DateFormat('dd-MM-yyyy').format(from)}')),
-                TextButton(
-                  onPressed: () async {
-                    final date = await showDatePicker(
-                        context: ctx,
-                        initialDate: from,
-                        firstDate: DateTime(2020),
-                        lastDate: DateTime(2035));
-                    if (date != null) setD(() => from = date);
-                  },
-                  child: const Text('Pick Date'),
+        builder: (ctx, setD) {
+          final screen = MediaQuery.sizeOf(ctx);
+          return AlertDialog(
+            insetPadding: EdgeInsets.symmetric(
+                horizontal: screen.width < 600 ? 12 : 40, vertical: 24),
+            title: Text(revisionOf == null
+                ? 'New Sale Rate Period'
+                : 'Revise Sale Rate'),
+            content: SizedBox(
+              width: screen.width < 600 ? screen.width : 400,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                DropdownButtonFormField<int>(
+                  isExpanded: true,
+                  value: itemId,
+                  decoration: const InputDecoration(labelText: 'Item'),
+                  items: [
+                    for (final item in _items)
+                      DropdownMenuItem(
+                          value: item['id'] as int,
+                          child: Text('${item['itemName']}',
+                              overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged: revisionOf == null
+                      ? (value) => setD(() => itemId = value)
+                      : null,
                 ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: rateCtl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                      labelText: 'Rate (per Quintal)',
+                      hintText: 'Example: 375.00'),
+                ),
+                const SizedBox(height: 12),
+                Row(children: [
+                  Expanded(
+                      child: Text(
+                          'Effective From: ${DateFormat('dd-MM-yyyy').format(from)}')),
+                  TextButton(
+                    onPressed: () async {
+                      final date = await showDatePicker(
+                          context: ctx,
+                          initialDate: from,
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime(2035));
+                      if (date != null) setD(() => from = date);
+                    },
+                    child: const Text('Pick Date'),
+                  ),
+                ]),
               ]),
-            ]),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel')),
-            FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: Text(revisionOf == null ? 'Save' : 'Save Revision')),
-          ],
-        ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text(revisionOf == null ? 'Save' : 'Save Revision')),
+            ],
+          );
+        },
       ),
     );
     if (save != true || itemId == null) return;
@@ -422,19 +430,29 @@ class _SaleItemRateScreenState extends State<SaleItemRateScreen> {
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Row(children: [
-          Text('Sale Rate Master (item-wise)',
+        LayoutBuilder(builder: (context, constraints) {
+          final compact = constraints.maxWidth < 600;
+          final title = Text('Sale Rate Master (item-wise)',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: Theme.of(context)
                   .textTheme
                   .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w700)),
-          const Spacer(),
-          if (canCreate)
-            FilledButton.icon(
-                onPressed: _newRate,
-                icon: const Icon(Icons.add),
-                label: const Text('New Sale Rate Period')),
-        ]),
+                  ?.copyWith(fontWeight: FontWeight.w700));
+          final action = FilledButton.icon(
+              onPressed: _newRate,
+              icon: const Icon(Icons.add),
+              label: const Text('New Sale Rate Period'));
+          if (compact) {
+            return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  title,
+                  if (canCreate) ...[const SizedBox(height: 8), action],
+                ]);
+          }
+          return Row(children: [Expanded(child: title), if (canCreate) action]);
+        }),
         const SizedBox(height: 10),
         Expanded(
           child: Card(
@@ -513,59 +531,67 @@ class _RateScreenState extends State<RateScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
-          title: Text(
-              revisionOf == null ? 'New Rate Period' : 'Revise Rate Period'),
-          content: SizedBox(
-            width: 400,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              DropdownButtonFormField<int>(
-                value: typeId,
-                decoration: const InputDecoration(
-                    labelText: 'Variety Type', hintText: 'Select Variety Type'),
-                items: [
-                  for (final v in _varietyTypes)
-                    DropdownMenuItem(
-                        value: v['id'] as int,
-                        child: Text(v['varietyTypeName']))
-                ],
-                onChanged: revisionOf == null ? (v) => typeId = v : null,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                  controller: rateCtl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+        builder: (ctx, setD) {
+          final screen = MediaQuery.sizeOf(ctx);
+          return AlertDialog(
+            insetPadding: EdgeInsets.symmetric(
+                horizontal: screen.width < 600 ? 12 : 40, vertical: 24),
+            title: Text(
+                revisionOf == null ? 'New Rate Period' : 'Revise Rate Period'),
+            content: SizedBox(
+              width: screen.width < 600 ? screen.width : 400,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                DropdownButtonFormField<int>(
+                  isExpanded: true,
+                  value: typeId,
                   decoration: const InputDecoration(
-                      labelText: 'Rate (per Quintal)',
-                      hintText: 'Example: 375.00')),
-              const SizedBox(height: 12),
-              Row(children: [
-                Expanded(
-                    child: Text(
-                        'Effective From: ${DateFormat('dd-MM-yyyy').format(from)}')),
-                TextButton(
-                    onPressed: () async {
-                      final d = await showDatePicker(
-                          context: ctx,
-                          initialDate: from,
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2035));
-                      if (d != null) setD(() => from = d);
-                    },
-                    child: const Text('Pick Date')),
+                      labelText: 'Variety Type',
+                      hintText: 'Select Variety Type'),
+                  items: [
+                    for (final v in _varietyTypes)
+                      DropdownMenuItem(
+                          value: v['id'] as int,
+                          child: Text(v['varietyTypeName'],
+                              overflow: TextOverflow.ellipsis))
+                  ],
+                  onChanged: revisionOf == null ? (v) => typeId = v : null,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                    controller: rateCtl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                        labelText: 'Rate (per Quintal)',
+                        hintText: 'Example: 375.00')),
+                const SizedBox(height: 12),
+                Row(children: [
+                  Expanded(
+                      child: Text(
+                          'Effective From: ${DateFormat('dd-MM-yyyy').format(from)}')),
+                  TextButton(
+                      onPressed: () async {
+                        final d = await showDatePicker(
+                            context: ctx,
+                            initialDate: from,
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2035));
+                        if (d != null) setD(() => from = d);
+                      },
+                      child: const Text('Pick Date')),
+                ]),
               ]),
-            ]),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel')),
-            FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: Text(revisionOf == null ? 'Save' : 'Save Revision')),
-          ],
-        ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text(revisionOf == null ? 'Save' : 'Save Revision')),
+            ],
+          );
+        },
       ),
     );
     if (ok != true || typeId == null) return;
@@ -591,19 +617,29 @@ class _RateScreenState extends State<RateScreen> {
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Row(children: [
-          Text('Rate Master (versioned)',
+        LayoutBuilder(builder: (context, constraints) {
+          final compact = constraints.maxWidth < 600;
+          final title = Text('Rate Master (versioned)',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: Theme.of(context)
                   .textTheme
                   .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w700)),
-          const Spacer(),
-          if (canCreate)
-            FilledButton.icon(
-                onPressed: _newRate,
-                icon: const Icon(Icons.add),
-                label: const Text('New Rate Period')),
-        ]),
+                  ?.copyWith(fontWeight: FontWeight.w700));
+          final action = FilledButton.icon(
+              onPressed: _newRate,
+              icon: const Icon(Icons.add),
+              label: const Text('New Rate Period'));
+          if (compact) {
+            return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  title,
+                  if (canCreate) ...[const SizedBox(height: 8), action],
+                ]);
+          }
+          return Row(children: [Expanded(child: title), if (canCreate) action]);
+        }),
         const SizedBox(height: 10),
         Expanded(
           child: Card(

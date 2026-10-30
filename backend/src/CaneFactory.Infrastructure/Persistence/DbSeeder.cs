@@ -312,14 +312,25 @@ public static class DbSeeder
                 new SoundMessage { EventCode = "BELOW_MINIMUM", LanguageCode = "en", MessageText = "Please position the vehicle on the platform." },
                 new SoundMessage { EventCode = "WEIGHING_ACTIVE", LanguageCode = "hi", MessageText = "आपकी गाड़ी का तौल हो रहा है, कृपया प्रतीक्षा करें।" },
                 new SoundMessage { EventCode = "WEIGHING_ACTIVE", LanguageCode = "en", MessageText = "Your vehicle is being weighed, please wait." },
-                new SoundMessage { EventCode = "WEIGHMENT_COMPLETED", LanguageCode = "hi", MessageText = "तौल हो चुका है, कृपया गाड़ी को प्लेटफॉर्म से नीचे उतारें।" },
+                new SoundMessage { EventCode = "WEIGHMENT_COMPLETED", LanguageCode = "hi", MessageText = "आपकी गाड़ी का तौल हो गया है। कृपया प्लेटफॉर्म से गाड़ी नीचे उतारें।" },
                 new SoundMessage { EventCode = "WEIGHMENT_COMPLETED", LanguageCode = "en", MessageText = "Weighment completed, please move the vehicle off the platform." });
         }
 
         if (!await db.SoundMessages.AnyAsync(m => m.EventCode == "IMAGE_CAPTURED" && m.LanguageCode == "hi"))
-            db.SoundMessages.Add(new SoundMessage { EventCode = "IMAGE_CAPTURED", LanguageCode = "hi", MessageText = "तौल की तस्वीरें सुरक्षित हो गई हैं।" });
+            db.SoundMessages.Add(new SoundMessage { EventCode = "IMAGE_CAPTURED", LanguageCode = "hi", MessageText = "आपके तौल की तस्वीरें सुरक्षित हो गई हैं।" });
         if (!await db.SoundMessages.AnyAsync(m => m.EventCode == "IMAGE_CAPTURED" && m.LanguageCode == "en"))
             db.SoundMessages.Add(new SoundMessage { EventCode = "IMAGE_CAPTURED", LanguageCode = "en", MessageText = "Weighment images have been captured and saved." });
+
+        // Refresh only the old shipped Hindi phrases. A site's customized
+        // announcement stays untouched.
+        foreach (var message in await db.SoundMessages.Where(m => m.LanguageCode == "hi" &&
+                     (m.EventCode == "IMAGE_CAPTURED" || m.EventCode == "WEIGHMENT_COMPLETED")).ToListAsync())
+        {
+            if (message.EventCode == "IMAGE_CAPTURED" && message.MessageText == "तौल की तस्वीरें सुरक्षित हो गई हैं।")
+                message.MessageText = "आपके तौल की तस्वीरें सुरक्षित हो गई हैं।";
+            if (message.EventCode == "WEIGHMENT_COMPLETED" && message.MessageText == "तौल हो चुका है, कृपया गाड़ी को प्लेटफॉर्म से नीचे उतारें।")
+                message.MessageText = "आपकी गाड़ी का तौल हो गया है। कृपया प्लेटफॉर्म से गाड़ी नीचे उतारें।";
+        }
 
         if (!await db.PrintConfigs.AnyAsync())
             db.PrintConfigs.Add(new PrintConfig { PrinterName = "TVS MSP 270 Classic Plus" });

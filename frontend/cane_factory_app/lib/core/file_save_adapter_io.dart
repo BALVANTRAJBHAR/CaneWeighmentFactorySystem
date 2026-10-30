@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'download_filename.dart';
 
 Future<String> saveDownloadedBytes(List<int> bytes, String filename,
     {bool applicationDocuments = false}) async {
@@ -8,14 +9,14 @@ Future<String> saveDownloadedBytes(List<int> bytes, String filename,
       ? await getApplicationDocumentsDirectory()
       : (await getDownloadsDirectory() ??
           await getApplicationDocumentsDirectory());
-  final file = File('${dir.path}${Platform.pathSeparator}$filename');
+  final file = File(
+      '${dir.path}${Platform.pathSeparator}${datedDownloadName(filename)}');
   await file.writeAsBytes(bytes, flush: true);
   return file.path;
 }
 
 Future<bool> saveAndOpenPdf(List<int> bytes, String filename) async {
-  final path =
-      await saveDownloadedBytes(bytes, filename, applicationDocuments: true);
+  final path = await saveDownloadedBytes(bytes, filename);
   final file = File(path);
   var opened = false;
   Object? lastOpenError;
@@ -47,7 +48,7 @@ Future<bool> saveAndOpenPdf(List<int> bytes, String filename) async {
 /// registered spreadsheet application.  Excel itself remains responsible for
 /// any operator edits or manual print settings.
 Future<bool> saveAndOpenSpreadsheet(List<int> bytes, String filename) async {
-  final path = await saveDownloadedBytes(bytes, filename, applicationDocuments: true);
+  final path = await saveDownloadedBytes(bytes, filename);
   final file = File(path);
   var opened = false;
   try {

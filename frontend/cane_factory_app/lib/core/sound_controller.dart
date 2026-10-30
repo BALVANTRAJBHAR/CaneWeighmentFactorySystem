@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/api_client.dart';
+import 'weighment_sound_state.dart';
 import 'windows_speech.dart';
 
 /// Weighment sound state machine per specification.
@@ -9,14 +10,6 @@ import 'windows_speech.dart';
 /// WEIGHING_IN_PROGRESS -> WEIGHMENT_COMPLETED.
 /// Uses local/offline system TTS. Voice never overlaps and never blocks
 /// live weight, camera, save or print operations.
-enum SoundState {
-  noVehicle,
-  belowMinimum,
-  aboveMinimumWaiting,
-  weighingInProgress,
-  completed
-}
-
 class SoundController {
   SoundController._() {
     // Keep the safety announcements available even during a short API/config
@@ -28,10 +21,10 @@ class SoundController {
           'आपकी गाड़ी का तौल हो रहा है, कृपया प्रतीक्षा करें।',
       'WEIGHING_ACTIVE|en': 'Your vehicle is being weighed, please wait.',
       'WEIGHMENT_COMPLETED|hi':
-          'तौल हो चुका है, कृपया गाड़ी को प्लेटफॉर्म से नीचे उतारें।',
+          'आपकी गाड़ी का तौल हो गया है। कृपया प्लेटफॉर्म से गाड़ी नीचे उतारें।',
       'WEIGHMENT_COMPLETED|en':
           'Weighment completed, please move the vehicle off the platform.',
-      'IMAGE_CAPTURED|hi': 'तौल की तस्वीरें सुरक्षित हो गई हैं।',
+      'IMAGE_CAPTURED|hi': 'आपके तौल की तस्वीरें सुरक्षित हो गई हैं।',
       'IMAGE_CAPTURED|en': 'Weighment images have been captured and saved.',
     });
   }
@@ -62,10 +55,12 @@ class SoundController {
   Timer? _repeatTimer;
   int _playCount = 0;
   bool _speaking = false;
+  int _activeZeroSamples = 0;
   int _completedZeroSamples = 0;
   bool _completedZeroArmed = false;
   int _speechGeneration = 0;
   int _stateEpoch = 0;
+  int _weightCallSequence = 0;
   String? _activeEvent;
   Future<void>? _configFuture;
   bool _configLoaded = false;
@@ -223,8 +218,14 @@ class SoundController {
     // arrived from Configuration. This was the reason the configured vehicle
     // and weighment prompts could remain silent until the next state change.
     final observedEpoch = _stateEpoch;
+    final callSequence = ++_weightCallSequence;
     await loadConfig();
     if (!enabled) return;
+    // Configuration/voice loading can complete after a newer scale frame.
+    // Never let an older frame replace the most recent platform state.
+    if (callSequence != _weightCallSequence || observedEpoch != _stateEpoch) {
+      return;
+    }
     // A live-weight callback may have started before a save and resumed after
     // it. Never let that older callback replace the post-save removal state.
     if (observedEpoch != _stateEpoch && state == SoundState.completed) return;
@@ -247,17 +248,18 @@ class SoundController {
       }
       return;
     }
-    // There is one authoritative live-weighment threshold: the configured
-    // minimum. At or above it, only the waiting announcement is eligible;
-    // the platform-entry phrase can never be scheduled alongside it.
-    final minimumReached = weightQuintal >= minimumWeightQuintal;
-    if (minimumReached) {
-      _setState(SoundState.weighingInProgress);
-    } else if (_isPlatformEmpty(weightQuintal)) {
-      _setState(SoundState.noVehicle);
-    } else {
-      _setState(SoundState.belowMinimum);
-    }
+    // Disconnected or stale scale packets must never start or replace a live
+    // vehicle instruction.
+    if (!readingValid) return;
+    final decision = decideLiveWeightSoundState(
+      currentState: state,
+      zeroSamples: _activeZeroSamples,
+      weightQuintal: weightQuintal,
+      minimumWeightQuintal: minimumWeightQuintal,
+      readingValid: readingValid,
+    );
+    _activeZeroSamples = decision.zeroSamples;
+    _setState(decision.state);
   }
 
   bool _isPlatformEmpty(double weightQuintal) => weightQuintal <= 0;
@@ -270,6 +272,7 @@ class SoundController {
     // live-weight callback cannot restart WEIGHING_ACTIVE during this sequence.
     _stateEpoch++;
     _stopRepeat();
+    _activeZeroSamples = 0;
     _completedZeroSamples = 0;
     _completedZeroArmed = false;
     state = SoundState.completed;
@@ -337,6 +340,7 @@ class SoundController {
   /// Changing Gross/Tare mode or leaving the screen stops any repeating message.
   void reset() {
     _stateEpoch++;
+    _weightCallSequence++;
     _stopRepeat();
     // Serialize stop with speak. Calling Windows TTS methods concurrently can
     // terminate the native plugin without producing a Dart exception.
@@ -349,6 +353,7 @@ class SoundController {
     }
     _speechGeneration++;
     _speaking = false;
+    _activeZeroSamples = 0;
     _completedZeroSamples = 0;
     _completedZeroArmed = false;
     state = SoundState.noVehicle;

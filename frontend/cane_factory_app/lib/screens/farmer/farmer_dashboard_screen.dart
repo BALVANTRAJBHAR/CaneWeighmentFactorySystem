@@ -72,8 +72,10 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
     }
   }
 
-  Widget _statCard(String label, String value, IconData icon, Color color) =>
-      Expanded(
+  Widget _statCard(String label, String value, IconData icon, Color color,
+          double width) =>
+      SizedBox(
+        width: width,
         child: Card(
           child: Padding(
             padding: const EdgeInsets.all(14),
@@ -87,6 +89,8 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
               ]),
               const SizedBox(height: 8),
               Text(value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                       fontSize: 20, fontWeight: FontWeight.w700)),
             ]),
@@ -139,56 +143,61 @@ class _FarmerDashboardScreenState extends State<FarmerDashboardScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        Row(children: [
-          _statCard('Total Vehicles', '${summary['totalVehicles']}',
-              Icons.local_shipping_outlined, Colors.brown),
-          const SizedBox(width: 10),
-          _statCard(
-              'Final Weight (Qtl)',
-              (summary['totalFinalWeight'] as num).toStringAsFixed(2),
-              Icons.scale_outlined,
-              Colors.teal),
-          const SizedBox(width: 10),
-          _statCard('Pending Payment', '${summary['pendingPayment']}',
-              Icons.pending_actions_outlined, Colors.orange),
-        ]),
-        const SizedBox(height: 10),
-        Row(children: [
-          _statCard(
-              'Total Purchase Amount',
-              currency.format(summary['totalPurchaseAmount']),
-              Icons.receipt_long_outlined,
-              Colors.indigo),
-          const SizedBox(width: 10),
-          _statCard('Total Paid', currency.format(summary['totalPaidAmount']),
-              Icons.payments_outlined, Colors.green),
-          const SizedBox(width: 10),
-          _statCard(
-              'Loan Outstanding',
-              currency.format(summary['totalOutstandingLoan']),
-              Icons.savings_outlined,
-              Colors.red),
-        ]),
+        LayoutBuilder(builder: (context, limits) {
+          final columns = limits.maxWidth >= 850 ? 3 : 2;
+          final width = (limits.maxWidth - (columns - 1) * 8) / columns;
+          return Wrap(spacing: 8, runSpacing: 8, children: [
+            _statCard('Total Vehicles', '${summary['totalVehicles']}',
+                Icons.local_shipping_outlined, Colors.brown, width),
+            _statCard(
+                'Final Weight (Qtl)',
+                (summary['totalFinalWeight'] as num).toStringAsFixed(2),
+                Icons.scale_outlined,
+                Colors.teal,
+                width),
+            _statCard('Pending Payment', '${summary['pendingPayment']}',
+                Icons.pending_actions_outlined, Colors.orange, width),
+            _statCard(
+                'Total Purchase Amount',
+                currency.format(summary['totalPurchaseAmount']),
+                Icons.receipt_long_outlined,
+                Colors.indigo,
+                width),
+            _statCard('Total Paid', currency.format(summary['totalPaidAmount']),
+                Icons.payments_outlined, Colors.green, width),
+            _statCard(
+                'Loan Outstanding',
+                currency.format(summary['totalOutstandingLoan']),
+                Icons.savings_outlined,
+                Colors.red,
+                width),
+          ]);
+        }),
         const SizedBox(height: 20),
-        Row(children: [
-          Text('My Statement',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w700)),
-          const Spacer(),
-          OutlinedButton.icon(
-              onPressed: () => downloadAndNotify(context,
-                  '/api/farmer/statement?format=pdf', 'my-statement.pdf'),
-              icon: const Icon(Icons.picture_as_pdf_outlined),
-              label: const Text('PDF')),
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-              onPressed: () => downloadAndNotify(context,
-                  '/api/farmer/statement?format=excel', 'my-statement.xlsx'),
-              icon: const Icon(Icons.grid_on_outlined),
-              label: const Text('Excel')),
-        ]),
+        Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text('My Statement',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700)),
+              OutlinedButton.icon(
+                  onPressed: () => downloadAndNotify(context,
+                      '/api/farmer/statement?format=pdf', 'my-statement.pdf'),
+                  icon: const Icon(Icons.picture_as_pdf_outlined),
+                  label: const Text('PDF')),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                  onPressed: () => downloadAndNotify(
+                      context,
+                      '/api/farmer/statement?format=excel',
+                      'my-statement.xlsx'),
+                  icon: const Icon(Icons.grid_on_outlined),
+                  label: const Text('Excel')),
+            ]),
         const SizedBox(height: 10),
         Text('Recent Purchases',
             style: Theme.of(context)

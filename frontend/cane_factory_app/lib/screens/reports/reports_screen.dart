@@ -348,175 +348,230 @@ class _ReportsScreenState extends State<ReportsScreen> {
         : column;
   }
 
+  String _totalLabel(String key) =>
+      const {
+        'totalCount': 'Records',
+        'totalFinalWeight': 'Final Weight',
+        'totalPurchaseAmount': 'Purchase Amount',
+        'totalLoanDeducted': 'Loan Deducted',
+        'totalPaid': 'Paid',
+        'remainingDue': 'Remaining Due',
+        'totalOutstandingLoan': 'Outstanding Loan',
+        'totalAmount': 'Total Amount',
+      }[key] ??
+      key.replaceAllMapped(
+          RegExp(r'([a-z])([A-Z])'), (match) => '${match[1]} ${match[2]}');
+
+  double _filterWidth(double desktopWidth) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    return screenWidth < 700
+        ? (screenWidth - 48).clamp(220, 600)
+        : desktopWidth;
+  }
+
   @override
   Widget build(BuildContext context) {
     final df = DateFormat('dd-MM-yyyy');
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text('Reports',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 10),
-          Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                SizedBox(
-                  width: 260,
-                  child: DropdownButtonFormField<String>(
-                    value: _reportType,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Report'),
-                    items: [
-                      for (final e in _reportTypes.entries)
-                        DropdownMenuItem(
-                            value: e.key,
-                            child:
-                                Text(e.value, overflow: TextOverflow.ellipsis))
-                    ],
-                    onChanged: (v) => setState(() => _reportType = v!),
+      child: LayoutBuilder(builder: (context, viewport) {
+        final compact = viewport.maxWidth < 700;
+        final page = Padding(
+          padding: const EdgeInsets.all(12),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text('Reports',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  SizedBox(
+                    width: _filterWidth(260),
+                    child: DropdownButtonFormField<String>(
+                      value: _reportType,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'Report'),
+                      items: [
+                        for (final e in _reportTypes.entries)
+                          DropdownMenuItem(
+                              value: e.key,
+                              child: Text(e.value,
+                                  overflow: TextOverflow.ellipsis))
+                      ],
+                      onChanged: (v) => setState(() => _reportType = v!),
+                    ),
                   ),
-                ),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.date_range),
-                  onPressed: () => _pickDate(from: true),
-                  label: Text(
-                      _fromDate == null ? 'From Date' : df.format(_fromDate!)),
-                ),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.date_range),
-                  onPressed: () => _pickDate(from: false),
-                  label:
-                      Text(_toDate == null ? 'To Date' : df.format(_toDate!)),
-                ),
-                if (_reportType != 'daily-collection' &&
-                    _reportType != 'profit-loss' &&
-                    _reportType != 'cash-book' &&
-                    _reportType != 'daily-cash-profit-loss' &&
-                    _reportType != 'sale-purchase-tax')
-                  SizedBox(
-                      width: 160,
-                      child: TextField(
-                          controller: _growerId,
-                          decoration: InputDecoration(
-                              labelText: _reportType == 'sale-purchases'
-                                  ? 'Vehicle Number'
-                                  : _reportType == 'rate-overrides'
-                                      ? 'Transaction ID'
-                                      : 'Grower ID',
-                              hintText: _reportType == 'sale-purchases'
-                                  ? 'UP32AB1234'
-                                  : _reportType == 'rate-overrides'
-                                      ? 'Purchase / Sale ID'
-                                      : '100001'))),
-                if (_reportType != 'daily-collection' &&
-                    _reportType != 'profit-loss' &&
-                    _reportType != 'cash-book' &&
-                    _reportType != 'daily-cash-profit-loss' &&
-                    _reportType != 'sale-purchase-tax')
-                  SizedBox(
-                      width: 160,
-                      child: TextField(
-                          controller: _statusCtrl,
-                          decoration: InputDecoration(
-                              labelText: _reportType == 'purchases'
-                                  ? 'Payment/Lock Status'
-                                  : _reportType == 'rate-overrides'
-                                      ? 'Transaction Type'
-                                      : 'Status',
-                              hintText: _reportType == 'rate-overrides'
-                                  ? 'CANE or SALE'
-                                  : 'e.g. PENDING'))),
-                FilledButton.icon(
-                    onPressed: _search,
-                    icon: const Icon(Icons.search),
-                    label: const Text('Search')),
-                OutlinedButton.icon(
-                    onPressed: () => _export('pdf'),
-                    icon: const Icon(Icons.picture_as_pdf_outlined),
-                    label: const Text('Print (PDF)')),
-                OutlinedButton.icon(
-                    onPressed: () => _export('excel'),
-                    icon: const Icon(Icons.grid_on_outlined),
-                    label: const Text('Export (Excel)')),
-              ]),
-          if (_reportType == 'daily-cash-profit-loss')
-            const Padding(
-              padding: EdgeInsets.only(top: 10),
-              child: Text(
-                'Each selected date covers 00:00:00 to 23:59:59. Cash Received = received cash − Day Closing Withdrawal. Profit/Loss = Sale Product − Cane Purchase − Expense Module.',
-              ),
-            ),
-          const SizedBox(height: 10),
-          if (_error != null)
-            Text(_error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
-          if (_totals != null && _totals!.isNotEmpty)
-            Card(
-              color: Theme.of(context).colorScheme.primaryContainer,
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Wrap(spacing: 20, children: [
-                  for (final e in _totals!.entries)
-                    Text('${e.key}: ${e.value}',
-                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.date_range),
+                    onPressed: () => _pickDate(from: true),
+                    label: Text(_fromDate == null
+                        ? 'From Date'
+                        : df.format(_fromDate!)),
+                  ),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.date_range),
+                    onPressed: () => _pickDate(from: false),
+                    label:
+                        Text(_toDate == null ? 'To Date' : df.format(_toDate!)),
+                  ),
+                  if (_reportType != 'daily-collection' &&
+                      _reportType != 'profit-loss' &&
+                      _reportType != 'cash-book' &&
+                      _reportType != 'daily-cash-profit-loss' &&
+                      _reportType != 'sale-purchase-tax')
+                    SizedBox(
+                        width: _filterWidth(160),
+                        child: TextField(
+                            controller: _growerId,
+                            decoration: InputDecoration(
+                                labelText: _reportType == 'sale-purchases'
+                                    ? 'Vehicle Number'
+                                    : _reportType == 'rate-overrides'
+                                        ? 'Transaction ID'
+                                        : 'Grower ID',
+                                hintText: _reportType == 'sale-purchases'
+                                    ? 'UP32AB1234'
+                                    : _reportType == 'rate-overrides'
+                                        ? 'Purchase / Sale ID'
+                                        : '100001'))),
+                  if (_reportType != 'daily-collection' &&
+                      _reportType != 'profit-loss' &&
+                      _reportType != 'cash-book' &&
+                      _reportType != 'daily-cash-profit-loss' &&
+                      _reportType != 'sale-purchase-tax')
+                    SizedBox(
+                        width: _filterWidth(160),
+                        child: TextField(
+                            controller: _statusCtrl,
+                            decoration: InputDecoration(
+                                labelText: _reportType == 'purchases'
+                                    ? 'Payment/Lock Status'
+                                    : _reportType == 'rate-overrides'
+                                        ? 'Transaction Type'
+                                        : 'Status',
+                                hintText: _reportType == 'rate-overrides'
+                                    ? 'CANE or SALE'
+                                    : 'e.g. PENDING'))),
+                  FilledButton.icon(
+                      onPressed: _search,
+                      icon: const Icon(Icons.search),
+                      label: const Text('Search')),
+                  OutlinedButton.icon(
+                      onPressed: () => _export('pdf'),
+                      icon: const Icon(Icons.picture_as_pdf_outlined),
+                      label: const Text('Print (PDF)')),
+                  OutlinedButton.icon(
+                      onPressed: () => _export('excel'),
+                      icon: const Icon(Icons.grid_on_outlined),
+                      label: const Text('Export (Excel)')),
                 ]),
+            if (_reportType == 'daily-cash-profit-loss')
+              const Padding(
+                padding: EdgeInsets.only(top: 10),
+                child: Text(
+                  'Each selected date covers 00:00:00 to 23:59:59. Cash Received = received cash − Day Closing Withdrawal. Profit/Loss = Sale Product − Cane Purchase − Expense Module.',
+                ),
+              ),
+            const SizedBox(height: 10),
+            if (_error != null)
+              Text(_error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            if (_totals != null && _totals!.isNotEmpty)
+              Card(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: LayoutBuilder(builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 600;
+                    final itemWidth =
+                        compact ? (constraints.maxWidth - 12) / 2 : 220.0;
+                    return Wrap(spacing: 12, runSpacing: 12, children: [
+                      for (final e in _totals!.entries)
+                        SizedBox(
+                          width: itemWidth,
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(_totalLabel(e.key),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall),
+                                const SizedBox(height: 2),
+                                Text('${e.value}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w800)),
+                              ]),
+                        ),
+                    ]);
+                  }),
+                ),
+              ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: Card(
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _items.isEmpty
+                        ? const Center(
+                            child: Text(
+                                'No records found for the selected filters.'))
+                        : PinnedTableScroll(
+                            verticalController: _reportVerticalController,
+                            horizontalController: _reportHorizontalController,
+                            minTableWidth: 1600,
+                            child: DataTable(
+                              columns: [
+                                for (final c in _columns)
+                                  DataColumn(label: Text(_columnLabel(c)))
+                              ],
+                              rows: [
+                                for (final item in _items)
+                                  DataRow(cells: [
+                                    for (final c in _columns)
+                                      DataCell(c == 'attachment'
+                                          ? TextButton.icon(
+                                              onPressed:
+                                                  item['hasAttachment'] == true
+                                                      ? () => _openRateEvidence(
+                                                          item)
+                                                      : null,
+                                              icon: const Icon(
+                                                  Icons.image_outlined,
+                                                  size: 18),
+                                              label: const Text('View'),
+                                            )
+                                          : Tooltip(
+                                              message:
+                                                  formatReportCell(c, item[c]),
+                                              child: Text(
+                                                  formatReportCell(c, item[c]),
+                                                  overflow:
+                                                      TextOverflow.ellipsis))),
+                                  ]),
+                              ],
+                            ),
+                          ),
               ),
             ),
-          const SizedBox(height: 10),
-          Expanded(
-            child: Card(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _items.isEmpty
-                      ? const Center(
-                          child: Text(
-                              'No records found for the selected filters.'))
-                      : PinnedTableScroll(
-                          verticalController: _reportVerticalController,
-                          horizontalController: _reportHorizontalController,
-                          minTableWidth: 1600,
-                          child: DataTable(
-                            columns: [
-                              for (final c in _columns)
-                                DataColumn(label: Text(_columnLabel(c)))
-                            ],
-                            rows: [
-                              for (final item in _items)
-                                DataRow(cells: [
-                                  for (final c in _columns)
-                                    DataCell(c == 'attachment'
-                                        ? TextButton.icon(
-                                            onPressed: item['hasAttachment'] ==
-                                                    true
-                                                ? () => _openRateEvidence(item)
-                                                : null,
-                                            icon: const Icon(
-                                                Icons.image_outlined,
-                                                size: 18),
-                                            label: const Text('View'),
-                                          )
-                                        : Tooltip(
-                                            message:
-                                                formatReportCell(c, item[c]),
-                                            child: Text(
-                                                formatReportCell(c, item[c]),
-                                                overflow:
-                                                    TextOverflow.ellipsis))),
-                                ]),
-                            ],
-                          ),
-                        ),
-            ),
+          ]),
+        );
+        if (!compact) return page;
+        return SingleChildScrollView(
+          child: SizedBox(
+            width: viewport.maxWidth,
+            height: (viewport.maxHeight + 440).clamp(980, 1500),
+            child: page,
           ),
-        ]),
-      ),
+        );
+      }),
     );
   }
 }

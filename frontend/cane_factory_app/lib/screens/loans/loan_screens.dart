@@ -187,6 +187,17 @@ class _LoanScreenState extends State<LoanScreen> {
     _load();
   }
 
+  double _loanFieldWidth(double desktopWidth) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    return screenWidth < 700
+        ? (screenWidth - 52).clamp(220, 560)
+        : desktopWidth;
+  }
+
+  Widget _loanWide(Widget child) => MediaQuery.sizeOf(context).width < 700
+      ? SizedBox(width: _loanFieldWidth(0), child: child)
+      : child;
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
@@ -213,7 +224,7 @@ class _LoanScreenState extends State<LoanScreen> {
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           SizedBox(
-                            width: 200,
+                            width: _loanFieldWidth(200),
                             child: TextField(
                               controller: _growerId,
                               keyboardType: TextInputType.number,
@@ -230,12 +241,13 @@ class _LoanScreenState extends State<LoanScreen> {
                               onSubmitted: (_) => _lookupGrower(),
                             ),
                           ),
-                          FilledButton.tonal(
+                          _loanWide(FilledButton.tonal(
                               onPressed: _lookupGrower,
-                              child: const Text('Lookup (Enter)')),
+                              child: const Text('Lookup (Enter)'))),
                           SizedBox(
-                            width: 220,
+                            width: _loanFieldWidth(220),
                             child: DropdownButtonFormField<int>(
+                              isExpanded: true,
                               value: _loanTypeId,
                               decoration: const InputDecoration(
                                   labelText: 'Loan Type',
@@ -244,13 +256,14 @@ class _LoanScreenState extends State<LoanScreen> {
                                 for (final t in _loanTypes)
                                   DropdownMenuItem(
                                       value: t['id'] as int,
-                                      child: Text(t['loanTypeName']))
+                                      child: Text(t['loanTypeName'],
+                                          overflow: TextOverflow.ellipsis))
                               ],
                               onChanged: (v) => setState(() => _loanTypeId = v),
                             ),
                           ),
                           SizedBox(
-                            width: 160,
+                            width: _loanFieldWidth(160),
                             child: TextField(
                               controller: _amount,
                               keyboardType:
@@ -266,7 +279,7 @@ class _LoanScreenState extends State<LoanScreen> {
                             ),
                           ),
                           SizedBox(
-                            width: 260,
+                            width: _loanFieldWidth(260),
                             child: TextField(
                               controller: _remarks,
                               decoration: const InputDecoration(
@@ -274,8 +287,9 @@ class _LoanScreenState extends State<LoanScreen> {
                             ),
                           ),
                           SizedBox(
-                            width: 220,
+                            width: _loanFieldWidth(220),
                             child: DropdownButtonFormField<String>(
+                              isExpanded: true,
                               value: _printTarget,
                               decoration: const InputDecoration(
                                   labelText: 'Print Type'),
@@ -313,14 +327,14 @@ class _LoanScreenState extends State<LoanScreen> {
                               style: TextStyle(
                                   color: Theme.of(context).colorScheme.error))),
                     const SizedBox(height: 14),
-                    FilledButton.icon(
+                    _loanWide(FilledButton.icon(
                       onPressed: _saving ? null : _issue,
                       icon: const Icon(Icons.savings_outlined),
                       label: Text(_saving ? 'Issuing...' : 'ISSUE LOAN'),
                       style: FilledButton.styleFrom(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 30, vertical: 16)),
-                    ),
+                    )),
                   ]),
             ),
           ),

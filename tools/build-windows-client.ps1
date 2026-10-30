@@ -62,6 +62,13 @@ if (!(Test-Path -LiteralPath $launcherTemplate)) {
 Copy-Item -LiteralPath $launcherTemplate `
     -Destination (Join-Path $OutputDirectory 'run.bat') -Force
 
+# Epson RAW queue setup is invoked once by Print Configuration after Windows
+# asks the operator for UAC approval. Keep it beside the portable client.
+$printerToolsFolder = Join-Path $OutputDirectory 'tools'
+New-Item -ItemType Directory -Path $printerToolsFolder -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'configure-epson-raw-queue.ps1') `
+    -Destination (Join-Path $printerToolsFolder 'configure-epson-raw-queue.ps1') -Force
+
 if (![string]::IsNullOrWhiteSpace($CodeSigningCertificateThumbprint)) {
     $normalizedThumbprint = $CodeSigningCertificateThumbprint.Replace(' ', '').ToUpperInvariant()
     $certificate = @(

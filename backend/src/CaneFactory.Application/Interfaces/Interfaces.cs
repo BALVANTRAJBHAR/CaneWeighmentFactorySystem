@@ -83,6 +83,7 @@ public interface ICameraCaptureService
 /// </summary>
 public interface IImageStorageService
 {
+    bool LastSaveWasQueued { get; }
     bool IsCloudLocator(string? locator);
     Task<string> GetModeAsync(CancellationToken ct = default);
     Task EnsureCloudReadyAsync(string container, CancellationToken ct = default);

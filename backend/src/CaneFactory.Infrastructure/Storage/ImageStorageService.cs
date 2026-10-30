@@ -23,6 +23,7 @@ public sealed class ImageStorageService(
     AppDbContext db,
     IConfiguration configuration,
     IMemoryCache memoryCache,
+    DurableBlobUploadQueue uploadQueue,
     ILogger<ImageStorageService> logger) : IImageStorageService
 {
     public const string LocalMode = "LOCAL";
@@ -35,6 +36,8 @@ public sealed class ImageStorageService(
         {
             ExcludeInteractiveBrowserCredential = true
         });
+
+    public bool LastSaveWasQueued { get; private set; }
 
     public bool IsCloudLocator(string? locator) =>
         locator?.StartsWith(CloudScheme, StringComparison.OrdinalIgnoreCase) == true;
@@ -63,6 +66,7 @@ public sealed class ImageStorageService(
     public async Task<string> SaveAsync(string localFullPath, string cloudRelativePath, byte[] bytes,
         bool overwrite = true, CancellationToken ct = default)
     {
+        LastSaveWasQueued = false;
         if (bytes.Length == 0) throw new InvalidDataException("Cannot store an empty evidence image.");
         if (await GetModeAsync(ct) != CloudMode)
         {
@@ -85,10 +89,10 @@ public sealed class ImageStorageService(
             _ => "image/jpeg"
         };
         var containerClient = CreateServiceClient().GetBlobContainerClient(container);
-        await containerClient.CreateIfNotExistsAsync(PublicAccessType.None, cancellationToken: ct);
         var blob = containerClient.GetBlobClient(blobName);
         try
         {
+            await containerClient.CreateIfNotExistsAsync(PublicAccessType.None, cancellationToken: ct);
             await blob.UploadAsync(BinaryData.FromBytes(bytes), new BlobUploadOptions
             {
                 HttpHeaders = new BlobHttpHeaders { ContentType = contentType },
@@ -98,6 +102,20 @@ public sealed class ImageStorageService(
         catch (RequestFailedException ex) when (!overwrite && ex.Status is 409 or 412)
         {
             throw new IOException("An evidence object with this name already exists.", ex);
+        }
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            await uploadQueue.EnqueueAsync(container, blobName, contentType, bytes, overwrite);
+            LastSaveWasQueued = true;
+            logger.LogWarning(ex, "Azure upload deferred to the durable queue for {Container}/{BlobName}",
+                container, blobName);
+        }
+        catch (Exception ex) when (ex is RequestFailedException or IOException or TimeoutException)
+        {
+            await uploadQueue.EnqueueAsync(container, blobName, contentType, bytes, overwrite);
+            LastSaveWasQueued = true;
+            logger.LogWarning(ex, "Azure upload deferred to the durable queue for {Container}/{BlobName}",
+                container, blobName);
         }
         return $"{CloudScheme}{container}/{blobName}";
     }
@@ -150,14 +168,27 @@ public sealed class ImageStorageService(
     private BlobServiceClient CreateServiceClient()
     {
         var connectionString = configuration["Storage:AzureBlob:ConnectionString"];
-        if (!string.IsNullOrWhiteSpace(connectionString)) return new BlobServiceClient(connectionString);
+        if (!string.IsNullOrWhiteSpace(connectionString))
+            return new BlobServiceClient(connectionString, CreateBlobClientOptions());
 
         var serviceUri = configuration["Storage:AzureBlob:ServiceUri"];
         if (!Uri.TryCreate(serviceUri, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
             throw new InvalidOperationException(
                 "Azure Blob storage is not configured. Set CANE_AZURE_BLOB_SERVICE_URI to the HTTPS blob service URL, or set the server-only CANE_AZURE_BLOB_CONNECTION_STRING.");
-        return new BlobServiceClient(uri, SharedManagedIdentityCredential);
+        return new BlobServiceClient(uri, SharedManagedIdentityCredential, CreateBlobClientOptions());
     }
+
+    private static BlobClientOptions CreateBlobClientOptions() => new()
+    {
+        Retry =
+        {
+            Mode = RetryMode.Exponential,
+            NetworkTimeout = TimeSpan.FromSeconds(15),
+            MaxRetries = 2,
+            Delay = TimeSpan.FromSeconds(1),
+            MaxDelay = TimeSpan.FromSeconds(5)
+        }
+    };
 
     private async Task<string?> SettingAsync(string key, CancellationToken ct) =>
         await db.SystemSettings.AsNoTracking().Where(x => x.Key == key).Select(x => x.Value).FirstOrDefaultAsync(ct);

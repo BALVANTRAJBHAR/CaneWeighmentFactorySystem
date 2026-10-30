@@ -10,7 +10,8 @@ import 'package:affllp/providers/live_weight_provider.dart';
 import 'package:affllp/providers/theme_provider.dart';
 
 void main() {
-  testWidgets('App boots and shows the splash screen on first frame', (WidgetTester tester) async {
+  testWidgets('App boots and shows the splash screen on first frame',
+      (WidgetTester tester) async {
     await tester.pumpWidget(MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
@@ -22,9 +23,10 @@ void main() {
 
     // First frame only - the startup sequence (config/API/session checks) hasn't
     // resolved yet, so the splash screen with the app name must be visible.
-    expect(find.text('Cane Factory Management System'), findsOneWidget);
+    expect(find.text('Sugarcane Factory Management System'), findsOneWidget);
     expect(find.text('WARRIOR SOFTECH'), findsOneWidget);
-    expect(find.text('Software Development & Technology Solutions'), findsOneWidget);
+    expect(find.text('Software Development & Technology Solutions'),
+        findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsWidgets);
   });
 }

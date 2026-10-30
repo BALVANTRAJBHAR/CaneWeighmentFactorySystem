@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
@@ -1033,15 +1034,25 @@ class _CamerasTabState extends State<_CamerasTab> {
         ? _rateEvidenceCameraId
         : null;
     return ListView(padding: const EdgeInsets.all(16), children: [
-      Row(children: [
-        const Text('IP Cameras (1-6, vendor-abstracted)',
-            style: TextStyle(fontWeight: FontWeight.w700)),
-        const Spacer(),
-        FilledButton.icon(
+      LayoutBuilder(builder: (context, constraints) {
+        final compact = constraints.maxWidth < 560;
+        const title = Text('IP Cameras (1-6, vendor-abstracted)',
+            style: TextStyle(fontWeight: FontWeight.w700));
+        final action = FilledButton.icon(
             onPressed: () => _edit(),
             icon: const Icon(Icons.add),
-            label: const Text('Add Camera')),
-      ]),
+            label: const Text('Add Camera'));
+        if (compact) {
+          return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                title,
+                const SizedBox(height: 8),
+                action,
+              ]);
+        }
+        return Row(children: [title, const Spacer(), action]);
+      }),
       const SizedBox(height: 12),
       Card(
           child: Padding(
@@ -1253,29 +1264,75 @@ class _CamerasTabState extends State<_CamerasTab> {
                   ]))),
       const SizedBox(height: 8),
       for (final cam in cams)
-        Card(
-            child: ListTile(
-          leading: Icon(Icons.videocam_outlined,
-              color: cam['status'] == true
-                  ? const Color(0xFF2E7D32)
-                  : Colors.grey),
-          title: Text(
-              'Camera ${cam['cameraNumber'].toString().padLeft(2, '0')} • ${cam['vendor']} ${cam['model'] ?? ''}'),
-          subtitle: Text(
-              '${cam['protocol']} • Capture: ${cam['captureEnabled'] == true ? 'ON' : 'OFF'} • Weighment: ${cam['weighmentCaptureEnabled'] == true ? 'ON' : 'OFF'} • Live: ${cam['liveViewEnabled'] == true ? 'ON' : 'OFF'}'),
-          trailing: Wrap(children: [
-            TextButton(
-                onPressed: () => _testCamera(cam), child: const Text('Test')),
-            TextButton(
-                onPressed: () => _snapshot(cam['id']),
-                child: const Text('Snapshot')),
-            TextButton(
-                onPressed: () => _edit(Map<String, dynamic>.from(cam)),
-                child: const Text('Edit')),
-          ]),
-        )),
+        _cameraSummaryCard(Map<String, dynamic>.from(cam)),
     ]);
   }
+
+  Widget _cameraSummaryCard(Map<String, dynamic> cam) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: LayoutBuilder(builder: (context, constraints) {
+            final compact = constraints.maxWidth < 620;
+            final icon = Icon(Icons.videocam_outlined,
+                color: cam['status'] == true
+                    ? const Color(0xFF2E7D32)
+                    : Colors.grey);
+            final details = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Camera ${cam['cameraNumber'].toString().padLeft(2, '0')} • ${cam['vendor']} ${cam['model'] ?? ''}',
+                  maxLines: compact ? 3 : 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${cam['protocol']} • Capture: ${cam['captureEnabled'] == true ? 'ON' : 'OFF'} • Weighment: ${cam['weighmentCaptureEnabled'] == true ? 'ON' : 'OFF'} • Live: ${cam['liveViewEnabled'] == true ? 'ON' : 'OFF'}',
+                  maxLines: compact ? 4 : 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            );
+            final actions = Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                OutlinedButton(
+                    onPressed: () => _testCamera(cam),
+                    child: const Text('Test')),
+                OutlinedButton(
+                    onPressed: () => _snapshot(cam['id']),
+                    child: const Text('Snapshot')),
+                FilledButton.tonal(
+                    onPressed: () => _edit(cam), child: const Text('Edit')),
+              ],
+            );
+            if (compact) {
+              return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          icon,
+                          const SizedBox(width: 10),
+                          Expanded(child: details),
+                        ]),
+                    const SizedBox(height: 10),
+                    actions,
+                  ]);
+            }
+            return Row(children: [
+              icon,
+              const SizedBox(width: 12),
+              Expanded(child: details),
+              const SizedBox(width: 12),
+              actions,
+            ]);
+          }),
+        ),
+      );
 
   /// Live capture preview (Phase 6) - one real snapshot right now via RTSP/ONVIF/ISAPI (or the
   /// SIMULATOR provider when Camera:SimulatorMode=true), never saved as purchase evidence.
@@ -1356,6 +1413,7 @@ class _PrintTabState extends State<_PrintTab> {
     'dotMatrixFontWeight',
     'dotMatrixInkDensity',
     'dotMatrixDriverRenderDpi',
+    'dotMatrixTearOffFeedLines',
   ];
 
   Map<String, Map<String, dynamic>> _readPrinterProfiles(
@@ -1407,6 +1465,7 @@ class _PrintTabState extends State<_PrintTab> {
       // RAW ESC/P used by TVS always renders at 120 DPI. Epson V4 is the
       // Windows-driver bitmap route, for which 240 is the safe initial test.
       'dotMatrixDriverRenderDpi': isEpson ? 240 : 120,
+      'dotMatrixTearOffFeedLines': 12.0,
       'profileVersion': 2,
     };
   }
@@ -1431,6 +1490,71 @@ class _PrintTabState extends State<_PrintTab> {
 
   Future<void> _savePrintConfiguration() async {
     if (v == null) return;
+    final selectedPrinter = v!['dotMatrixPrinterName']?.toString() ?? '';
+    if (Platform.isWindows &&
+        selectedPrinter.toLowerCase().contains('epson lx') &&
+        !selectedPrinter.toLowerCase().endsWith(' raw')) {
+      final rawName = '$selectedPrinter RAW';
+      if (!_printers.contains(rawName)) {
+        final script = File(
+            '${File(Platform.resolvedExecutable).parent.path}\\tools\\configure-epson-raw-queue.ps1');
+        if (!await script.exists()) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text(
+                    'Epson RAW setup script is missing from the client package. Copy the complete release folder.')));
+          }
+          return;
+        }
+        // Windows must show UAC once per printer PC. No broad installation
+        // permissions or Defender exclusions are required.
+        final quotedScript = script.path.replaceAll("'", "''");
+        final quotedPrinter = selectedPrinter.replaceAll("'", "''");
+        if (selectedPrinter.contains('"')) return;
+        try {
+          final command =
+              'Start-Process -FilePath powershell.exe -Verb RunAs -Wait -PassThru '
+              '-ArgumentList \'-NoProfile -ExecutionPolicy Bypass -File "$quotedScript" -SourcePrinterName "$quotedPrinter"\' '
+              '| ForEach-Object { exit \$_.ExitCode }';
+          final result = await Process.run('powershell.exe',
+              ['-NoProfile', '-NonInteractive', '-Command', command]);
+          var refreshed = PrintService.installedPrinterNames();
+          for (var attempt = 0;
+              attempt < 5 && !refreshed.contains(rawName);
+              attempt++) {
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            refreshed = PrintService.installedPrinterNames();
+          }
+          if (!mounted) return;
+          if (result.exitCode != 0 || !refreshed.contains(rawName)) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(
+                      'Epson RAW queue setup was cancelled or failed: ${result.stderr}')));
+            }
+            return;
+          }
+          final profiles = _readPrinterProfiles(v!);
+          profiles.putIfAbsent(rawName, _currentProfile);
+          _writeProfiles(profiles);
+          setState(() {
+            _printers = refreshed;
+            _selectDotMatrixPrinter(rawName);
+          });
+        } catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text('Epson RAW queue setup failed: $error')));
+          }
+          return;
+        }
+      } else {
+        final profiles = _readPrinterProfiles(v!);
+        profiles.putIfAbsent(rawName, _currentProfile);
+        _writeProfiles(profiles);
+        setState(() => _selectDotMatrixPrinter(rawName));
+      }
+    }
     final profiles = _readPrinterProfiles(v!);
     final active = v!['dotMatrixPrinterName']?.toString() ?? '';
     if (active.isNotEmpty) profiles[active] = _currentProfile();
@@ -1660,10 +1784,16 @@ class _PrintTabState extends State<_PrintTab> {
                         DropdownMenuItem(
                             value: 'Sans', child: Text('Sans / Clear')),
                         DropdownMenuItem(
+                            value: 'HindiSans',
+                            child: Text('हिन्दी Noto Sans / साफ')),
+                        DropdownMenuItem(
                             value: 'SansCompact',
                             child: Text('Sans Compact / Clear')),
                         DropdownMenuItem(
                             value: 'Serif', child: Text('Serif / Traditional')),
+                        DropdownMenuItem(
+                            value: 'HindiSerif',
+                            child: Text('हिन्दी Noto Serif / पारंपरिक')),
                         DropdownMenuItem(
                             value: 'SerifCompact',
                             child: Text('Serif Compact / Traditional')),
@@ -1919,7 +2049,7 @@ class _PrintTabState extends State<_PrintTab> {
                         labelText: 'Tear-Off Parking Feed',
                         suffixText: 'bands',
                         helperText:
-                            'Temporary cover clearance only; does not change 6-inch half height.',
+                            'Temporary cutter position; TVS adds 1 band. Increase to move paper up; decrease to move it down. Next TOF stays unchanged.',
                       ),
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
@@ -1957,7 +2087,7 @@ class _PrintTabState extends State<_PrintTab> {
                           'Result: each dotted line advances exactly 6.00 inches; two slips advance exactly 12.00 inches. The next transaction starts after the reserved 1-inch header area below the previous dotted line.'),
                       SizedBox(height: 4),
                       Text(
-                          'Tear-Off Parking Feed (for example 14.0 or 14.5) only moves the finished dotted line outside the plastic cover. After Paper Torn — Reset TOF, the same distance reverses and restores the next logical TOF.'),
+                          'Tear-Off Parking Feed moves the finished dotted line to the cutter. TVS gets one extra band beyond this setting. Increase the value by 0.5 or 1 to move paper farther out; decrease it to move paper back. After Paper Torn — Reset TOF, the same distance reverses.'),
                       SizedBox(height: 4),
                       Text(
                           'Before the first job, align the tractor paper manually at the pre-printed form TOF and tap Mark Current Position as TOF. Do not turn the paper knob or pull paper between jobs. After the tear dialog, tear only at the dotted line and confirm reset before the next print.'),
@@ -1975,23 +2105,23 @@ class _PrintTabState extends State<_PrintTab> {
                   color: Theme.of(context).colorScheme.secondaryContainer,
                   child: const ExpansionTile(
                     initiallyExpanded: false,
-                    title: Text('Epson LX-310 V4/Class — recommended setup',
+                    title: Text('Epson LX-310 RAW — recommended setup',
                         style: TextStyle(fontWeight: FontWeight.w800)),
                     subtitle: Text('Tap to show / hide setup guide.'),
                     childrenPadding: EdgeInsets.fromLTRB(16, 0, 16, 16),
                     expandedCrossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                          'Use Epson LX-310 with its Windows V4/Class queue, continuous tractor paper, actual-size printing and monochrome Normal quality.'),
+                          'Select Epson LX-310 and Save. Windows requests administrator approval once to create a Generic / Text Only RAW companion queue on the same printer port. The app then selects that RAW queue automatically. Use the full client package on each printer PC.'),
                       SizedBox(height: 4),
                       Text(
-                          'Recommended application profile: Sans / Clear, Regular, Light ink density and 240 DPI. If ribbon spread is still heavy, use Light font weight or Extra Light density.'),
+                          'For Hindi try हिन्दी Noto Sans or हिन्दी Noto Serif. Start with Regular and Normal ink density; use Light only if the ribbon spreads. RAW ESC/P always uses 120-DPI pin graphics, so Windows Driver Resolution does not alter Epson RAW output.'),
                       SizedBox(height: 4),
                       Text(
-                          'Keep Page 108, Half 54, Tear 54, Next TOF 108 and Line Spacing 20/180 for the 12-inch two-slip form. Adjust only Tear-Off Parking Feed to match the physical cover clearance.'),
+                          'Keep Page 108, Half 54, Tear 54, Next TOF 108 and Line Spacing 20/180 for the 12-inch form. Tear-Off Parking Feed advances the final RAW job beyond the dotted line; adjust it in small steps until the line reaches the plastic tear edge.'),
                       SizedBox(height: 4),
                       Text(
-                          'Turn printer Default Setting → Auto Tear-Off ON and set tractor page length correctly. After tearing, confirm in the app; LX-310 retracts automatically when the next Windows print job begins. For immediate physical return, press the printer Tear Off button once.'),
+                          'After tearing at the dotted line, use the printer panel Tear Off button to return the paper. Epson does not show the app reset popup. Keep the printer page length and Auto Tear-Off setting consistent with the physical form to avoid a second feed.'),
                       SizedBox(height: 4),
                       Text(
                           'Before the first job, align paper manually and choose Mark Current Position as TOF. Do not rotate the platen knob between jobs.'),
@@ -2210,6 +2340,11 @@ class _PrintTabState extends State<_PrintTab> {
                 ? 'Tear at the dotted line. If paper has not returned to TOF, press Tear Off on the Epson printer panel.'
                 : 'All $totalCopies test ${totalCopies == 1 ? 'copy has' : 'copies have'} printed. Tear at the dotted line, then confirm the next Top-of-Form.'),
             actions: [
+              if (isEpson)
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('No paper printed'),
+                ),
               FilledButton.icon(
                 onPressed: () => Navigator.pop(dialogContext, true),
                 icon: const Icon(Icons.content_cut),
@@ -3518,6 +3653,46 @@ class _CompanyTabState extends State<_CompanyTab> {
             _addressHiManual = true;
             v!['addressHi'] = x;
           }),
+      const SizedBox(height: 16),
+      Text('Public Contact & Social Media',
+          style: Theme.of(context).textTheme.titleMedium),
+      for (final field in const <String, String>{
+        'contactMobile1': 'Mobile Number 1',
+        'contactMobile2': 'Mobile Number 2',
+        'contactEmail': 'Contact Email / Gmail',
+        'instagramUrl': 'Instagram URL',
+        'facebookUrl': 'Facebook URL',
+        'twitterUrl': 'X (Twitter) URL',
+        'youtubeUrl': 'YouTube URL',
+        'linkedinUrl': 'LinkedIn URL',
+        'smtpHost': 'SMTP Host',
+        'smtpUsername': 'SMTP Username / Sender Email',
+      }.entries) ...[
+        const SizedBox(height: 10),
+        TextFormField(
+          initialValue: v![field.key]?.toString() ?? '',
+          decoration: InputDecoration(labelText: field.value),
+          onChanged: (text) => v![field.key] = text.trim(),
+        ),
+      ],
+      const SizedBox(height: 10),
+      TextFormField(
+        initialValue: '${v!['smtpPort'] ?? 587}',
+        decoration: const InputDecoration(labelText: 'SMTP Port (TLS)'),
+        keyboardType: TextInputType.number,
+        onChanged: (text) => v!['smtpPort'] = int.tryParse(text) ?? 587,
+      ),
+      const SizedBox(height: 10),
+      TextFormField(
+        decoration: InputDecoration(
+          labelText: 'SMTP Password / App Password',
+          helperText: v!['smtpPasswordSet'] == true
+              ? 'Saved; leave blank to keep the existing password.'
+              : 'Required to send public quotation requests.',
+        ),
+        obscureText: true,
+        onChanged: (text) => v!['smtpPassword'] = text,
+      ),
       const SizedBox(height: 12),
       TextField(
           controller: _logoPath,

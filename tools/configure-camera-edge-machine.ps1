@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$BlobServiceUri = 'https://authenticfoodfarmstorage.blob.core.windows.net'
+    [string]$BlobServiceUri = 'https://authenticfoodfarmstorage.blob.core.windows.net',
+    [string]$EvidenceUploadQueuePath = 'C:\ProgramData\CaneFactory\EvidenceUploadQueue'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,10 +44,13 @@ $settings = $protected + @{
     CANE_DB_PROVIDER = 'SqlServer'
     CANE_IMAGE_STORAGE_MODE = 'AZURE_BLOB'
     CANE_AZURE_BLOB_SERVICE_URI = $BlobServiceUri.TrimEnd('/')
+    CANE_EVIDENCE_UPLOAD_QUEUE_PATH = $EvidenceUploadQueuePath
     CANE_CAMERA_CAPTURE_MODE = 'SERVER'
     CANE_CAMERA_SIMULATOR = 'false'
     ASPNETCORE_ENVIRONMENT = 'Production'
 }
+
+New-Item -ItemType Directory -Path $EvidenceUploadQueuePath -Force | Out-Null
 
 foreach ($entry in $settings.GetEnumerator()) {
     [Environment]::SetEnvironmentVariable(

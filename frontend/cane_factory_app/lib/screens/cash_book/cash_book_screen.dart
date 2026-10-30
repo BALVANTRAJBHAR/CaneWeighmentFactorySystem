@@ -310,23 +310,24 @@ class _CashBookScreenState extends State<CashBookScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final canCreate = auth.can('CashBook.Create');
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+    return LayoutBuilder(builder: (context, constraints) {
+      final compact = constraints.maxWidth < 700;
+      final form = switch (_entryTab) {
+        'RECEIPT' => _receiptForm(),
+        'PAYMENT' => _otherPaymentForm(),
+        _ => _dayClosingForm(),
+      };
+      final content = <Widget>[
         Text('Cash Book',
             style: Theme.of(context)
                 .textTheme
                 .titleLarge
                 ?.copyWith(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         if (canCreate) ...[
           _entryTabs(),
           const SizedBox(height: 12),
-          switch (_entryTab) {
-            'RECEIPT' => _receiptForm(),
-            'PAYMENT' => _otherPaymentForm(),
-            _ => _dayClosingForm(),
-          },
+          form,
         ],
         const SizedBox(height: 10),
         _filters(),
@@ -340,10 +341,33 @@ class _CashBookScreenState extends State<CashBookScreen> {
           _dailySummaryPanel(),
         ],
         const SizedBox(height: 8),
-        Expanded(child: _table()),
-      ]),
-    );
+      ];
+
+      if (compact) {
+        return ListView(
+          padding: const EdgeInsets.all(12),
+          children: [...content, SizedBox(height: 430, child: _table())],
+        );
+      }
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [...content, Expanded(child: _table())]),
+      );
+    });
   }
+
+  double _entryFieldWidth(double desktopWidth) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    return screenWidth < 700
+        ? (screenWidth - 52).clamp(220, 560)
+        : desktopWidth;
+  }
+
+  Widget _mobileWide(Widget child) => MediaQuery.sizeOf(context).width < 700
+      ? SizedBox(width: _entryFieldWidth(0), child: child)
+      : child;
 
   /// Cash entry types have separate, focused forms. The running register remains
   /// below the tabs, so operators can still verify every entry in one place.
@@ -354,13 +378,17 @@ class _CashBookScreenState extends State<CashBookScreen> {
                     color: Theme.of(context)
                         .dividerColor
                         .withValues(alpha: 0.6)))),
-        child: Row(children: [
-          _entryTabButton('Cash Receipt', 'RECEIPT', Icons.south_west_outlined),
-          _entryTabButton(
-              'Other Cash Payment', 'PAYMENT', Icons.north_east_outlined),
-          _entryTabButton(
-              'Day Closing', 'DAY_CLOSE', Icons.lock_clock_outlined),
-        ]),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(children: [
+            _entryTabButton(
+                'Cash Receipt', 'RECEIPT', Icons.south_west_outlined),
+            _entryTabButton(
+                'Other Cash Payment', 'PAYMENT', Icons.north_east_outlined),
+            _entryTabButton(
+                'Day Closing', 'DAY_CLOSE', Icons.lock_clock_outlined),
+          ]),
+        ),
       );
 
   Widget _dayClosingForm() {
@@ -383,7 +411,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
               runSpacing: 12,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                OutlinedButton.icon(
+                _mobileWide(OutlinedButton.icon(
                     onPressed: () async {
                       final today = DateUtils.dateOnly(DateTime.now());
                       final picked = await showDatePicker(
@@ -406,32 +434,32 @@ class _CashBookScreenState extends State<CashBookScreen> {
                       }
                     },
                     icon: const Icon(Icons.date_range),
-                    label: Text(_dateFormat.format(_closingDate))),
+                    label: Text(_dateFormat.format(_closingDate)))),
                 SizedBox(
-                    width: 220,
+                    width: _entryFieldWidth(220),
                     child: TextField(
                         controller: _closingTakenBy,
                         decoration:
                             const InputDecoration(labelText: 'Cash Taken By'))),
                 SizedBox(
-                    width: 180,
+                    width: _entryFieldWidth(180),
                     child: TextField(
                         controller: _closingReference,
                         decoration: const InputDecoration(
                             labelText: 'Reference No. (optional)'))),
                 SizedBox(
-                    width: 250,
+                    width: _entryFieldWidth(250),
                     child: TextField(
                         controller: _closingRemarks,
                         decoration: const InputDecoration(
                             labelText: 'Closing Remarks (optional)'))),
-                FilledButton.icon(
+                _mobileWide(FilledButton.icon(
                   onPressed: _saving || closed ? null : _closeDay,
                   icon: const Icon(Icons.lock_outline),
                   label: Text(closed
                       ? 'Day Already Closed'
                       : 'Withdraw ₹${_money(available)} & Close Day'),
-                ),
+                )),
               ]),
           const SizedBox(height: 10),
           Wrap(spacing: 24, runSpacing: 8, children: [
@@ -493,7 +521,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   SizedBox(
-                    width: 150,
+                    width: _entryFieldWidth(150),
                     child: DropdownButtonFormField<String>(
                       value: _sourceType,
                       decoration:
@@ -508,13 +536,13 @@ class _CashBookScreenState extends State<CashBookScreen> {
                     ),
                   ),
                   SizedBox(
-                      width: 220,
+                      width: _entryFieldWidth(220),
                       child: TextField(
                           controller: _sourceName,
                           decoration: const InputDecoration(
                               labelText: 'Bank / Party Name'))),
                   SizedBox(
-                    width: 150,
+                    width: _entryFieldWidth(150),
                     child: TextField(
                       controller: _amount,
                       keyboardType:
@@ -527,27 +555,27 @@ class _CashBookScreenState extends State<CashBookScreen> {
                           const InputDecoration(labelText: 'Cash Amount (₹)'),
                     ),
                   ),
-                  OutlinedButton.icon(
+                  _mobileWide(OutlinedButton.icon(
                       onPressed: () => _pickDate(receipt: true, from: true),
                       icon: const Icon(Icons.date_range),
-                      label: Text(_dateFormat.format(_receiptDate))),
+                      label: Text(_dateFormat.format(_receiptDate)))),
                   SizedBox(
-                      width: 180,
+                      width: _entryFieldWidth(180),
                       child: TextField(
                           controller: _reference,
                           decoration: const InputDecoration(
                               labelText: 'Reference No. (optional)'))),
                   SizedBox(
-                      width: 200,
+                      width: _entryFieldWidth(200),
                       child: TextField(
                           controller: _remarks,
                           decoration: const InputDecoration(
                               labelText: 'Remarks (optional)'))),
-                  FilledButton.icon(
+                  _mobileWide(FilledButton.icon(
                     onPressed: _saving ? null : _saveReceipt,
                     icon: const Icon(Icons.save_outlined),
                     label: Text(_saving ? 'Saving...' : 'Save Cash Receipt'),
-                  ),
+                  )),
                 ]),
           ]),
         ),
@@ -572,13 +600,13 @@ class _CashBookScreenState extends State<CashBookScreen> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   SizedBox(
-                      width: 220,
+                      width: _entryFieldWidth(220),
                       child: TextField(
                           controller: _paidTo,
                           decoration: const InputDecoration(
                               labelText: 'Paid To (person / party)'))),
                   SizedBox(
-                    width: 150,
+                    width: _entryFieldWidth(150),
                     child: TextField(
                       controller: _cashOutAmount,
                       keyboardType:
@@ -591,7 +619,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
                           const InputDecoration(labelText: 'Cash Amount (₹)'),
                     ),
                   ),
-                  OutlinedButton.icon(
+                  _mobileWide(OutlinedButton.icon(
                       onPressed: () async {
                         final today = DateUtils.dateOnly(DateTime.now());
                         final initialDate =
@@ -606,24 +634,24 @@ class _CashBookScreenState extends State<CashBookScreen> {
                         }
                       },
                       icon: const Icon(Icons.date_range),
-                      label: Text(_dateFormat.format(_paymentDate))),
+                      label: Text(_dateFormat.format(_paymentDate)))),
                   SizedBox(
-                      width: 180,
+                      width: _entryFieldWidth(180),
                       child: TextField(
                           controller: _cashOutReference,
                           decoration: const InputDecoration(
                               labelText: 'Reference No. (optional)'))),
                   SizedBox(
-                      width: 250,
+                      width: _entryFieldWidth(250),
                       child: TextField(
                           controller: _cashOutRemarks,
                           decoration: const InputDecoration(
                               labelText: 'Purpose / Remarks'))),
-                  FilledButton.icon(
+                  _mobileWide(FilledButton.icon(
                     onPressed: _saving ? null : _saveOtherPayment,
                     icon: const Icon(Icons.payments_outlined),
                     label: Text(_saving ? 'Saving...' : 'Save Cash Payment'),
-                  ),
+                  )),
                 ]),
           ]),
         ),
@@ -634,20 +662,20 @@ class _CashBookScreenState extends State<CashBookScreen> {
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            OutlinedButton.icon(
+            _mobileWide(OutlinedButton.icon(
                 onPressed: () => _pickDate(receipt: false, from: true),
                 icon: const Icon(Icons.date_range),
                 label: Text(_fromDate == null
                     ? 'From Date'
-                    : _dateFormat.format(_fromDate!))),
-            OutlinedButton.icon(
+                    : _dateFormat.format(_fromDate!)))),
+            _mobileWide(OutlinedButton.icon(
                 onPressed: () => _pickDate(receipt: false, from: false),
                 icon: const Icon(Icons.date_range),
                 label: Text(_toDate == null
                     ? 'To Date'
-                    : _dateFormat.format(_toDate!))),
+                    : _dateFormat.format(_toDate!)))),
             SizedBox(
-                width: 220,
+                width: _entryFieldWidth(220),
                 child: TextField(
                     controller: _search,
                     onSubmitted: (_) => _load(),

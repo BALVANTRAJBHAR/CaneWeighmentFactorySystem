@@ -1,10 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../core/hindi_transliteration.dart';
 import '../../core/api_client.dart';
 import '../../providers/auth_provider.dart';
+
+@visibleForTesting
+String? validateUserMobile(String? value) {
+  final mobile = (value ?? '').trim();
+  if (mobile.isEmpty) return 'Mobile number is required';
+  if (mobile.length != 10) {
+    return 'Mobile number must be exactly 10 digits';
+  }
+  return null;
+}
 
 /// User & Role management (Developer/Admin per permissions). No public registration exists.
 class UsersScreen extends StatefulWidget {
@@ -23,6 +34,16 @@ class _UsersScreenState extends State<UsersScreen> {
   String _roleName = '';
   int _page = 1;
   int _totalCount = 0;
+
+  String _formatLastLogin(Object? value) {
+    if (value == null) return 'Never';
+    final parsed = DateTime.tryParse(value.toString())?.toLocal();
+    if (parsed == null) return value.toString();
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(parsed.day)}-${two(parsed.month)}-${parsed.year} '
+        '${two(parsed.hour)}:${two(parsed.minute)}';
+  }
+
   static const int _pageSize = 50;
 
   @override
@@ -186,6 +207,7 @@ class _UsersScreenState extends State<UsersScreen> {
   }
 
   Future<void> _openForm([Map<String, dynamic>? existing]) async {
+    final formKey = GlobalKey<FormState>();
     final c = {
       'username': TextEditingController(text: existing?['username'] ?? ''),
       'fullName': TextEditingController(text: existing?['fullName'] ?? ''),
@@ -209,90 +231,105 @@ class _UsersScreenState extends State<UsersScreen> {
               : 'Edit User ${existing['username']}'),
           content: SizedBox(
             width: 440,
-            child: SingleChildScrollView(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                if (existing == null)
-                  TextField(
-                      controller: c['username'],
+            child: Form(
+              key: formKey,
+              child: SingleChildScrollView(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  if (existing == null)
+                    TextFormField(
+                        controller: c['username'],
+                        decoration: const InputDecoration(
+                            labelText: 'Username',
+                            hintText: 'Example: operator1'),
+                        validator: (value) => (value ?? '').trim().isEmpty
+                            ? 'Username is required'
+                            : null),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                      controller: c['fullName'],
                       decoration: const InputDecoration(
-                          labelText: 'Username',
-                          hintText: 'Example: operator1')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: c['fullName'],
-                    decoration: const InputDecoration(
-                        labelText: 'Full Name',
-                        hintText: 'Example: Ram Prasad'),
-                    onChanged: (value) {
-                      if (!fullNameHiEdited) {
-                        c['fullNameHi']!.text =
-                            HindiTransliterator.transliterate(value);
-                      }
-                    }),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: c['fullNameHi'],
-                    decoration: const InputDecoration(
-                        labelText: 'Full Name (Hindi)',
-                        suffixIcon: Icon(Icons.translate)),
-                    onChanged: (_) => fullNameHiEdited = true),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: c['mobile'],
-                    maxLength: 10,
-                    decoration: const InputDecoration(
-                        labelText: 'Mobile',
-                        hintText: 'Example: 9876543210',
-                        counterText: '')),
-                const SizedBox(height: 10),
-                TextField(
-                    controller: c['email'],
-                    decoration: const InputDecoration(
-                        labelText: 'Email (optional)',
-                        hintText: 'Example: user@factory.com')),
-                const SizedBox(height: 10),
-                if (existing == null)
+                          labelText: 'Full Name',
+                          hintText: 'Example: Ram Prasad'),
+                      validator: (value) => (value ?? '').trim().isEmpty
+                          ? 'Full name is required'
+                          : null,
+                      onChanged: (value) {
+                        if (!fullNameHiEdited) {
+                          c['fullNameHi']!.text =
+                              HindiTransliterator.transliterate(value);
+                        }
+                      }),
+                  const SizedBox(height: 10),
                   TextField(
-                      controller: c['password'],
-                      obscureText: true,
+                      controller: c['fullNameHi'],
                       decoration: const InputDecoration(
-                          labelText: 'Temporary Password',
-                          helperText: 'User must change it on first login')),
-                const SizedBox(height: 8),
-                Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('Roles:',
-                        style: Theme.of(ctx).textTheme.labelLarge)),
-                Wrap(spacing: 6, children: [
-                  for (final r in _roles.where((r) =>
-                      r['name']?.toString() != 'Developer' &&
-                      (r['name']?.toString() != 'Administrator' ||
-                          isDeveloper) &&
-                      r['name']?.toString() != 'Farmer'))
-                    FilterChip(
-                      label: Text(r['name']),
-                      selected: selectedRoles.contains(r['id']),
-                      onSelected: (v) => setD(() => v
-                          ? selectedRoles.add(r['id'])
-                          : selectedRoles.remove(r['id'])),
-                    ),
+                          labelText: 'Full Name (Hindi)',
+                          suffixIcon: Icon(Icons.translate)),
+                      onChanged: (_) => fullNameHiEdited = true),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                      controller: c['mobile'],
+                      maxLength: 10,
+                      keyboardType: TextInputType.phone,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      decoration: const InputDecoration(
+                          labelText: 'Mobile',
+                          hintText: 'Example: 9876543210',
+                          counterText: ''),
+                      validator: validateUserMobile),
+                  const SizedBox(height: 10),
+                  TextField(
+                      controller: c['email'],
+                      decoration: const InputDecoration(
+                          labelText: 'Email (optional)',
+                          hintText: 'Example: user@factory.com')),
+                  const SizedBox(height: 10),
+                  if (existing == null)
+                    TextFormField(
+                        controller: c['password'],
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                            labelText: 'Temporary Password',
+                            helperText: 'User must change it on first login'),
+                        validator: (value) => (value ?? '').isEmpty
+                            ? 'Temporary password is required'
+                            : null),
+                  const SizedBox(height: 8),
+                  Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Roles:',
+                          style: Theme.of(ctx).textTheme.labelLarge)),
+                  Wrap(spacing: 6, children: [
+                    for (final r in _roles.where((r) =>
+                        r['name']?.toString() != 'Developer' &&
+                        (r['name']?.toString() != 'Administrator' ||
+                            isDeveloper) &&
+                        r['name']?.toString() != 'Farmer'))
+                      FilterChip(
+                        label: Text(r['name']),
+                        selected: selectedRoles.contains(r['id']),
+                        onSelected: (v) => setD(() => v
+                            ? selectedRoles.add(r['id'])
+                            : selectedRoles.remove(r['id'])),
+                      ),
+                  ]),
+                  if (existing != null)
+                    SwitchListTile(
+                        title: const Text(
+                            'Active (deactivation revokes all sessions)'),
+                        value: status,
+                        onChanged: (v) => setD(() => status = v)),
+                  if (isDeveloper)
+                    SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Rate approval authority'),
+                        subtitle: const Text(
+                            'Show this active user in Approved By for a reduced rate.'),
+                        value: canApproveRateOverrides,
+                        onChanged: (v) =>
+                            setD(() => canApproveRateOverrides = v)),
                 ]),
-                if (existing != null)
-                  SwitchListTile(
-                      title: const Text(
-                          'Active (deactivation revokes all sessions)'),
-                      value: status,
-                      onChanged: (v) => setD(() => status = v)),
-                if (isDeveloper)
-                  SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Rate approval authority'),
-                      subtitle: const Text(
-                          'Show this active user in Approved By for a reduced rate.'),
-                      value: canApproveRateOverrides,
-                      onChanged: (v) =>
-                          setD(() => canApproveRateOverrides = v)),
-              ]),
+              ),
             ),
           ),
           actions: [
@@ -300,7 +337,11 @@ class _UsersScreenState extends State<UsersScreen> {
                 onPressed: () => Navigator.pop(ctx, false),
                 child: const Text('Cancel')),
             FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
+                onPressed: () {
+                  if (formKey.currentState?.validate() == true) {
+                    Navigator.pop(ctx, true);
+                  }
+                },
                 child: const Text('Save')),
           ],
         ),
@@ -342,6 +383,8 @@ class _UsersScreenState extends State<UsersScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    final availableWidth = MediaQuery.sizeOf(context).width - 24;
     // Defense in depth: hide the reserved Developer identity locally for
     // non-Developer sessions even if an older API deployment returns it.
     final visibleUsers = auth.hasRole('Developer')
@@ -430,7 +473,7 @@ class _UsersScreenState extends State<UsersScreen> {
             ),
           ),
           SizedBox(
-            width: 390,
+            width: compact ? availableWidth : 390,
             child: TextField(
               controller: _search,
               onChanged: _searchChanged,
@@ -478,18 +521,16 @@ class _UsersScreenState extends State<UsersScreen> {
                                 final username = '${u['username']}';
                                 final isFarmer =
                                     (u['roles'] as List).contains('Farmer');
-                                return ListTile(
-                                  leading: CircleAvatar(
-                                      child: Text(username.isEmpty
-                                          ? '?'
-                                          : username
-                                              .substring(0, 1)
-                                              .toUpperCase())),
-                                  title: Text(
-                                      '$username — ${u['fullName']}${isFarmer ? ' (Grower ${u['growerId']})' : ''}'),
-                                  subtitle: Text(
-                                      'Roles: ${(u['roles'] as List).join(", ")} • Mobile: ${u['mobile']} • Last login: ${u['lastLoginAt'] ?? 'never'}${u['mustChangePassword'] == true ? ' • PASSWORD CHANGE REQUIRED' : ''}'),
-                                  trailing: Wrap(spacing: 4, children: [
+                                final canEdit = auth.can('User.Edit') &&
+                                    !(u['roles'] as List)
+                                        .contains('Developer') &&
+                                    (auth.hasRole('Developer') ||
+                                        !(u['roles'] as List)
+                                            .contains('Administrator'));
+                                final statusAndEdit = Wrap(
+                                  spacing: 4,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
                                     Chip(
                                         label: Text(
                                             u['status'] == true
@@ -502,12 +543,7 @@ class _UsersScreenState extends State<UsersScreen> {
                                             ? const Color(0xFF2E7D32)
                                             : Colors.grey,
                                         visualDensity: VisualDensity.compact),
-                                    if (auth.can('User.Edit') &&
-                                        !(u['roles'] as List)
-                                            .contains('Developer') &&
-                                        (auth.hasRole('Developer') ||
-                                            !(u['roles'] as List)
-                                                .contains('Administrator')))
+                                    if (canEdit)
                                       IconButton(
                                           tooltip: isFarmer
                                               ? 'Manage farmer login / reset password'
@@ -520,7 +556,63 @@ class _UsersScreenState extends State<UsersScreen> {
                                               : _openForm(
                                                   Map<String, dynamic>.from(
                                                       u))),
-                                  ]),
+                                  ],
+                                );
+                                final details = Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '$username — ${u['fullName']}${isFarmer ? ' (Grower ${u['growerId']})' : ''}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium,
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                        'Roles: ${(u['roles'] as List).join(", ")}'),
+                                    Text('Mobile: ${u['mobile']}'),
+                                    Text(
+                                        'Last login: ${_formatLastLogin(u['lastLoginAt'])}'),
+                                    if (u['mustChangePassword'] == true)
+                                      Text(
+                                        'PASSWORD CHANGE REQUIRED',
+                                        style: TextStyle(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .error,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                  ],
+                                );
+                                if (compact) {
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 10),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        CircleAvatar(
+                                          child: Text(username.isEmpty
+                                              ? '?'
+                                              : username[0].toUpperCase()),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(child: details),
+                                        statusAndEdit,
+                                      ],
+                                    ),
+                                  );
+                                }
+                                return ListTile(
+                                  leading: CircleAvatar(
+                                    child: Text(username.isEmpty
+                                        ? '?'
+                                        : username[0].toUpperCase()),
+                                  ),
+                                  title: details,
+                                  trailing: statusAndEdit,
                                 );
                               },
                             ),
