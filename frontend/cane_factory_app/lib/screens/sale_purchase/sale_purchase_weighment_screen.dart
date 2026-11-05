@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../core/api_client.dart';
@@ -27,6 +28,10 @@ class _SalePurchaseWeighmentScreenState
   final _remark = TextEditingController();
   final _id = TextEditingController();
   final _gst = TextEditingController(text: '0.00');
+  final _itemQuantity = TextEditingController();
+  final _itemType = TextEditingController();
+  final _cutting = TextEditingController(text: '0.00');
+  final _kantaChhoot = TextEditingController(text: '0.00');
   List _items = [], _parties = [], _vehicles = [], _pending = [], _cameras = [];
   int? _itemId, _partyId, _vehicleTypeId;
   Map<String, dynamic>? _selected;
@@ -55,6 +60,10 @@ class _SalePurchaseWeighmentScreenState
     _remark.dispose();
     _id.dispose();
     _gst.dispose();
+    _itemQuantity.dispose();
+    _itemType.dispose();
+    _cutting.dispose();
+    _kantaChhoot.dispose();
     super.dispose();
   }
 
@@ -121,6 +130,12 @@ class _SalePurchaseWeighmentScreenState
       _driver.text = data['driverName'] ?? '';
       _remark.text = data['remark'] ?? '';
       _gst.text = ((data['gstPercent'] as num?) ?? 0).toStringAsFixed(2);
+      _itemQuantity.text = (data['itemQuantity'] as num?)?.toString() ?? '';
+      _itemType.text = data['itemType']?.toString() ?? '';
+      _cutting.text =
+          ((data['cuttingPercent'] as num?) ?? 0).toStringAsFixed(2);
+      _kantaChhoot.text =
+          ((data['kantaChhootKgPerQuintal'] as num?) ?? 0).toStringAsFixed(2);
       _taxSupplyType = data['taxSupplyType']?.toString() == 'INTER_STATE'
           ? 'INTER_STATE'
           : 'INTRA_STATE';
@@ -415,6 +430,30 @@ class _SalePurchaseWeighmentScreenState
       return _toast(
           'Double-click a pending row or enter a SalePurchase ID and press ENTER.',
           error: true);
+    final itemQuantity = double.tryParse(_itemQuantity.text.trim());
+    if (itemQuantity == null || itemQuantity <= 0 || itemQuantity > 1000000) {
+      return _toast(
+          'Enter a valid Item Quantity greater than 0 (bags, boxes or units).',
+          error: true);
+    }
+    final itemType = _itemType.text.trim();
+    // Both deductions are optional. Treat a cleared field exactly like 0 so
+    // operators are not forced to enter a value when no deduction applies.
+    final cuttingText = _cutting.text.trim();
+    final kantaChhootText = _kantaChhoot.text.trim();
+    final cutting = cuttingText.isEmpty ? 0.0 : double.tryParse(cuttingText);
+    final kantaChhoot =
+        kantaChhootText.isEmpty ? 0.0 : double.tryParse(kantaChhootText);
+    if (itemType.isEmpty || itemType.length > 80) {
+      return _toast('Enter Item Type (maximum 80 characters).', error: true);
+    }
+    if (cutting == null || cutting < 0 || cutting > 100) {
+      return _toast('Cutting % must be between 0 and 100.', error: true);
+    }
+    if (kantaChhoot == null || kantaChhoot < 0 || kantaChhoot > 100) {
+      return _toast('Kanta Chhoot must be between 0 and 100 kg per quintal.',
+          error: true);
+    }
     final rateOverride =
         _rateOverrideKey.currentState?.validateAndBuildPayload();
     if (rateOverride == null) {
@@ -426,6 +465,10 @@ class _SalePurchaseWeighmentScreenState
       final res = await ApiClient.instance.dio
           .post('/api/sale-purchase-weighment/gross', data: {
         'salePurchaseId': _selected!['salePurchaseId'],
+        'itemQuantity': itemQuantity,
+        'itemType': itemType,
+        'cuttingPercent': cutting,
+        'kantaChhootKgPerQuintal': kantaChhoot,
         'gstPercent': double.tryParse(_gst.text.trim()) ?? 0,
         'taxSupplyType': _taxSupplyType,
         ...live.saveProof,
@@ -448,6 +491,10 @@ class _SalePurchaseWeighmentScreenState
         _id.clear();
         _itemRate = null;
         _gst.text = '0.00';
+        _itemQuantity.clear();
+        _itemType.clear();
+        _cutting.text = '0.00';
+        _kantaChhoot.text = '0.00';
         _taxSupplyType = 'INTRA_STATE';
         _gross = false;
       });
@@ -490,10 +537,8 @@ class _SalePurchaseWeighmentScreenState
   @override
   Widget build(BuildContext context) {
     final live = context.watch<LiveWeightProvider>().current;
-    final finalWeight = _selected == null
-        ? null
-        : live.weightQuintal -
-            ((_selected!['tareWeightQuintal'] ?? 0) as num).toDouble();
+    final finalWeight =
+        _selected == null ? null : _calculatedFinalWeight(live.weightQuintal);
     return SafeArea(
       child: LayoutBuilder(builder: (context, constraints) {
         final mobile = constraints.maxWidth < 700;
@@ -762,6 +807,70 @@ class _SalePurchaseWeighmentScreenState
           const SizedBox(height: 12),
           Wrap(spacing: 12, runSpacing: 12, children: [
             SizedBox(
+              width: 250,
+              child: TextField(
+                controller: _itemQuantity,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                      RegExp(r'^\d{0,7}(\.\d{0,3})?'))
+                ],
+                decoration: InputDecoration(
+                  labelText: 'Item Quantity (Bags / Boxes / Units)',
+                  hintText: _selected?['item'] == null
+                      ? 'Example: 100'
+                      : '${_selected!['item']} package count',
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 200,
+              child: TextField(
+                controller: _itemType,
+                maxLength: 80,
+                decoration: const InputDecoration(
+                  labelText: 'Item Type',
+                  hintText: 'Example: Bag / Box / Drum',
+                  counterText: '',
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 170,
+              child: TextField(
+                controller: _cutting,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                      RegExp(r'^\d{0,3}(\.\d{0,2})?'))
+                ],
+                decoration: const InputDecoration(
+                  labelText: 'Cutting %',
+                  hintText: 'Example: 2',
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            SizedBox(
+              width: 220,
+              child: TextField(
+                controller: _kantaChhoot,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                      RegExp(r'^\d{0,3}(\.\d{0,2})?'))
+                ],
+                decoration: const InputDecoration(
+                  labelText: 'Kanta Chhoot (kg per Qtl)',
+                  hintText: 'Example: 0.5 or 1',
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            SizedBox(
               width: 160,
               child: TextField(
                 controller: _gst,
@@ -822,6 +931,8 @@ class _SalePurchaseWeighmentScreenState
     final gstAmount = base * gst / 100;
     final intra = _taxSupplyType == 'INTRA_STATE';
     return Wrap(spacing: 16, children: [
+      Text(
+          'Final weight after deductions: ${finalWeight.toStringAsFixed(2)} Qtl'),
       Text('Base: ₹${base.toStringAsFixed(2)}'),
       Text('GST: ₹${gstAmount.toStringAsFixed(2)}'),
       Text(intra
@@ -830,6 +941,16 @@ class _SalePurchaseWeighmentScreenState
       Text('Final: ₹${(base + gstAmount).toStringAsFixed(2)}',
           style: const TextStyle(fontWeight: FontWeight.bold)),
     ]);
+  }
+
+  double _calculatedFinalWeight(double grossWeight) {
+    final tare = ((_selected?['tareWeightQuintal'] ?? 0) as num).toDouble();
+    final net = grossWeight - tare;
+    final cutting = double.tryParse(_cutting.text.trim()) ?? 0;
+    final kantaKg = double.tryParse(_kantaChhoot.text.trim()) ?? 0;
+    final cuttingWeight = net * cutting / 100;
+    final kantaWeight = net * kantaKg / 100;
+    return net - cuttingWeight - kantaWeight;
   }
 
   String get _rateText {

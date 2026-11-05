@@ -43,12 +43,14 @@ class _NavItem {
   final List<String> anyRoles;
   final List<String> excludedRoles;
   final bool androidOnly;
+  final bool requiresWeighmentCorrectionAuthority;
   const _NavItem(this.label, this.icon, this.permission, this.builder,
       {this.roleOnly,
       this.anyPermissions = const [],
       this.anyRoles = const [],
       this.excludedRoles = const [],
-      this.androidOnly = false});
+      this.androidOnly = false,
+      this.requiresWeighmentCorrectionAuthority = false});
 }
 
 /// Role-aware application shell. Menu items are hidden without permission,
@@ -94,7 +96,8 @@ class _AppShellState extends State<AppShell> {
     _NavItem('Weighment Corrections', Icons.edit_note_outlined, 'Purchase.Edit',
         () => const WeighmentCorrectionsScreen(),
         anyPermissions: ['SalePurchase.Edit'],
-        anyRoles: ['Admin', 'Developer']),
+        anyRoles: ['Admin', 'Developer'],
+        requiresWeighmentCorrectionAuthority: true),
     _NavItem(
         'Loans', Icons.savings_outlined, 'Loan.View', () => const LoanScreen()),
     _NavItem('Reports', Icons.summarize_outlined, 'Report.View',
@@ -130,8 +133,32 @@ class _AppShellState extends State<AppShell> {
         () => const AuditScreen()),
     _NavItem('User Guide', Icons.menu_book_outlined, 'UserGuide.View',
         () => const UserGuideScreen()),
-    _NavItem('Contact / About Us', Icons.contact_support_outlined, '',
-        () => const CompanyPublicScreen()),
+    _NavItem(
+        'Request Quotation',
+        Icons.request_quote_outlined,
+        '',
+        () => const CompanyPublicScreen(
+            key: ValueKey('quotation'),
+            initialSection: 4,
+            showSections: false)),
+    _NavItem(
+        'Services',
+        Icons.miscellaneous_services_outlined,
+        '',
+        () => const CompanyPublicScreen(
+            key: ValueKey('services'), initialSection: 1, showSections: false)),
+    _NavItem(
+        'Contact',
+        Icons.contact_phone_outlined,
+        '',
+        () => const CompanyPublicScreen(
+            key: ValueKey('contact'), initialSection: 2, showSections: false)),
+    _NavItem(
+        'About Us',
+        Icons.info_outline,
+        '',
+        () => const CompanyPublicScreen(
+            key: ValueKey('about'), initialSection: 3, showSections: false)),
   ];
 
   @override
@@ -183,7 +210,9 @@ class _AppShellState extends State<AppShell> {
                 auth.roles.every(i.excludedRoles.contains)) &&
             (!i.androidOnly ||
                 (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)) &&
-            (i.anyRoles.isEmpty || i.anyRoles.any(auth.hasRole)))
+            (i.anyRoles.isEmpty || i.anyRoles.any(auth.hasRole)) &&
+            (!i.requiresWeighmentCorrectionAuthority ||
+                auth.canAuthorizeWeighmentCorrections))
         .toList();
     if (items.isEmpty) {
       return Scaffold(

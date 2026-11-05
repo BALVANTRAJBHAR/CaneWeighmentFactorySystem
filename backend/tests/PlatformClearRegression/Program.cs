@@ -101,11 +101,23 @@ db.ChangeTracker.Clear();
 Reading(0);
 var saleController = (SalePurchaseWeighmentController)controllers[1].Controller;
 var tareRequest = new SalePurchaseTareSaveRequest { IdempotencyKey = "repeat-low-tare" };
-var grossRequest = new SalePurchaseGrossSaveRequest { SalePurchaseId = 999, IdempotencyKey = "repeat-low-gross" };
+var grossRequest = new SalePurchaseGrossSaveRequest
+{
+    SalePurchaseId = 999,
+    ItemQuantity = 1,
+    ItemType = "Bag",
+    IdempotencyKey = "repeat-low-gross"
+};
 for (var attempt = 1; attempt <= 2; attempt++)
 {
     Check(IsMinimumConflict(await saleController.SaveTare(tareRequest)), $"sale tare low-weight attempt {attempt}");
     Check(IsMinimumConflict(await saleController.SaveGross(grossRequest)), $"sale gross low-weight attempt {attempt}");
+}
+
+if (args.Contains("--minimum-only"))
+{
+    Console.WriteLine($"PASS: {checks} platform-lock and Sale tare/gross minimum-weight checks.");
+    return;
 }
 
 // UI blocks future dates, and the API independently rejects them so a direct

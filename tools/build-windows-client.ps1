@@ -28,26 +28,37 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $flutterProject = Join-Path $projectRoot 'frontend\cane_factory_app'
 $releaseFolder = Join-Path $flutterProject 'build\windows\x64\runner\Release'
 
+if ((Test-Path -LiteralPath $OutputDirectory) -and
+    (Get-ChildItem -LiteralPath $OutputDirectory -Force | Select-Object -First 1)) {
+    throw "Output directory is not empty: $OutputDirectory. Choose a new empty directory so an existing client package is not overwritten."
+}
+
 Push-Location $flutterProject
 try {
+    # Cloud and LAN packages use different compile-time endpoints. A clean is
+    # required so Flutter cannot reuse an AOT snapshot built for another URL.
+    flutter clean
+    if ($LASTEXITCODE -ne 0) { throw 'flutter clean failed.' }
+
     flutter pub get
     if ($LASTEXITCODE -ne 0) { throw 'flutter pub get failed.' }
 
-    $dartDefines = @("--dart-define=API_BASE_URL=$ApiBaseUrl")
+    $dartDefines = @(
+        "--dart-define=API_BASE_URL=$ApiBaseUrl",
+        '--dart-define=LOCK_COMPILED_ENDPOINTS=true'
+    )
     if (![string]::IsNullOrWhiteSpace($CameraEdgeApiBaseUrl)) {
         $dartDefines += "--dart-define=CAMERA_EDGE_API_BASE_URL=$CameraEdgeApiBaseUrl"
     }
-    flutter build windows --release @dartDefines
+    # Keep the complete Material icon font. The trimmed font has produced
+    # missing-glyph boxes in cloud Windows packages.
+    flutter build windows --release --no-tree-shake-icons @dartDefines
     if ($LASTEXITCODE -ne 0) { throw 'Windows release build failed.' }
 }
 finally {
     Pop-Location
 }
 
-if ((Test-Path -LiteralPath $OutputDirectory) -and
-    (Get-ChildItem -LiteralPath $OutputDirectory -Force | Select-Object -First 1)) {
-    throw "Output directory is not empty: $OutputDirectory. Choose a new empty directory so an existing client package is not overwritten."
-}
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 Get-ChildItem -LiteralPath $releaseFolder -Force |
     Copy-Item -Destination $OutputDirectory -Recurse -Force
@@ -68,6 +79,21 @@ $printerToolsFolder = Join-Path $OutputDirectory 'tools'
 New-Item -ItemType Directory -Path $printerToolsFolder -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'configure-epson-raw-queue.ps1') `
     -Destination (Join-Path $printerToolsFolder 'configure-epson-raw-queue.ps1') -Force
+
+# Keep a human-readable, non-secret record beside the client. It makes it
+# possible to verify an installed package without inspecting the executable.
+$endpointManifest = [ordered]@{
+    apiBaseUrl = $ApiBaseUrl.TrimEnd('/')
+    cameraEdgeApiBaseUrl = $(if ([string]::IsNullOrWhiteSpace($CameraEdgeApiBaseUrl)) {
+        $ApiBaseUrl.TrimEnd('/')
+    } else {
+        $CameraEdgeApiBaseUrl.TrimEnd('/')
+    })
+    compiledEndpointsLocked = $true
+    builtAtUtc = [DateTime]::UtcNow.ToString('O')
+}
+$endpointManifest | ConvertTo-Json | Set-Content `
+    -LiteralPath (Join-Path $OutputDirectory 'client-endpoints.json') -Encoding UTF8
 
 if (![string]::IsNullOrWhiteSpace($CodeSigningCertificateThumbprint)) {
     $normalizedThumbprint = $CodeSigningCertificateThumbprint.Replace(' ', '').ToUpperInvariant()

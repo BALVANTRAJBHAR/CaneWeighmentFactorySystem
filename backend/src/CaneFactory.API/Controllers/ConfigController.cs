@@ -632,16 +632,39 @@ public class ConfigController : ControllerBase
     // ---------------------------------------------------------------- PRINT
     [HasPermission("Print.View")]
     [HttpGet("print")]
-    public async Task<IActionResult> GetPrint() => Ok(await _db.PrintConfigs.FirstOrDefaultAsync(p => !p.IsDeleted));
+    public async Task<IActionResult> GetPrint()
+    {
+        var config = await _db.PrintConfigs.AsNoTracking().FirstOrDefaultAsync(p => !p.IsDeleted);
+        if (config == null) return NotFound(new { message = "Print configuration was not found." });
+        config.SalePurchaseInvoicePrinterType = config.PrinterType;
+        var response = new PrintConfigurationRequest();
+        foreach (var property in typeof(PrintConfig).GetProperties()
+                     .Where(x => x.CanRead && x.CanWrite))
+            property.SetValue(response, property.GetValue(config));
+        var company = await _db.CompanyConfigs.AsNoTracking().FirstOrDefaultAsync(x => !x.IsDeleted);
+        if (company != null)
+        {
+            response.InvoiceRoadStreet = company.InvoiceRoadStreet;
+            response.InvoiceNearbyLandmark = company.InvoiceNearbyLandmark;
+            response.InvoiceLocality = company.InvoiceLocality;
+            response.InvoiceCity = company.InvoiceCity;
+            response.InvoiceDistrict = company.InvoiceDistrict;
+            response.InvoiceState = company.InvoiceState;
+            response.InvoicePinCode = company.InvoicePinCode;
+            response.InvoicePhone = company.InvoicePhone;
+            response.InvoiceEmail = company.InvoiceEmail;
+            response.InvoiceGstin = company.InvoiceGstin;
+            response.InvoiceTermsAndConditions = company.InvoiceTermsAndConditions;
+        }
+        return Ok(response);
+    }
 
     [HasPermission("Print.Configure")]
     [HttpPut("print")]
-    public async Task<IActionResult> UpdatePrint([FromBody] PrintConfig src)
+    public async Task<IActionResult> UpdatePrint([FromBody] PrintConfigurationRequest src)
     {
         var p = await _db.PrintConfigs.FirstAsync(x => !x.IsDeleted);
         if (src.PrinterType is not ("DotMatrix" or "A4")) return BadRequest(new { message = "PrinterType must be DotMatrix or A4." });
-        if (src.SalePurchaseInvoicePrinterType is not ("DotMatrix" or "A4"))
-            return BadRequest(new { message = "Sale Weighment Invoice Printer Type must be DotMatrix or A4." });
         if (src.DotMatrixPageLines is < 80 or > 180 || src.DotMatrixPageLines % 2 != 0)
             return BadRequest(new { message = "Dot Matrix Page Lines must be an even value between 80 and 180." });
         if (src.DotMatrixHalfPageLines is < 40 or > 90 || src.DotMatrixHalfPageLines * 2 != src.DotMatrixPageLines)
@@ -699,6 +722,7 @@ public class ConfigController : ControllerBase
             p.SalePurchaseGrossCopies,
             p.SalePurchaseTareCopies,
             p.SalePurchaseInvoiceEnabled,
+            p.SalePurchaseAmountCalculationPrintEnabled,
             p.SalePurchaseInvoicePrinterType,
             p.DotMatrixPrintHeader,
             p.DotMatrixPageLines,
@@ -735,7 +759,8 @@ public class ConfigController : ControllerBase
         p.SalePurchaseGrossCopies = Math.Clamp(src.SalePurchaseGrossCopies, 0, 5);
         p.SalePurchaseTareCopies = Math.Clamp(src.SalePurchaseTareCopies, 0, 5);
         p.SalePurchaseInvoiceEnabled = src.SalePurchaseInvoiceEnabled;
-        p.SalePurchaseInvoicePrinterType = src.SalePurchaseInvoicePrinterType;
+        p.SalePurchaseAmountCalculationPrintEnabled = src.SalePurchaseAmountCalculationPrintEnabled;
+        p.SalePurchaseInvoicePrinterType = p.PrinterType;
         p.Language = src.Language;
         p.DotMatrixPrintHeader = src.DotMatrixPrintHeader;
         p.DotMatrixPageLines = src.DotMatrixPageLines;
@@ -757,6 +782,23 @@ public class ConfigController : ControllerBase
             ? "{}" : src.DotMatrixPrinterProfilesJson;
         p.UpdatedAt = DateTime.UtcNow;
         p.UpdatedBy = _current.UserId;
+        var company = await _db.CompanyConfigs.FirstOrDefaultAsync(x => !x.IsDeleted);
+        if (company != null)
+        {
+            company.InvoiceRoadStreet = NullIfBlank(src.InvoiceRoadStreet);
+            company.InvoiceNearbyLandmark = NullIfBlank(src.InvoiceNearbyLandmark);
+            company.InvoiceLocality = NullIfBlank(src.InvoiceLocality);
+            company.InvoiceCity = NullIfBlank(src.InvoiceCity);
+            company.InvoiceDistrict = NullIfBlank(src.InvoiceDistrict);
+            company.InvoiceState = NullIfBlank(src.InvoiceState);
+            company.InvoicePinCode = NullIfBlank(src.InvoicePinCode);
+            company.InvoicePhone = NullIfBlank(src.InvoicePhone);
+            company.InvoiceEmail = NullIfBlank(src.InvoiceEmail);
+            company.InvoiceGstin = NullIfBlank(src.InvoiceGstin);
+            company.InvoiceTermsAndConditions = NullIfBlank(src.InvoiceTermsAndConditions);
+            company.UpdatedAt = DateTime.UtcNow;
+            company.UpdatedBy = _current.UserId;
+        }
         await _db.SaveChangesAsync();
         await _audit.LogAsync("PrintConfiguration", "Print", "PrintConfig", p.Id.ToString(), oldValue: old, newValue: src);
         return Ok(new { message = "Print configuration saved successfully." });
@@ -966,7 +1008,7 @@ public class ConfigController : ControllerBase
 
         var apiKey = cfg.ApiKeyEncrypted != null ? _protector.Unprotect(cfg.ApiKeyEncrypted) : null;
         var apiSecret = cfg.ApiSecretEncrypted != null ? _protector.Unprotect(cfg.ApiSecretEncrypted) : null;
-        var message = string.IsNullOrWhiteSpace(req.Message) ? "This is a test SMS from CaneFactory System." : req.Message;
+        var message = string.IsNullOrWhiteSpace(req.Message) ? "This is a test SMS from Sugarcane Factory System." : req.Message;
         var mobile = req.MobileNumber.Trim();
         if (cfg.ProviderType == "ANDROID_SIM")
         {
@@ -1006,7 +1048,7 @@ public class ConfigController : ControllerBase
         return Ok(new
         {
             c.Id, c.CompanyName, c.CompanyNameHi, c.Address, c.AddressHi, c.LogoPath,
-            c.ContactMobile1, c.ContactMobile2, c.ContactEmail,
+            c.ContactMobile1, c.ContactMobile2, c.ContactEmail, c.DeveloperEmail,
             c.InstagramUrl, c.FacebookUrl, c.TwitterUrl, c.YoutubeUrl, c.LinkedinUrl,
             c.SmtpHost, c.SmtpPort, c.SmtpUsername,
             smtpPasswordSet = !string.IsNullOrEmpty(c.SmtpPasswordEncrypted),
@@ -1024,34 +1066,21 @@ public class ConfigController : ControllerBase
     [RequestSizeLimit(2_500_000)]
     public async Task<IActionResult> UploadCompanyLogo([FromForm] IFormFile logo)
     {
-        if (logo == null || logo.Length == 0)
-            return BadRequest(new { message = "Select a PNG or JPG logo." });
-        if (logo.Length > 2_000_000)
-            return BadRequest(new { message = "Logo must be 2 MB or smaller." });
-        var extension = Path.GetExtension(logo.FileName).ToLowerInvariant();
-        if (extension is not (".png" or ".jpg" or ".jpeg") ||
-            logo.ContentType.ToLowerInvariant() is not ("image/png" or "image/jpeg"))
-            return BadRequest(new { message = "Logo must be a valid PNG or JPG image." });
-
-        await using var input = logo.OpenReadStream();
-        using var memory = new MemoryStream();
-        await input.CopyToAsync(memory);
-        var bytes = memory.ToArray();
+        if (Request.Form.Files.Count != 1)
+            return BadRequest(new { message = "Select exactly one logo image." });
+        SafeImageUpload.Result checkedLogo;
         try
         {
-            using var bitmap = SkiaSharp.SKBitmap.Decode(bytes);
-            if (bitmap == null || bitmap.Width <= 0 || bitmap.Height <= 0)
-                return BadRequest(new { message = "The selected logo image could not be decoded." });
+            checkedLogo = await SafeImageUpload.ValidateAsync(logo, 2_000_000, 16_000_000,
+                _configuration, HttpContext.RequestAborted);
         }
-        catch
-        {
-            return BadRequest(new { message = "The selected logo image is invalid." });
-        }
+        catch (InvalidDataException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return StatusCode(503, new { message = ex.Message }); }
 
         var c = await _db.CompanyConfigs.FirstAsync(x => !x.IsDeleted);
-        c.LogoData = bytes;
-        c.LogoContentType = logo.ContentType.ToLowerInvariant();
-        c.LogoPath = $"database://company-logo/{Path.GetFileName(logo.FileName)}";
+        c.LogoData = checkedLogo.Bytes;
+        c.LogoContentType = checkedLogo.ContentType;
+        c.LogoPath = $"database://company-logo/logo{checkedLogo.Extension}";
         c.UpdatedAt = DateTime.UtcNow;
         c.UpdatedBy = _current.UserId;
         await _db.SaveChangesAsync();
@@ -1085,6 +1114,7 @@ public class ConfigController : ControllerBase
         c.ContactMobile1 = NullIfBlank(src.ContactMobile1);
         c.ContactMobile2 = NullIfBlank(src.ContactMobile2);
         c.ContactEmail = NullIfBlank(src.ContactEmail);
+        c.DeveloperEmail = NullIfBlank(src.DeveloperEmail);
         c.InstagramUrl = NullIfBlank(src.InstagramUrl);
         c.FacebookUrl = NullIfBlank(src.FacebookUrl);
         c.TwitterUrl = NullIfBlank(src.TwitterUrl);

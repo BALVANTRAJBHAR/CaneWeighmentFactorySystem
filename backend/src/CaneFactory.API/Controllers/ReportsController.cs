@@ -238,7 +238,7 @@ public class ReportsController : ControllerBase
         var totals = new List<(string, string)>
         {
             ("Total Sale Purchase (Rs)", salePurchaseAmount.ToString("F2")),
-            ("Total Cane Purchase (Rs)", canePurchaseAmount.ToString("F2")),
+            ("Total Sugarcane Purchase (Rs)", canePurchaseAmount.ToString("F2")),
             ("Total Expense (Rs)", expenseAmount.ToString("F2")),
             ("Profit (Rs)", profit.ToString("F2"))
         };
@@ -261,9 +261,9 @@ public class ReportsController : ControllerBase
         var rows = new List<List<string>>
         {
             new() { "Total Sale Purchase", salePurchaseAmount.ToString("F2"), saleCount.ToString(), "Completed sale purchases" },
-            new() { "Total Cane Purchase", canePurchaseAmount.ToString("F2"), purchaseCount.ToString(), "Completed cane purchases" },
+            new() { "Total Sugarcane Purchase", canePurchaseAmount.ToString("F2"), purchaseCount.ToString(), "Completed sugarcane purchases" },
             new() { "Total Expense", expenseAmount.ToString("F2"), expenseCount.ToString(), "Saved expenses" },
-            new() { "Profit", profit.ToString("F2"), "-", "Sale Purchase - Cane Purchase - Expense" }
+            new() { "Profit", profit.ToString("F2"), "-", "Sale Purchase - Sugarcane Purchase - Expense" }
         };
         return ExportFile("Profit-Loss-Report", format, "Profit / Loss Report",
             GeneratedSubtitle(), headers, rows, totals);
@@ -383,7 +383,7 @@ public class ReportsController : ControllerBase
         return ExportFile("Daily-Cash-Profit-Loss-Report", format, "Daily Cash & Profit / Loss Report",
             GeneratedSubtitle(), new List<string> { "Date", "Cash Book Expense", "Farmer Paid", "Other Paid",
                 "Expense Module", "Cash Received", "Cash Received Before Withdrawal", "Closing Withdrawal", "Sale Product",
-                "Cane Purchase", "Profit / Loss", "Result" }, rows, exportTotals);
+                "Sugarcane Purchase", "Profit / Loss", "Result" }, rows, exportTotals);
     }
 
     // ---------------------------------------------------------------- PURCHASES
@@ -517,7 +517,7 @@ public class ReportsController : ControllerBase
             r.FinalWeightQuintal?.ToString("F2") ?? "-", r.Rate.ToString("F2"), r.PurchaseAmount?.ToString("F2") ?? "-",
             r.PurchaseDate.HasValue ? IndiaTime.Format(r.PurchaseDate.Value) : "-", r.GrossTareStatus, r.PaymentStatus
         }).ToList();
-        return ExportFile("Cane-Purchase-Report", format, "Cane Purchase Report",
+        return ExportFile("Sugarcane-Purchase-Report", format, "Sugarcane Purchase Report",
             GeneratedSubtitle(), headers, tableRows, totals);
     }
 
@@ -657,7 +657,7 @@ public class ReportsController : ControllerBase
         var totals = new List<(string, string)>
         {
             ("Rate Changes", totalCount.ToString()),
-            ("Cane", caneCount.ToString()),
+            ("Sugarcane", caneCount.ToString()),
             ("Sale", saleCount.ToString()),
             ("Average Rate Reduction", averageRateDifference.ToString("F2"))
         };
@@ -876,6 +876,9 @@ public class ReportsController : ControllerBase
         if (ValidateFormat(format) is { } fe) return fe;
         if (ValidateDates(ref fromDate, ref toDate) is { } dateError) return dateError;
         var q = _db.SalePurchases.AsNoTracking().Where(x => !x.IsDeleted);
+        var printAmountCalculation = await _db.PrintConfigs.AsNoTracking().Where(x => !x.IsDeleted)
+            .Select(x => (bool?)x.SalePurchaseAmountCalculationPrintEnabled)
+            .FirstOrDefaultAsync() ?? true;
         // Either event must itself be inside the range; do not match a range
         // merely because tare is before it and gross is after it.
         if (fromDate.HasValue || toDate.HasValue)
@@ -896,7 +899,8 @@ public class ReportsController : ControllerBase
         var projection = q.Select(x => new
         {
             salePurchaseId = x.Id, item = x.Item.ItemName, party = x.Party.PartyName, vehicleType = x.VehicleType.VehicleTypeName,
-            x.VehicleNumber, driver = x.DriverName, x.TareWeightQuintal, x.GrossWeightQuintal, x.FinalWeightQuintal,
+            x.VehicleNumber, driver = x.DriverName, x.ItemQuantity, x.ItemType, x.CuttingPercent, x.CuttingWeightQuintal,
+            x.KantaChhootKgPerQuintal, x.KantaChhootWeightQuintal, x.TareWeightQuintal, x.GrossWeightQuintal, x.FinalWeightQuintal,
             x.Rate, x.Amount, x.GstPercent, x.GstAmount, x.FinalAmount, tareOperator = x.TareByUserName, grossOperator = x.GrossByUserName,
             x.TareDateTime, x.GrossDateTime, status = x.WeighmentStatus
         });
@@ -907,12 +911,25 @@ public class ReportsController : ControllerBase
             return Ok(new { items, totalCount = count, page, pageSize, totals = new { count, totalFinal, totalAmount, totalGst, totalFinalAmount } });
         }
         var rows = await projection.Take(5000).ToListAsync();
-        var headers = new List<string> { "SalePurchase ID", "Item", "Party", "Vehicle Type", "Vehicle Number", "Driver", "Tare (Qtl)", "Gross (Qtl)", "Final (Qtl)", "Rate", "Base Amount", "GST %", "GST Amount", "Final Amount", "Tare Operator", "Gross Operator", "Tare Date/Time", "Gross Date/Time", "Status" };
-        var tableRows = rows.Select(x => new List<string> { x.salePurchaseId.ToString(), x.item, x.party, x.vehicleType, x.VehicleNumber, x.driver,
-            x.TareWeightQuintal.ToString("F2"), x.GrossWeightQuintal?.ToString("F2") ?? "-", x.FinalWeightQuintal?.ToString("F2") ?? "-",
-            x.Rate?.ToString("F2") ?? "-", x.Amount?.ToString("F2") ?? "-", x.GstPercent.ToString("F2"), x.GstAmount?.ToString("F2") ?? "-", x.FinalAmount?.ToString("F2") ?? "-", x.tareOperator, x.grossOperator ?? "-",
-            IndiaTime.Format(x.TareDateTime), x.GrossDateTime.HasValue ? IndiaTime.Format(x.GrossDateTime.Value) : "-", x.status }).ToList();
-        return ExportFile("Sale-Product-Report", format, "Sale Product Report", GeneratedSubtitle(), headers, tableRows, totals);
+        var headers = new List<string> { "SalePurchase ID", "Item", "Item Type", "Item Quantity (Bags/Boxes/Units)", "Party", "Vehicle Type", "Vehicle Number", "Driver", "Tare (Qtl)", "Gross (Qtl)" };
+        if (printAmountCalculation)
+            headers.AddRange(["Cutting %", "Cutting (Qtl)", "Kanta Chhoot (Kg/Qtl)", "Kanta Chhoot (Qtl)", "Final (Qtl)", "Rate", "Amount Without GST", "GST %", "GST Amount", "Final Amount"]);
+        headers.AddRange(["Tare Operator", "Gross Operator", "Tare Date/Time", "Gross Date/Time", "Status"]);
+
+        var tableRows = rows.Select(x =>
+        {
+            var row = new List<string> { x.salePurchaseId.ToString(), x.item, x.ItemType ?? "-", x.ItemQuantity?.ToString("0.###") ?? "-", x.party, x.vehicleType, x.VehicleNumber, x.driver,
+                x.TareWeightQuintal.ToString("F2"), x.GrossWeightQuintal?.ToString("F2") ?? "-" };
+            if (printAmountCalculation)
+                row.AddRange([x.CuttingPercent.ToString("F2"), x.CuttingWeightQuintal?.ToString("F2") ?? "-", x.KantaChhootKgPerQuintal.ToString("F2"),
+                    x.KantaChhootWeightQuintal?.ToString("F2") ?? "-", x.FinalWeightQuintal?.ToString("F2") ?? "-", x.Rate?.ToString("F2") ?? "-",
+                    x.Amount?.ToString("F2") ?? "-", x.GstPercent.ToString("F2"), x.GstAmount?.ToString("F2") ?? "-", x.FinalAmount?.ToString("F2") ?? "-"]);
+            row.AddRange([x.tareOperator, x.grossOperator ?? "-", IndiaTime.Format(x.TareDateTime),
+                x.GrossDateTime.HasValue ? IndiaTime.Format(x.GrossDateTime.Value) : "-", x.status]);
+            return row;
+        }).ToList();
+        var exportTotals = printAmountCalculation ? totals : new List<(string, string)> { ("Total Records", count.ToString()) };
+        return ExportFile("Sale-Product-Report", format, "Sale Product Report", GeneratedSubtitle(), headers, tableRows, exportTotals);
     }
 
     /// <summary>Date-wise completed sale invoices with the immutable GST split captured at final weighment.</summary>
@@ -924,6 +941,9 @@ public class ReportsController : ControllerBase
             return StatusCode(403, new { message = "You do not have permission to view or export SalePurchase tax reports." });
         if (ValidateFormat(format) is { } formatError) return formatError;
         if (ValidateDates(ref fromDate, ref toDate) is { } dateError) return dateError;
+        var printAmountCalculation = await _db.PrintConfigs.AsNoTracking().Where(x => !x.IsDeleted)
+            .Select(x => (bool?)x.SalePurchaseAmountCalculationPrintEnabled)
+            .FirstOrDefaultAsync() ?? true;
         var query = _db.SalePurchases.AsNoTracking().Where(x => !x.IsDeleted && x.WeighmentStatus == "COMPLETED" && x.GrossDateTime != null);
         if (fromDate.HasValue) query = query.Where(x => x.GrossDateTime >= fromDate.Value);
         if (toDate.HasValue) query = query.Where(x => x.GrossDateTime < toDate.Value);
@@ -937,8 +957,16 @@ public class ReportsController : ControllerBase
         }).ToListAsync();
         var totals = new { count = rows.Count, partyAmount = rows.Sum(x => x.PartyAmount), salesAmount = rows.Sum(x => x.SalesAmount), sgstAmount = rows.Sum(x => x.SgstAmount), cgstAmount = rows.Sum(x => x.CgstAmount), igstAmount = rows.Sum(x => x.IgstAmount) };
         if (format == "json") return Ok(new { items = rows, totals });
-        if (format == "excel")
+        if (format == "excel" && printAmountCalculation)
             return File(_export.ToSaleTaxExcel(rows, GeneratedSubtitle()), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Sale-Purchase-Tax-Report.xlsx");
+        if (!printAmountCalculation)
+        {
+            var safeHeaders = new List<string> { "Date", "Voucher No", "Vehicle Number", "Party", "Tax Type" };
+            var safeRows = rows.Select(x => new List<string> { IndiaTime.Format(x.Date), x.SalePurchaseId.ToString(), x.VehicleNumber, x.PartyName,
+                x.TaxSupplyType == "INTER_STATE" ? "Inter-state" : "Intra-state" }).ToList();
+            return ExportFile("Sale-Purchase-Tax-Report", format, "Sale Purchase Tax Report", GeneratedSubtitle(), safeHeaders, safeRows,
+                new() { ("Total Records", rows.Count.ToString()) });
+        }
         var headers = new List<string> { "Date", "Voucher No", "Vehicle Number", "Party", "Party Amount", "Sales %", "Sales Amount", "Tax Type", "SGST", "CGST", "IGST" };
         var pdfRows = rows.Select(x => new List<string> { IndiaTime.Format(x.Date), x.SalePurchaseId.ToString(), x.VehicleNumber, x.PartyName, x.PartyAmount.ToString("F2"), x.SalesPercent.ToString("F2"), x.SalesAmount.ToString("F2"), x.TaxSupplyType == "INTER_STATE" ? "Inter-state" : "Intra-state", x.SgstAmount.ToString("F2"), x.CgstAmount.ToString("F2"), x.IgstAmount.ToString("F2") }).ToList();
         return ExportFile("Sale-Purchase-Tax-Report", format, "Sale Purchase Tax Report", GeneratedSubtitle(), headers, pdfRows,

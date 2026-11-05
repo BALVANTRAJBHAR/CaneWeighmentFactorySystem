@@ -36,6 +36,11 @@ public class PrintDocument
     /// <summary>Rendered two-per-line (left pair / right pair) by both renderers.</summary>
     public List<PrintRow> Rows { get; set; } = new();
 
+    /// <summary>Optional compact rows used only by the A4 renderer. Dot-matrix
+    /// continues to use Rows so its calibrated output remains unchanged.</summary>
+    public List<PrintRow>? A4Rows { get; set; }
+    public bool IsSalePurchaseDocument { get; set; }
+
     /// <summary>Evidence images rendered below the weighment details on A4 slips.</summary>
     public List<PrintImage> Images { get; set; } = new();
     public bool PrintImages { get; set; } = true;

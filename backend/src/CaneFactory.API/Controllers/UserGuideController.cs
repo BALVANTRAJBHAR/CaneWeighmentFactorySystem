@@ -122,7 +122,7 @@ public class UserGuideController : ControllerBase
             "Use the register to review principal, recovery and outstanding balance. Cancellation/reversal requires an authorised reason and keeps history.");
 
         Add("Report.View", "Reports",
-            "Select a report such as Cane Purchase Report, Rate Change Approval, Payment, Sale Product, Loan, Daily Collection, Cash Book or Profit/Loss.",
+            "Select a report such as Sugarcane Purchase Report, Rate Change Approval, Payment, Sale Product, Loan, Daily Collection, Cash Book or Profit/Loss.",
             "Choose From Date and To Date, enter the optional Grower/Transaction/Vehicle/Status filter, then click Search.",
             "Use the pinned bottom scrollbar to inspect every column regardless of vertical position. Totals appear above the grid.",
             "Print (PDF) creates the formatted report; Export (Excel) downloads the same filtered data. Rate Change Approval includes approver, reason, remark and secure attachment View.");
@@ -178,7 +178,7 @@ public class UserGuideController : ControllerBase
                 "Use Test Parser with sample hex: 02 20 30 30 31 35 30 30 03 0D 0A → expect +1500 KG, FRAME VALID.",
                 "Only one device configuration can be ACTIVE. History of every change is stored and auditable." }),
             new Section("4. Weight Rules & Sound", new[]{
-                "Configure Minimum Weight (Quintal), apply-to flags for Gross/Tare/CanePurchase/SalePurchase.",
+                "Configure Minimum Weight (Quintal), apply-to flags for Gross, Tare, Sugarcane Purchase and Sale Weighment.",
                 "If a restart leaves the vehicle-clear safety lock stuck, physically verify that the platform is empty, then use Configuration → Weight Rules → Developer Unlock and enter an audit reason.",
                 "Sound Configuration: language (Hindi/English), volume, speech rate, repeat mode (OFF/ONCE/TWICE/CONTINUOUS) and interval.",
                 "Edit announcement text per event: Below Minimum, Weighing Active, Weighment Completed." }),
@@ -186,9 +186,9 @@ public class UserGuideController : ControllerBase
                 "Cameras 1-6: vendor (Hikvision/CP Plus/Dahua/Uniview/ONVIF/RTSP), IP, port, credentials (stored encrypted), capture & live-view switches.",
                 "Global switches: CameraSystemEnabled and ImageCaptureEnabled control all transaction captures.",
                 "SMS: generic HTTP provider - API URL, key/secret (encrypted), sender ID, DLT templates. Test before enabling.",
-                "Reports: Purchase/Payment/Loan/Daily Collection and Rate Change Approval - filter records, view totals, Print (PDF) or Export (Excel). The Rate Change Approval report shows Cane/Sale master rate, approved rate, approver, reason, remark and secure attachment preview.",
+                "Reports: Purchase/Payment/Loan/Daily Collection and Rate Change Approval - filter records, view totals, Print (PDF) or Export (Excel). The Rate Change Approval report shows Sugarcane/Sale master rate, approved rate, approver, reason, remark and secure attachment preview.",
                 "Farmer Portal: farmers get a read-only My Dashboard + Statement, always scoped to their own account only.",
-                "Print: printer type (Dot Matrix/A4), copies per document, Auto Print switch. Dot Matrix cane/sale slips use two fixed half-page sections; turn Print Header OFF for pre-printed stationery and tune Header Reserved Height/Page Lines for the installed paper.",
+                "Print: printer type (Dot Matrix/A4), copies per document, Auto Print switch. Dot Matrix sugarcane/sale slips use two fixed half-page sections; turn Print Header OFF for pre-printed stationery and tune Header Reserved Height/Page Lines for the installed paper.",
                 "Backup: Frequency/Time/Retention/Folder policy - generates the SQL backup script and Task Scheduler XML for you.",
                 "Storage root default D:\\CanePaymentData - configurable in System Settings. Backup guide is in docs/BACKUP_GUIDE.md." }),
             new Section("6. Security & Users", new[]{
@@ -286,7 +286,7 @@ public class UserGuideController : ControllerBase
         {
             new Section("1. Overview", new[]{
                 "You operate the separate Sugar/Gud/Bagasse/Molasses SalePurchase weighment module.",
-                "You do NOT have access to cane payment, loans, user management or developer configuration." }),
+                "You do NOT have access to sugarcane payment, loans, user management or developer configuration." }),
             new Section("2. Workflow (TARE first)", new[]{
                 "1. Select Item and Party, Vehicle Type/Number, Driver Name, Remark.",
                 "2. Save TARE - the vehicle appears in the pending tare grid.",

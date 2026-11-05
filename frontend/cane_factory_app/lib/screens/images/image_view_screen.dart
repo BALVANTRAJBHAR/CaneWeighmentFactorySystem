@@ -21,7 +21,7 @@ enum _ImageSource {
       };
 
   String get label => switch (this) {
-        _ImageSource.purchase => 'Cane Purchase',
+        _ImageSource.purchase => 'Sugarcane Purchase',
         _ImageSource.salePurchase => 'Sale / Purchase',
         _ImageSource.payment => 'Payment',
         _ImageSource.rateEdit => 'Rate Update Image',
@@ -32,7 +32,7 @@ enum _ImageSource {
         _ImageSource.salePurchase => 'Sale ID or Party Name',
         _ImageSource.payment =>
           'Payment ID, Advice Number, Grower ID or Grower Name',
-        _ImageSource.rateEdit => 'Cane Purchase ID or Sale ID',
+        _ImageSource.rateEdit => 'Sugarcane Purchase ID or Sale ID',
       };
 }
 
@@ -241,7 +241,7 @@ class _ImageViewScreenState extends State<ImageViewScreen> {
         _ImageSource.payment =>
           'Payment ID or Advice Number returns matching images. Grower ID or Name can return multiple payments.',
         _ImageSource.rateEdit =>
-          'Enter an exact Cane Purchase ID or Sale ID. Only evidence used by a completed rate change is shown.',
+          'Enter an exact Sugarcane Purchase ID or Sale ID. Only evidence used by a completed rate change is shown.',
       };
 }
 
@@ -328,7 +328,7 @@ class _ImageResultCard extends StatelessWidget {
         ),
       'rate-edit' => (
           (item['transactionType']?.toString() == 'CANE'
-                  ? 'Cane Purchase ID: '
+                  ? 'Sugarcane Purchase ID: '
                   : 'Sale ID: ') +
               _v(item['transactionId']),
           <String>[

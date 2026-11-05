@@ -29,7 +29,35 @@ public static class WeightCalculator
         var amount = R2(final * rate);
         return (net, cutting, otherDeduction, final, amount);
     }
+
+    /// <summary>
+    /// Sale Gross calculation used by saving, administrative correction and every
+    /// downstream print/export. Kanta Chhoot is entered as kilograms per quintal:
+    /// 1 kg/Qtl over 100 Qtl deducts 100 kg (1 Qtl).
+    /// </summary>
+    public static SaleWeightCalculation CalculateSale(
+        decimal grossQuintal, decimal tareQuintal, decimal cuttingPercent,
+        decimal kantaChhootKgPerQuintal, decimal rate, decimal gstPercent)
+    {
+        var net = R2(grossQuintal - tareQuintal);
+        var cutting = R2(net * cuttingPercent / 100m);
+        var kantaChhoot = R2(net * kantaChhootKgPerQuintal / 100m);
+        var final = R2(net - cutting - kantaChhoot);
+        var amountWithoutGst = R2(final * rate);
+        var gstAmount = R2(amountWithoutGst * gstPercent / 100m);
+        return new SaleWeightCalculation(net, cutting, kantaChhoot, final,
+            amountWithoutGst, gstAmount, R2(amountWithoutGst + gstAmount));
+    }
 }
+
+public readonly record struct SaleWeightCalculation(
+    decimal NetWeightQuintal,
+    decimal CuttingWeightQuintal,
+    decimal KantaChhootWeightQuintal,
+    decimal FinalWeightQuintal,
+    decimal AmountWithoutGst,
+    decimal GstAmount,
+    decimal FinalAmount);
 
 public static class Validators
 {

@@ -53,12 +53,14 @@ public class PrintConfig : BaseEntity
     /// <summary>Legacy combined Sale Weighment copy count retained only so older
     /// installations can upgrade without dropping their existing column.</summary>
     public int SalePurchaseCopies { get; set; } = 2;
-    /// <summary>When enabled, a completed Sale Weighment opens the configured tax-invoice
-    /// workbook and auto-prints the matching A4 invoice instead of the standard slip PDF.</summary>
+    /// <summary>When enabled, completed Gross opens the tax-invoice workbook and
+    /// auto-prints on the currently selected printer when AutoPrint is enabled.</summary>
     public bool SalePurchaseInvoiceEnabled { get; set; }
-    /// <summary>Dedicated destination for the completed Sale Weighment invoice.
-    /// A4 prints the one-page PDF through the configured laser queue; DotMatrix
-    /// emits a compact one-page resident-font ESC/P text invoice.</summary>
+    /// <summary>Controls whether Sale Weighment monetary calculation fields and
+    /// deduction/final-weight fields appear in any slip, invoice, PDF or Excel output.</summary>
+    public bool SalePurchaseAmountCalculationPrintEnabled { get; set; } = true;
+    /// <summary>Legacy saved target; kept for schema compatibility and synchronized
+    /// to PrinterType. The invoice always follows the main selected printer.</summary>
     public string SalePurchaseInvoicePrinterType { get; set; } = "A4";
     public string Language { get; set; } = "hi";
     /// <summary>Dot-matrix only. When false, the physical pre-printed header area is
@@ -109,6 +111,24 @@ public class PrintConfig : BaseEntity
     /// TVS profile (and vice versa).
     /// </summary>
     public string DotMatrixPrinterProfilesJson { get; set; } = "{}";
+}
+
+/// <summary>API-only extension used by the Print Configuration screen. Invoice
+/// fields are stored in CompanyConfig, but are edited and saved with PrintConfig
+/// so the operator cannot accidentally lose the bank/terms text.</summary>
+public class PrintConfigurationRequest : PrintConfig
+{
+    public string? InvoiceRoadStreet { get; set; }
+    public string? InvoiceNearbyLandmark { get; set; }
+    public string? InvoiceLocality { get; set; }
+    public string? InvoiceCity { get; set; }
+    public string? InvoiceDistrict { get; set; }
+    public string? InvoiceState { get; set; }
+    public string? InvoicePinCode { get; set; }
+    public string? InvoicePhone { get; set; }
+    public string? InvoiceEmail { get; set; }
+    public string? InvoiceGstin { get; set; }
+    public string? InvoiceTermsAndConditions { get; set; }
 }
 
 public class SmsConfig : BaseEntity

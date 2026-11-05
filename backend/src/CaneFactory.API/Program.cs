@@ -19,6 +19,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
+if (!builder.Environment.IsDevelopment())
+{
+    // One structured stream for App Service diagnostics / Azure Monitor collection.
+    builder.Logging.ClearProviders();
+    builder.Logging.AddJsonConsole();
+}
 
 // ---- Environment variable aliases (no secrets in source / appsettings) ----
 void MapEnv(string env, string key)
@@ -29,8 +35,14 @@ void MapEnv(string env, string key)
     // machine store as a fallback so a valid IIS deployment can recover
     // without copying secrets into web.config or appsettings.json.
     var v = Environment.GetEnvironmentVariable(env);
-    if (string.IsNullOrWhiteSpace(v))
-        v = Environment.GetEnvironmentVariable(env, EnvironmentVariableTarget.Machine);
+    var machineValue = Environment.GetEnvironmentVariable(env, EnvironmentVariableTarget.Machine);
+    // A factory IIS worker can retain an older process-level cloud connection
+    // after the machine is configured for its local SQL Server. For this one
+    // server-only setting, the explicit machine value is authoritative.
+    if (env == "CANE_CONNECTION_STRING" && !string.IsNullOrWhiteSpace(machineValue))
+        v = machineValue;
+    else if (string.IsNullOrWhiteSpace(v))
+        v = machineValue;
     if (!string.IsNullOrWhiteSpace(v)) builder.Configuration[key] = v;
 }
 MapEnv("CANE_JWT_SECRET", "Jwt:Secret");
@@ -176,11 +188,12 @@ builder.Services.AddRateLimiter(o =>
     o.AddPolicy("auth", ctx =>
         RateLimitPartition.GetFixedWindowLimiter(ctx.Connection.RemoteIpAddress?.ToString() ?? "anon",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1) }));
+    o.AddPolicy("quotation", ctx =>
+        RateLimitPartition.GetFixedWindowLimiter(ctx.Connection.RemoteIpAddress?.ToString() ?? "anon",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromHours(1), QueueLimit = 0 }));
     o.AddPolicy("android-gateway", ctx =>
         RateLimitPartition.GetFixedWindowLimiter(
-            ctx.Request.Headers["X-Device-Id"].FirstOrDefault()
-                ?? ctx.Connection.RemoteIpAddress?.ToString()
-                ?? "android-gateway",
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "android-gateway",
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 120,
@@ -243,8 +256,11 @@ if (!app.Environment.IsDevelopment()) app.UseHsts();
 
 app.UseMiddleware<ExceptionMiddleware>();
 app.UseMiddleware<CaneFactory.API.Middleware.SecurityAuditMiddleware>();
-app.UseSwagger();
-app.UseSwaggerUI();
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 app.UseCors();
 app.UseRateLimiter();
 app.UseAuthentication();
@@ -277,6 +293,7 @@ app.Use(async (ctx, next) =>
     var path = ctx.Request.Path;
     var isPublicAuthEndpoint = path.StartsWithSegments("/api/auth/login")
         || path.StartsWithSegments("/api/auth/refresh")
+        || path.StartsWithSegments("/api/auth/mfa")
         || path.StartsWithSegments("/api/auth/forgot-password");
     if (ctx.User.Identity?.IsAuthenticated == true
         && path.StartsWithSegments("/api")
@@ -284,6 +301,14 @@ app.Use(async (ctx, next) =>
         && !path.StartsWithSegments("/api/ping")
         && !path.StartsWithSegments("/api/health"))
     {
+        if (app.Configuration.GetValue<bool>("Security:StaffMfaEnabled") &&
+            new[] { "Developer", "Administrator", "Admin", "Accountant", "SalePurchase" }
+                .Any(ctx.User.IsInRole) && ctx.User.FindFirst("mfa")?.Value != "1")
+        {
+            ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await ctx.Response.WriteAsJsonAsync(new { message = "Login verification is required. Please login again." });
+            return;
+        }
         var sub = ctx.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (int.TryParse(sub, out var uid))
         {
@@ -327,6 +352,7 @@ app.Use(async (ctx, next) =>
         }
 
         var allowed = path.StartsWithSegments("/api/farmer")
+            || path.StartsWithSegments("/api/public/company")
             || path.StartsWithSegments("/api/auth")
             || path.StartsWithSegments("/api/dashboard/header")
             || path.StartsWithSegments("/api/health")

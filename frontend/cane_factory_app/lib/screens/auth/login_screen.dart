@@ -13,6 +13,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _username = TextEditingController();
   final _password = TextEditingController();
+  final _otp = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   String? _error;
   bool _obscure = true;
@@ -20,15 +21,17 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _error = null);
-    final err = await context
-        .read<AuthProvider>()
-        .login(_username.text.trim(), _password.text);
+    final auth = context.read<AuthProvider>();
+    final err = auth.mfaRequired
+        ? await auth.verifyMfa(_username.text.trim(), _password.text, _otp.text.trim())
+        : await auth.login(_username.text.trim(), _password.text);
     if (mounted && err != null) setState(() => _error = err);
   }
 
   @override
   Widget build(BuildContext context) {
     final loading = context.watch<AuthProvider>().loading;
+    final mfaRequired = context.watch<AuthProvider>().mfaRequired;
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       body: SafeArea(
@@ -91,6 +94,21 @@ class _LoginScreenState extends State<LoginScreen> {
                                 : null,
                             onFieldSubmitted: (_) => _login(),
                           ),
+                          if (mfaRequired) ...[
+                            const SizedBox(height: 14),
+                            const Text('Enter the 6-digit code sent to your registered email.'),
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              controller: _otp,
+                              keyboardType: TextInputType.number,
+                              maxLength: 6,
+                              decoration: const InputDecoration(labelText: 'Verification code',
+                                  prefixIcon: Icon(Icons.verified_user_outlined)),
+                              validator: (v) => v == null || !RegExp(r'^\d{6}$').hasMatch(v.trim())
+                                  ? 'Enter a valid 6-digit code' : null,
+                              onFieldSubmitted: (_) => _login(),
+                            ),
+                          ],
                           if (_error != null) ...[
                             const SizedBox(height: 12),
                             Text(_error!,
@@ -106,8 +124,16 @@ class _LoginScreenState extends State<LoginScreen> {
                                     child: CircularProgressIndicator(
                                         strokeWidth: 2))
                                 : const Icon(Icons.login),
-                            label: const Text('Login'),
+                            label: Text(mfaRequired ? 'Verify and login' : 'Login'),
                           ),
+                          if (mfaRequired)
+                            TextButton(
+                              onPressed: loading ? null : () {
+                                _otp.clear();
+                                context.read<AuthProvider>().cancelMfa();
+                              },
+                              child: const Text('Start login again'),
+                            ),
                           TextButton(
                             onPressed: () => Navigator.push(
                                 context,

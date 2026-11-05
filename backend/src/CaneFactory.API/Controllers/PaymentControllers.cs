@@ -1015,15 +1015,15 @@ public class PaymentController : ControllerBase
     [HttpPost("{id:int}/images/upload")]
     [RequestSizeLimit(10_000_000)]
     public async Task<IActionResult> UploadImage(int id, IFormFile image,
-        [FromServices] IImageStorageService storage, CancellationToken ct)
+        [FromServices] IImageStorageService storage, [FromServices] IConfiguration configuration,
+        CancellationToken ct)
     {
         if (!_current.HasPermission("CashEvidence.Create"))
             return StatusCode(403, new { message = "You do not have 'CashEvidence.Create' permission." });
-        if (image == null || image.Length == 0 || image.Length > 10_000_000)
-            return BadRequest(new { message = "Select an image up to 10 MB." });
-        var extension = Path.GetExtension(image.FileName).ToLowerInvariant();
-        if (extension is not (".jpg" or ".jpeg" or ".png"))
-            return BadRequest(new { message = "Only JPG, JPEG or PNG evidence images are allowed." });
+        SafeImageUpload.Result checkedImage;
+        try { checkedImage = await SafeImageUpload.ValidateAsync(image, 9_000_000, 40_000_000, configuration, ct); }
+        catch (InvalidDataException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return StatusCode(503, new { message = ex.Message }); }
         var payment = await _db.Payments.Include(p => p.PaymentMode)
             .FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted, ct);
         if (payment == null) return NotFound(new { message = "Payment not found." });
@@ -1034,12 +1034,9 @@ public class PaymentController : ControllerBase
         var root = string.IsNullOrWhiteSpace(setting?.Value) ? @"C:\WeighmentImage\Payment" : Path.GetFullPath(setting.Value);
         var now = DateTime.Now;
         var folder = Path.Combine(root, now.ToString("yyyy-MM-dd"));
-        var imageName = $"{payment.GrowerId}-{payment.AdviceNumber}-UPLOAD-{id}-{now:HHmmssfff}{extension}";
+        var imageName = $"{payment.GrowerId}-{payment.AdviceNumber}-UPLOAD-{id}-{now:HHmmssfff}{checkedImage.Extension}";
         var filePath = Path.Combine(folder, imageName);
-        await using var input = image.OpenReadStream();
-        using var memory = new MemoryStream();
-        await input.CopyToAsync(memory, ct);
-        var bytes = memory.ToArray();
+        var bytes = checkedImage.Bytes;
         filePath = await storage.SaveAsync(filePath, $"Payment/{now:yyyy-MM-dd}/{imageName}", bytes, ct: ct);
         var record = new PaymentImage { PaymentId = id, CameraId = 0, ImageName = imageName, FilePath = filePath,
             FileHash = Convert.ToHexString(SHA256.HashData(bytes)), CapturedAt = DateTime.UtcNow, CapturedBy = _current.UserId };

@@ -16,6 +16,8 @@ class ApiClient {
       defaultValue: 'http://localhost:5000');
   static const String compiledCameraEdgeBaseUrl =
       String.fromEnvironment('CAMERA_EDGE_API_BASE_URL', defaultValue: baseUrl);
+  static const bool lockCompiledEndpoints =
+      bool.fromEnvironment('LOCK_COMPILED_ENDPOINTS', defaultValue: false);
   static Uri? get baseUri => Uri.tryParse(baseUrl);
   static String? get configurationError {
     final uri = baseUri;
@@ -39,6 +41,12 @@ class ApiClient {
   Future<void> initialize() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (lockCompiledEndpoints) {
+        // A production package must always use the endpoints it was built for.
+        // This also clears a camera URL left by an older cloud/LAN installation.
+        await prefs.remove('camera_edge_base_url');
+        return;
+      }
       final saved = prefs.getString('camera_edge_base_url')?.trim();
       if (saved != null && _validHttpBaseUrl(saved)) {
         _cameraEdgeBaseUrl = saved.replaceFirst(RegExp(r'/$'), '');
@@ -51,6 +59,9 @@ class ApiClient {
   }
 
   Future<String?> setCameraEdgeBaseUrl(String value) async {
+    if (lockCompiledEndpoints) {
+      return 'This production build uses its compiled camera endpoint. Build a new package to change it.';
+    }
     final normalized = value.trim().replaceFirst(RegExp(r'/$'), '');
     if (!_validHttpBaseUrl(normalized)) {
       return 'Use a complete URL such as http://127.0.0.1:5001 or http://192.168.31.10:5000.';

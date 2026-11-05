@@ -12,11 +12,12 @@ using Microsoft.EntityFrameworkCore;
 namespace CaneFactory.API.Controllers;
 
 public record WeighmentCorrectionRequest(int VehicleTypeId, string VehicleNumber, string Revision,
-    int? VarietyTypeId = null, int? VarietyId = null, decimal? ExpectedRate = null);
+    int? GrowerId = null, int? PartyId = null, decimal? Rate = null,
+    int? VarietyTypeId = null, int? VarietyId = null);
 
 /// <summary>Administrative corrections only: never changes measured weights or payment records.</summary>
 [ApiController]
-[Authorize(Roles = "Admin,Developer")]
+[Authorize]
 [Route("api/weighment-corrections")]
 public class WeighmentCorrectionsController : ControllerBase
 {
@@ -26,10 +27,18 @@ public class WeighmentCorrectionsController : ControllerBase
     public WeighmentCorrectionsController(AppDbContext db, ICurrentUser current, IAuditService audit)
     { _db = db; _current = current; _audit = audit; }
 
-    // Purchase.Edit is also granted to operators; it must NOT grant access to this form/API.
-    private IActionResult? Deny() => _current.UserId.HasValue &&
-        (_current.Role ?? "").Split(',').Any(r => r.Trim() is "Admin" or "Developer")
-        ? null : StatusCode(403, new { message = "Only Admin and Developer can correct weighments." });
+    // Role permissions alone are intentionally insufficient: each Admin must be
+    // explicitly enabled from User Management. Developer remains the recovery authority.
+    private async Task<IActionResult?> DenyAsync()
+    {
+        var roles = (_current.Role ?? "").Split(',').Select(x => x.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (roles.Contains("Developer")) return null;
+        if (!roles.Contains("Admin") || !_current.UserId.HasValue)
+            return StatusCode(403, new { message = "Weighment correction authority is not enabled for this user." });
+        var enabled = await _db.Users.AsNoTracking().AnyAsync(x => x.Id == _current.UserId.Value &&
+            !x.IsDeleted && x.Status && x.CanAuthorizeWeighmentCorrections);
+        return enabled ? null : StatusCode(403, new { message = "Weighment correction authority is not enabled for this Admin." });
+    }
 
     private IActionResult Paid() => Conflict(new { code = "PAYMENT_COMPLETED",
         message = "Payment already completed for this purchase. It cannot be edited." });
@@ -43,7 +52,8 @@ public class WeighmentCorrectionsController : ControllerBase
         p.LockStatus, updatedAt = Utc(p.UpdatedAt), p.UpdatedBy };
     private static object Snapshot(SalePurchase p) => new { p.Id, p.VehicleTypeId, p.VehicleNumber,
         p.ItemId, p.PartyId, p.GrossWeightQuintal, p.TareWeightQuintal, p.FinalWeightQuintal,
-        p.Rate, p.Amount, p.WeighmentStatus, updatedAt = Utc(p.UpdatedAt), p.UpdatedBy };
+        p.Rate, p.Amount, p.GstPercent, p.GstAmount, p.FinalAmount, p.SalesPercent, p.SalesAmount,
+        p.SgstAmount, p.CgstAmount, p.IgstAmount, p.WeighmentStatus, updatedAt = Utc(p.UpdatedAt), p.UpdatedBy };
     // SQL Server stores UTC instants without DateTime.Kind; canonicalize before hashing/display.
     private static DateTime? Utc(DateTime? value) => value.HasValue
         ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc) : null;
@@ -53,7 +63,7 @@ public class WeighmentCorrectionsController : ControllerBase
     [HttpGet("{kind}/{id:int}")]
     public async Task<IActionResult> Get(string kind, int id)
     {
-        if (Deny() is { } denied) return denied;
+        if (await DenyAsync() is { } denied) return denied;
         object record;
         int? updatedBy;
         if (kind == "purchase")
@@ -79,7 +89,7 @@ public class WeighmentCorrectionsController : ControllerBase
             if (!p.Status || p.WeighmentStatus == "CANCELLED")
                 return Conflict(new { message = "Inactive or cancelled sale weighments cannot be corrected." });
             updatedBy = p.UpdatedBy;
-            record = new { p.Id, name = p.Party.PartyName, p.Item.ItemName, p.VehicleTypeId,
+            record = new { p.Id, p.PartyId, name = p.Party.PartyName, p.Item.ItemName, p.VehicleTypeId,
                 p.VehicleType.VehicleTypeName, p.VehicleNumber, p.GrossWeightQuintal, p.TareWeightQuintal,
                 p.FinalWeightQuintal, p.Rate, p.Amount, status = p.WeighmentStatus, updatedAt = Utc(p.UpdatedAt), p.UpdatedBy,
                 revision = Revision(Snapshot(p)) };
@@ -88,7 +98,15 @@ public class WeighmentCorrectionsController : ControllerBase
 
         var updater = updatedBy.HasValue
             ? await _db.Users.Where(x => x.Id == updatedBy).Select(x => x.Username).FirstOrDefaultAsync() : null;
-        return Ok(new { record, updatedByName = updater,
+        var growers = kind == "purchase"
+            ? await _db.Growers.AsNoTracking().Where(x => !x.IsDeleted && x.Status)
+                .OrderBy(x => x.GrowerName).Select(x => new CorrectionOption(x.Id, x.GrowerName)).ToListAsync()
+            : new List<CorrectionOption>();
+        var parties = kind == "sale"
+            ? await _db.Parties.AsNoTracking().Where(x => !x.IsDeleted && x.Status)
+                .OrderBy(x => x.PartyName).Select(x => new CorrectionOption(x.Id, x.PartyName)).ToListAsync()
+            : new List<CorrectionOption>();
+        return Ok(new { record, updatedByName = updater, growers, parties,
             vehicleTypes = await _db.VehicleTypes.AsNoTracking().Where(x => !x.IsDeleted && x.Status)
                 .OrderBy(x => x.VehicleTypeName).Select(x => new { x.Id, name = x.VehicleTypeName }).ToListAsync() });
     }
@@ -101,8 +119,10 @@ public class WeighmentCorrectionsController : ControllerBase
 
     private async Task<IActionResult> Correct(string kind, int id, WeighmentCorrectionRequest req, bool save)
     {
-        if (Deny() is { } denied) return denied;
+        if (await DenyAsync() is { } denied) return denied;
         if (kind is not ("purchase" or "sale")) return BadRequest(new { message = "Select purchase or sale." });
+        if (req.Rate is <= 0 or > 100000000m)
+            return BadRequest(new { message = "Rate must be greater than zero and within the supported limit." });
         var vehicle = Validators.NormalizeVehicleNumber(req.VehicleNumber);
         if (vehicle.Length is < 4 or > 15 || vehicle.Any(c => !char.IsAsciiLetterOrDigit(c)))
             return BadRequest(new { message = "Enter a valid vehicle number (4-15 letters/digits)." });
@@ -126,22 +146,30 @@ public class WeighmentCorrectionsController : ControllerBase
                     { result = Conflict(new { message = "Inactive, cancelled or locked purchases cannot be corrected." }); return; }
                     var before = Snapshot(p);
                     if (req.Revision != Revision(before)) { result = Stale(); return; }
-                    if (req.VarietyTypeId.HasValue || req.VarietyId.HasValue || req.ExpectedRate.HasValue)
-                    { result = BadRequest(new { message = "Variety and rate cannot be changed in weighment correction. Only vehicle type and vehicle number can be updated." }); return; }
+                    if (req.VarietyTypeId.HasValue || req.VarietyId.HasValue)
+                    { result = BadRequest(new { message = "Variety cannot be changed in weighment correction." }); return; }
+                    var growerId = req.GrowerId ?? p.GrowerId;
+                    var grower = await _db.Growers.FirstOrDefaultAsync(x => x.Id == growerId && !x.IsDeleted && x.Status);
+                    if (grower == null) { result = BadRequest(new { message = "Select an active grower." }); return; }
+                    var correctedRate = req.Rate ?? p.Rate;
                     if (p.GrossTareStatus == "GROSS_DONE" && await DuplicateCane(id, vehicle))
                     { result = Conflict(new { message = "This vehicle already has another gross pending tare." }); return; }
 
-                    var rate = p.Rate;
-                    var amount = p.PurchaseAmount;
+                    var amount = p.FinalWeightQuintal.HasValue
+                        ? WeightCalculator.R2(p.FinalWeightQuintal.Value * correctedRate)
+                        : p.PurchaseAmount;
                     if (save)
                     {
                         p.VehicleTypeId = req.VehicleTypeId; p.VehicleNumber = vehicle;
+                        p.GrowerId = grower.Id; p.GrowerCode = grower.GrowerCode; p.VillageId = grower.VillageId;
+                        p.Rate = correctedRate; p.PurchaseAmount = amount;
                         p.UpdatedBy = _current.UserId; p.UpdatedAt = DateTime.UtcNow;
                         // Audit and correction share a transaction; neither may succeed alone.
                         await _audit.LogAsync("CorrectWeighment", "Purchase", "Purchase", id.ToString(), before, Snapshot(p));
                     }
-                    result = Ok(new { message = save ? "Purchase corrected successfully." : "Vehicle correction ready. Weight, variety, rate and amount are unchanged.",
-                        vehicleNumber = vehicle, rate, amount, p.FinalWeightQuintal, p.UpdatedAt, p.UpdatedBy,
+                    result = Ok(new { message = save ? "Purchase corrected and related amount recalculated successfully." : "Grower, vehicle and rate correction preview is ready. Measured weights remain unchanged.",
+                        vehicleNumber = vehicle, growerId = grower.Id, name = grower.GrowerName,
+                        rate = correctedRate, amount, p.FinalWeightQuintal, p.UpdatedAt, p.UpdatedBy,
                         updatedByName = _current.Username, revision = Revision(Snapshot(p)) });
                 }
                 else
@@ -152,19 +180,47 @@ public class WeighmentCorrectionsController : ControllerBase
                     { result = Conflict(new { message = "Inactive or cancelled sale weighments cannot be corrected." }); return; }
                     var before = Snapshot(p);
                     if (req.Revision != Revision(before)) { result = Stale(); return; }
-                    // Non-cane records use Item/Party and have no payment linkage or variety rate master.
-                    if (req.VarietyTypeId.HasValue || req.VarietyId.HasValue || req.ExpectedRate.HasValue)
-                    { result = BadRequest(new { message = "Only vehicle type and vehicle number can be changed in weighment correction." }); return; }
+                    if (req.VarietyTypeId.HasValue || req.VarietyId.HasValue)
+                    { result = BadRequest(new { message = "Variety fields do not apply to Sale Weighment." }); return; }
+                    var partyId = req.PartyId ?? p.PartyId;
+                    var party = await _db.Parties.FirstOrDefaultAsync(x => x.Id == partyId && !x.IsDeleted && x.Status);
+                    if (party == null) { result = BadRequest(new { message = "Select an active party." }); return; }
+                    var correctedRate = req.Rate ?? p.Rate;
+                    if (p.WeighmentStatus == "COMPLETED" && (!correctedRate.HasValue || correctedRate <= 0))
+                    { result = BadRequest(new { message = "Completed Sale Weighment requires a valid rate." }); return; }
+                    var amount = p.Amount;
+                    var gstAmount = p.GstAmount;
+                    var finalAmount = p.FinalAmount;
+                    if (p.WeighmentStatus == "COMPLETED" && p.FinalWeightQuintal.HasValue && correctedRate.HasValue)
+                    {
+                        amount = WeightCalculator.R2(p.FinalWeightQuintal.Value * correctedRate.Value);
+                        gstAmount = WeightCalculator.R2(amount.Value * p.GstPercent / 100m);
+                        finalAmount = WeightCalculator.R2(amount.Value + gstAmount.Value);
+                    }
                     if (p.WeighmentStatus == "TARE_PENDING_GROSS" && await DuplicateSale(id, vehicle))
                     { result = Conflict(new { message = "This vehicle already has another tare pending gross." }); return; }
                     if (save)
                     {
                         p.VehicleTypeId = req.VehicleTypeId; p.VehicleNumber = vehicle;
+                        p.PartyId = party.Id; p.Rate = correctedRate;
+                        p.Amount = amount; p.GstAmount = gstAmount; p.FinalAmount = finalAmount;
+                        p.SalesPercent = p.GstPercent; p.SalesAmount = gstAmount;
+                        if (p.TaxSupplyType == "INTER_STATE")
+                        {
+                            p.CgstAmount = 0m; p.SgstAmount = 0m; p.IgstAmount = gstAmount;
+                        }
+                        else
+                        {
+                            p.CgstAmount = WeightCalculator.R2((gstAmount ?? 0m) / 2m);
+                            p.SgstAmount = WeightCalculator.R2((gstAmount ?? 0m) - p.CgstAmount.Value);
+                            p.IgstAmount = 0m;
+                        }
                         p.UpdatedBy = _current.UserId; p.UpdatedAt = DateTime.UtcNow;
                         await _audit.LogAsync("CorrectWeighment", "SalePurchase", "SalePurchase", id.ToString(), before, Snapshot(p));
                     }
-                    result = Ok(new { message = save ? "Sale weighment corrected successfully." : "Vehicle correction ready. Weight, rate and amount are unchanged.",
-                        vehicleNumber = vehicle, p.Rate, p.Amount, p.FinalWeightQuintal, p.UpdatedAt, p.UpdatedBy,
+                    result = Ok(new { message = save ? "Sale weighment corrected and GST amounts recalculated successfully." : "Party, vehicle and rate correction preview is ready. Measured weights remain unchanged.",
+                        vehicleNumber = vehicle, partyId = party.Id, name = party.PartyName,
+                        rate = correctedRate, amount, gstAmount, finalAmount, p.FinalWeightQuintal, p.UpdatedAt, p.UpdatedBy,
                         updatedByName = _current.Username, revision = Revision(Snapshot(p)) });
                 }
             }, IsolationLevel.Serializable);
@@ -183,4 +239,6 @@ public class WeighmentCorrectionsController : ControllerBase
     private async Task<bool> DuplicateSale(int id, string vehicle) =>
         (await _db.SalePurchases.Where(x => x.Id != id && !x.IsDeleted && x.WeighmentStatus == "TARE_PENDING_GROSS")
             .Select(x => x.VehicleNumber).ToListAsync()).Any(x => Validators.NormalizeVehicleNumber(x) == vehicle);
+
+    private sealed record CorrectionOption(int Id, string Name);
 }

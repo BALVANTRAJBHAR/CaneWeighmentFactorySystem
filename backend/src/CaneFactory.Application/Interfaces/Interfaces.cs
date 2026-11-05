@@ -34,7 +34,7 @@ public interface ISecretProtector
 public interface ITokenService
 {
     (string token, DateTime expiresAt) CreateAccessToken(int userId, string username, int tokenVersion,
-        IEnumerable<string> roles, IEnumerable<string> permissions);
+        IEnumerable<string> roles, IEnumerable<string> permissions, bool mfaVerified = false);
     string CreateRefreshTokenValue();
 }
 
@@ -123,9 +123,9 @@ public interface IPrintEngineService
 /// same values for reliable unattended Windows printer spooling.</summary>
 public interface ISaleInvoiceService
 {
-    Task<byte[]> BuildExcelAsync(int salePurchaseId);
-    Task<byte[]> BuildPdfAsync(int salePurchaseId);
-    Task<byte[]> BuildDotMatrixNativeAsync(int salePurchaseId, bool avoidCarriageReturn = false);
+    Task<byte[]> BuildExcelAsync(int salePurchaseId, bool isDuplicate = false);
+    Task<byte[]> BuildPdfAsync(int salePurchaseId, bool isDuplicate = false);
+    Task<byte[]> BuildDotMatrixNativeAsync(int salePurchaseId, bool avoidCarriageReturn = false, bool isDuplicate = false);
 }
 
 /// <summary>Generic HTTP SMS gateway client (Phase 10) - never tied to one named provider. Builds the

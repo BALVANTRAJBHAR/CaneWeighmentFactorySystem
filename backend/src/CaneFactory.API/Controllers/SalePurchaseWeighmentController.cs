@@ -126,7 +126,9 @@ public class SalePurchaseWeighmentController : ControllerBase
                 Party = x.Party.PartyName, partyMobile = x.Party.Mobile, vehicleTypeId = x.VehicleTypeId,
                 VehicleType = x.VehicleType.VehicleTypeName, x.VehicleNumber, x.DriverName, x.Remark,
                 x.TareWeightQuintal, x.TareDateTime, TareOperator = x.TareByUserName, Status = x.WeighmentStatus,
-                x.GrossWeightQuintal, x.FinalWeightQuintal, x.Rate, x.GstPercent, x.Amount, x.GstAmount, x.FinalAmount,
+                x.GrossWeightQuintal, x.FinalWeightQuintal, x.Rate, x.ItemQuantity, x.ItemType,
+                x.CuttingPercent, x.CuttingWeightQuintal, x.KantaChhootKgPerQuintal, x.KantaChhootWeightQuintal,
+                x.GstPercent, x.Amount, x.GstAmount, x.FinalAmount,
                 x.SalesPercent, x.SalesAmount, x.TaxSupplyType, x.SgstAmount, x.CgstAmount, x.IgstAmount
             }).FirstOrDefaultAsync();
         if (row == null) return NotFound(new { message = $"SalePurchase ID {id} does not exist." });
@@ -216,6 +218,17 @@ public class SalePurchaseWeighmentController : ControllerBase
         if (await WeightSaveAccessErrorAsync() is { } accessError) return StatusCode(403, new { message = accessError });
         if (req.GstPercent is < 0 or > 100)
             return BadRequest(new { message = "GST % must be between 0 and 100." });
+        if (req.ItemQuantity is null or <= 0 or > 1000000m)
+            return BadRequest(new { message = "Item Quantity is required and must be greater than 0 (maximum 10,00,000)." });
+        if (decimal.Round(req.ItemQuantity.Value, 3) != req.ItemQuantity.Value)
+            return BadRequest(new { message = "Item Quantity can have at most 3 decimal places." });
+        var itemType = Validators.Norm(req.ItemType);
+        if (itemType.Length is < 1 or > 80)
+            return BadRequest(new { message = "Item Type is required and must be 80 characters or fewer." });
+        if (req.CuttingPercent is < 0 or > 100)
+            return BadRequest(new { message = "Cutting % must be between 0 and 100." });
+        if (req.KantaChhootKgPerQuintal is < 0 or > 100)
+            return BadRequest(new { message = "Kanta Chhoot must be between 0 and 100 kg per quintal." });
         var taxSupplyType = (req.TaxSupplyType ?? "").Trim().ToUpperInvariant();
         if (taxSupplyType is not ("INTRA_STATE" or "INTER_STATE"))
             return BadRequest(new { message = "Tax Supply Type must be INTRA_STATE or INTER_STATE." });
@@ -266,11 +279,8 @@ public class SalePurchaseWeighmentController : ControllerBase
                     throw new SalePurchaseStateException(409, "No active Sale Rate exists for this Item. Configure Sale Rates first.");
 
                 gross = liveGross;
-                finalWeight = WeightCalculator.R2(gross - record.TareWeightQuintal);
-                if (finalWeight < 0) throw new SalePurchaseStateException(409, "Gross weight cannot be less than tare weight.");
                 record.ScaleReadingGrossKg = WeightCalculator.R2(liveKg);
                 record.GrossWeightQuintal = gross;
-                record.FinalWeightQuintal = finalWeight;
                 record.GrossDateTime = DateTime.UtcNow;
                 record.GrossByUserId = _current.UserId;
                 record.GrossByUserName = _current.Username ?? "";
@@ -278,10 +288,22 @@ public class SalePurchaseWeighmentController : ControllerBase
                 record.Rate = await _rateOverrides.ValidateAndStageAsync("SALE", record.Id, itemRate.Rate, req.Rate,
                     req.ApprovedByUserId, req.RateReasonId, req.RateOverrideRemark, req.RateEvidenceToken,
                     _current.UserId!.Value, HttpContext.RequestAborted);
-                record.Amount = WeightCalculator.R2(finalWeight * record.Rate.Value);
+                record.ItemQuantity = decimal.Round(req.ItemQuantity.Value, 3, MidpointRounding.AwayFromZero);
+                record.ItemType = itemType;
+                record.CuttingPercent = WeightCalculator.R2(req.CuttingPercent);
+                record.KantaChhootKgPerQuintal = WeightCalculator.R2(req.KantaChhootKgPerQuintal);
                 record.GstPercent = WeightCalculator.R2(req.GstPercent);
-                record.GstAmount = WeightCalculator.R2(record.Amount.Value * record.GstPercent / 100m);
-                record.FinalAmount = WeightCalculator.R2(record.Amount.Value + record.GstAmount.Value);
+                var calculation = WeightCalculator.CalculateSale(gross, record.TareWeightQuintal,
+                    record.CuttingPercent, record.KantaChhootKgPerQuintal, record.Rate.Value, record.GstPercent);
+                if (calculation.FinalWeightQuintal < 0)
+                    throw new SalePurchaseStateException(409, "Cutting and Kanta Chhoot cannot exceed the net weight.");
+                finalWeight = calculation.FinalWeightQuintal;
+                record.CuttingWeightQuintal = calculation.CuttingWeightQuintal;
+                record.KantaChhootWeightQuintal = calculation.KantaChhootWeightQuintal;
+                record.FinalWeightQuintal = finalWeight;
+                record.Amount = calculation.AmountWithoutGst;
+                record.GstAmount = calculation.GstAmount;
+                record.FinalAmount = calculation.FinalAmount;
                 // The GST field is the single operator-entered percentage. Keep
                 // legacy Sales report columns aligned with the saved tax values.
                 record.SalesPercent = record.GstPercent;
@@ -328,7 +350,12 @@ public class SalePurchaseWeighmentController : ControllerBase
         }
         var completedRecord = record ?? throw new InvalidOperationException("SalePurchase completion did not return a record.");
         try { await _audit.LogAsync("GrossSave", "SalePurchase", "SalePurchase", completedRecord.Id.ToString(), newValue: new
-        { completedRecord.GrossWeightQuintal, completedRecord.TareWeightQuintal, completedRecord.FinalWeightQuintal, completedRecord.Rate, completedRecord.Amount, completedRecord.GstPercent, completedRecord.GstAmount, completedRecord.FinalAmount, completedRecord.SalesPercent, completedRecord.SalesAmount, completedRecord.TaxSupplyType, completedRecord.SgstAmount, completedRecord.CgstAmount, completedRecord.IgstAmount }); }
+        { completedRecord.GrossWeightQuintal, completedRecord.TareWeightQuintal, completedRecord.CuttingPercent,
+            completedRecord.CuttingWeightQuintal, completedRecord.KantaChhootKgPerQuintal, completedRecord.KantaChhootWeightQuintal,
+            completedRecord.FinalWeightQuintal, completedRecord.ItemQuantity, completedRecord.ItemType, completedRecord.Rate,
+            completedRecord.Amount, completedRecord.GstPercent, completedRecord.GstAmount, completedRecord.FinalAmount,
+            completedRecord.SalesPercent, completedRecord.SalesAmount, completedRecord.TaxSupplyType,
+            completedRecord.SgstAmount, completedRecord.CgstAmount, completedRecord.IgstAmount }); }
         catch (Exception ex) { _log.LogError(ex, "SalePurchase gross {SalePurchaseId} audit failed after commit", completedRecord.Id); }
         var captureResults = await CaptureEvidenceAsync(completedRecord.Id, "GROSS");
         var placeholders = new Dictionary<string, string>
@@ -361,6 +388,9 @@ public class SalePurchaseWeighmentController : ControllerBase
         var smsQueued = queued.Any(x => x);
         return Ok(new { message = $"SalePurchase {completedRecord.Id} completed successfully. Final Weight: {finalWeight:F2} Quintal.",
             salePurchaseId = completedRecord.Id, grossWeightQuintal = gross, finalWeightQuintal = finalWeight,
+            itemQuantity = completedRecord.ItemQuantity, itemType = completedRecord.ItemType,
+            cuttingPercent = completedRecord.CuttingPercent, cuttingWeightQuintal = completedRecord.CuttingWeightQuintal,
+            kantaChhootKgPerQuintal = completedRecord.KantaChhootKgPerQuintal, kantaChhootWeightQuintal = completedRecord.KantaChhootWeightQuintal,
             amount = completedRecord.Amount, gstPercent = completedRecord.GstPercent, gstAmount = completedRecord.GstAmount,
             finalAmount = completedRecord.FinalAmount, salesPercent = completedRecord.SalesPercent, salesAmount = completedRecord.SalesAmount,
             taxSupplyType = completedRecord.TaxSupplyType, sgstAmount = completedRecord.SgstAmount, cgstAmount = completedRecord.CgstAmount, igstAmount = completedRecord.IgstAmount,
@@ -394,7 +424,8 @@ public class SalePurchaseWeighmentController : ControllerBase
         var useInvoice = stage.Equals("GROSS", StringComparison.OrdinalIgnoreCase) && cfg.SalePurchaseInvoiceEnabled;
         if (useInvoice)
         {
-            var invoiceTarget = cfg.SalePurchaseInvoicePrinterType == "DotMatrix" ? "DotMatrix" : "A4";
+            // Invoice follows the same selected printer type as weighment slips.
+            var invoiceTarget = cfg.PrinterType == "DotMatrix" ? "DotMatrix" : "A4";
             return new
             {
                 printerType = invoiceTarget,

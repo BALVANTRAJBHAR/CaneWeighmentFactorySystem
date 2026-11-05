@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using CaneFactory.API.Services;
 using CaneFactory.Application.Interfaces;
 using CaneFactory.Domain.Entities;
 using CaneFactory.Infrastructure.Camera;
@@ -48,6 +49,8 @@ public sealed class RateOverridesController(
         [FromForm] string? source, [FromForm] IFormFile image, CancellationToken ct)
     {
         if (!CanUseRateOverride()) return Forbidden();
+        if (Request.Form.Files.Count != 1)
+            return BadRequest(new { message = "Select exactly one evidence image." });
         var type = NormalizeType(transactionType);
         if (type == null) return BadRequest(new { message = "Transaction Type must be CANE or SALE." });
         if (await ValidatePendingTargetAsync(type, transactionId, ct) is { } error) return Conflict(new { message = error });
@@ -61,6 +64,10 @@ public sealed class RateOverridesController(
         await input.CopyToAsync(memory, ct);
         try
         {
+            var scan = await QuotationMalwareScanner.ScanAsync(memory.ToArray(), configuration, ct);
+            if (scan == "INFECTED") return BadRequest(new { message = "Evidence rejected by the security scanner." });
+            if (scan is not ("OK" or "SKIPPED"))
+                return StatusCode(503, new { message = "Attachment scanning is unavailable. Try again later." });
             var result = await SaveSanitisedEvidenceAsync(type, transactionId, memory.ToArray(),
                 string.Equals(source, "DEVICE_CAMERA", StringComparison.OrdinalIgnoreCase) ? "DEVICE_CAMERA" : "UPLOAD", ct);
             return Ok(result);
@@ -108,7 +115,7 @@ public sealed class RateOverridesController(
         if (id <= 0) return "A valid transaction ID is required.";
         if (type == "CANE")
             return await db.Purchases.AnyAsync(x => x.Id == id && !x.IsDeleted && x.GrossTareStatus == "GROSS_DONE", ct)
-                ? null : "Cane purchase is not pending Tare.";
+                ? null : "Sugarcane purchase is not pending Tare.";
         return await db.SalePurchases.AnyAsync(x => x.Id == id && !x.IsDeleted && x.WeighmentStatus == "TARE_PENDING_GROSS", ct)
             ? null : "Sale purchase is not pending Gross.";
     }

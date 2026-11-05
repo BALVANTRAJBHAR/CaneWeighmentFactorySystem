@@ -50,8 +50,9 @@ public class A4PdfRenderer : IPrintRenderer
                             .FontSize(7).Bold().FontColor(Colors.Red.Darken2);
                 });
 
-                page.Content().PaddingTop(10).Column(content =>
+                page.Content().PaddingTop(doc.IsSalePurchaseDocument ? 6 : 10).Column(content =>
                 {
+                    var rows = doc.A4Rows ?? doc.Rows;
                     content.Item().Table(table =>
                     {
                         table.ColumnsDefinition(c =>
@@ -59,10 +60,10 @@ public class A4PdfRenderer : IPrintRenderer
                             c.RelativeColumn(1.1f); c.RelativeColumn(1.4f);
                             c.RelativeColumn(1.1f); c.RelativeColumn(1.4f);
                         });
-                        for (var i = 0; i < doc.Rows.Count; i += 2)
+                        for (var i = 0; i < rows.Count; i += 2)
                         {
-                            var r1 = doc.Rows[i];
-                            var r2 = i + 1 < doc.Rows.Count ? doc.Rows[i + 1] : null;
+                            var r1 = rows[i];
+                            var r2 = i + 1 < rows.Count ? rows[i + 1] : null;
                             AddCell(table, hindi ? r1.LabelHindi : r1.LabelEnglish, true);
                             AddCell(table, r1.Value, false);
                             AddCell(table, r2 != null ? (hindi ? r2.LabelHindi : r2.LabelEnglish) : "", true);
@@ -107,7 +108,7 @@ public class A4PdfRenderer : IPrintRenderer
                         // Keep a clear blank line between the detail grid and the
                         // evidence section so printed photos never look attached
                         // to the final detail row.
-                        content.Item().PaddingTop(18).Text(hindi ? "तौल चित्र" : "Weighment Images")
+                        content.Item().PaddingTop(doc.IsSalePurchaseDocument ? 10 : 18).Text(hindi ? "तौल चित्र" : "Weighment Images")
                             .FontSize(10).Bold().FontColor(Colors.Blue.Darken2);
                         content.Item().PaddingTop(2).Table(imagesTable =>
                         {
@@ -123,7 +124,8 @@ public class A4PdfRenderer : IPrintRenderer
                                 {
                                     imageCell.Item().AlignCenter().Text(image.Label).FontSize(8)
                                         .FontColor(Colors.Grey.Darken1);
-                                    imageCell.Item().PaddingTop(2).Height(174).AlignCenter()
+                                    imageCell.Item().PaddingTop(2)
+                                        .Height(doc.IsSalePurchaseDocument ? 132 : 174).AlignCenter()
                                         .Image(image.Bytes ?? File.ReadAllBytes(image.FilePath)).FitArea();
                                 });
                             }

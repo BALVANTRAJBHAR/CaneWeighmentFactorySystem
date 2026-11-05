@@ -256,7 +256,8 @@ public class PrintController : ControllerBase
     /// for the configured A4 Windows print queue and is audited as a print.
     /// </summary>
     [HttpGet("sale-purchase/{id:int}/invoice")]
-    public async Task<IActionResult> SalePurchaseInvoice(int id, [FromQuery] string format = "excel")
+    public async Task<IActionResult> SalePurchaseInvoice(int id, [FromQuery] string format = "excel",
+        [FromQuery] bool markAsReprint = false)
     {
         if (!_current.HasPermission("SalePurchase.Print"))
             return StatusCode(403, new { message = "You do not have 'SalePurchase.Print' permission." });
@@ -269,27 +270,27 @@ public class PrintController : ControllerBase
         try
         {
             if (format == "excel")
-                return File(await _saleInvoice.BuildExcelAsync(id),
+                return File(await _saleInvoice.BuildExcelAsync(id, markAsReprint),
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"Sale-Invoice-{id}.xlsx");
 
             if (format == "dotmatrix")
             {
                 var raw = await _saleInvoice.BuildDotMatrixNativeAsync(id,
-                    string.Equals(Request.Query["rawProfile"], "epson", StringComparison.OrdinalIgnoreCase));
+                    string.Equals(Request.Query["rawProfile"], "epson", StringComparison.OrdinalIgnoreCase), markAsReprint);
                 sale.GrossPrintCount++;
                 await _db.SaveChangesAsync();
-                await _audit.LogAsync("Print", "SalePurchase", "SaleInvoice", id.ToString(),
-                    newValue: new { target = "DotMatrix", format = "NativeTextInvoice", sale.GrossPrintCount });
+                await _audit.LogAsync(markAsReprint ? "Reprint" : "OriginalCopy", "SalePurchase", "SaleInvoice", id.ToString(),
+                    newValue: new { target = "DotMatrix", format = "NativeTextInvoice", duplicate = markAsReprint, sale.GrossPrintCount });
                 return File(raw, "application/octet-stream", $"Sale-Invoice-{id}.prn");
             }
 
-            var pdf = await _saleInvoice.BuildPdfAsync(id);
+            var pdf = await _saleInvoice.BuildPdfAsync(id, markAsReprint);
             if (format == "final")
             {
                 sale.GrossPrintCount++;
                 await _db.SaveChangesAsync();
-                await _audit.LogAsync("Print", "SalePurchase", "SaleInvoice", id.ToString(),
-                    newValue: new { target = "A4", format = "TaxInvoice", sale.GrossPrintCount });
+                await _audit.LogAsync(markAsReprint ? "Reprint" : "OriginalCopy", "SalePurchase", "SaleInvoice", id.ToString(),
+                    newValue: new { target = "A4", format = "TaxInvoice", duplicate = markAsReprint, sale.GrossPrintCount });
             }
             return File(pdf, "application/pdf", $"Sale-Invoice-{id}.pdf");
         }
@@ -325,7 +326,7 @@ public class PrintController : ControllerBase
 
     [HttpGet("reprint/purchase/{id:int}")]
     public async Task<IActionResult> ReprintPurchase(int id, [FromQuery] string? target,
-        [FromQuery] string format = "final")
+        [FromQuery] string format = "final", [FromQuery] bool markAsReprint = true)
     {
         if (!_current.HasPermission("Weighment.Print"))
             return StatusCode(403, new { message = "You do not have 'Weighment.Print' permission." });
@@ -341,22 +342,22 @@ public class PrintController : ControllerBase
         var doc = stage == "TARE"
             ? await _engine.BuildTareSlipAsync(id, _current.Username ?? "", resolvedTarget.target != "DotMatrix")
             : await _engine.BuildGrossSlipAsync(id, _current.Username ?? "", resolvedTarget.target != "DotMatrix");
-        MarkDuplicate(doc);
+        SetCopyMark(doc, markAsReprint);
         var rendered = RenderDocument(doc, resolvedTarget.target!, format == "preview");
         if (format == "final")
         {
             if (stage == "TARE") purchase.TarePrintCount++; else purchase.GrossPrintCount++;
             await _db.SaveChangesAsync();
-            await _audit.LogAsync("Reprint", "Weighment", "Purchase", id.ToString(),
-                newValue: new { stage, target = resolvedTarget.target, duplicate = true,
+            await _audit.LogAsync(markAsReprint ? "Reprint" : "OriginalCopy", "Weighment", "Purchase", id.ToString(),
+                newValue: new { stage, target = resolvedTarget.target, duplicate = markAsReprint,
                     printCount = stage == "TARE" ? purchase.TarePrintCount : purchase.GrossPrintCount });
         }
-        return File(rendered.bytes, rendered.contentType, $"DUPLICATE-Purchase-{id}-{stage}.{rendered.fileExtension}");
+        return File(rendered.bytes, rendered.contentType, $"{(markAsReprint ? "DUPLICATE-" : "ORIGINAL-")}Purchase-{id}-{stage}.{rendered.fileExtension}");
     }
 
     [HttpGet("reprint/sale-purchase/{id:int}")]
     public async Task<IActionResult> ReprintSalePurchase(int id, [FromQuery] string? target,
-        [FromQuery] string format = "final")
+        [FromQuery] string format = "final", [FromQuery] bool markAsReprint = true)
     {
         if (!_current.HasPermission("SalePurchase.Print"))
             return StatusCode(403, new { message = "You do not have 'SalePurchase.Print' permission." });
@@ -370,26 +371,26 @@ public class PrintController : ControllerBase
             return Conflict(new { message = $"SalePurchase {id} is cancelled and cannot be reprinted as a valid slip." });
         var stage = sale.WeighmentStatus == "COMPLETED" && sale.GrossDateTime.HasValue ? "GROSS" : "TARE";
         var doc = await _engine.BuildSalePurchaseSlipAsync(id, stage, _current.Username ?? "", resolvedTarget.target != "DotMatrix");
-        MarkDuplicate(doc);
+        SetCopyMark(doc, markAsReprint);
         var rendered = RenderDocument(doc, resolvedTarget.target!, format == "preview");
         if (format == "final")
         {
             if (stage == "TARE") sale.TarePrintCount++; else sale.GrossPrintCount++;
             await _db.SaveChangesAsync();
-            await _audit.LogAsync("Reprint", "SalePurchase", "SalePurchase", id.ToString(),
-                newValue: new { stage, target = resolvedTarget.target, duplicate = true,
+            await _audit.LogAsync(markAsReprint ? "Reprint" : "OriginalCopy", "SalePurchase", "SalePurchase", id.ToString(),
+                newValue: new { stage, target = resolvedTarget.target, duplicate = markAsReprint,
                     printCount = stage == "TARE" ? sale.TarePrintCount : sale.GrossPrintCount });
         }
-        return File(rendered.bytes, rendered.contentType, $"DUPLICATE-SalePurchase-{id}-{stage}.{rendered.fileExtension}");
+        return File(rendered.bytes, rendered.contentType, $"{(markAsReprint ? "DUPLICATE-" : "ORIGINAL-")}SalePurchase-{id}-{stage}.{rendered.fileExtension}");
     }
 
     [HttpGet("reprint/payment/{id:int}")]
     public async Task<IActionResult> ReprintPayment(int id, [FromQuery] string? target,
-        [FromQuery] string format = "final") => await RenderPaymentReprintAsync(id, target, format, null);
+        [FromQuery] string format = "final", [FromQuery] bool markAsReprint = true) => await RenderPaymentReprintAsync(id, target, format, null, markAsReprint);
 
     [HttpGet("reprint/payment-advice/{adviceNumber:int}")]
     public async Task<IActionResult> ReprintPaymentByAdvice(int adviceNumber, [FromQuery] string? target,
-        [FromQuery] string format = "final")
+        [FromQuery] string format = "final", [FromQuery] bool markAsReprint = true)
     {
         if (!_current.HasPermission("Payment.Print"))
             return StatusCode(403, new { message = "You do not have 'Payment.Print' permission." });
@@ -399,10 +400,10 @@ public class PrintController : ControllerBase
         if (ids.Count == 0) return NotFound(new { message = $"Advice Number {adviceNumber} not found." });
         if (ids.Count > 1)
             return Conflict(new { message = $"Advice Number {adviceNumber} matches multiple payments. Use Payment ID." });
-        return await RenderPaymentReprintAsync(ids[0], target, format, adviceNumber);
+        return await RenderPaymentReprintAsync(ids[0], target, format, adviceNumber, markAsReprint);
     }
 
-    private async Task<IActionResult> RenderPaymentReprintAsync(int id, string? target, string format, int? adviceNumber)
+    private async Task<IActionResult> RenderPaymentReprintAsync(int id, string? target, string format, int? adviceNumber, bool markAsReprint)
     {
         if (!_current.HasPermission("Payment.Print"))
             return StatusCode(403, new { message = "You do not have 'Payment.Print' permission." });
@@ -416,17 +417,17 @@ public class PrintController : ControllerBase
         // receipt for audit/reference using the same behavior as the normal payment print.
         // It must not force the operator to use a different ID or advice-number workflow.
         var doc = await _engine.BuildPaymentSlipAsync(id, _current.Username ?? "");
-        MarkDuplicate(doc);
+        SetCopyMark(doc, markAsReprint);
         var rendered = RenderDocument(doc, resolvedTarget.target!, format == "preview");
         if (format == "final")
         {
             payment.PrintCount++;
             await _db.SaveChangesAsync();
-            await _audit.LogAsync("Reprint", "Payment", "Payment", id.ToString(),
+            await _audit.LogAsync(markAsReprint ? "Reprint" : "OriginalCopy", "Payment", "Payment", id.ToString(),
                 newValue: new { adviceNumber = adviceNumber ?? payment.AdviceNumber,
-                    target = resolvedTarget.target, duplicate = true, printCount = payment.PrintCount });
+                    target = resolvedTarget.target, duplicate = markAsReprint, printCount = payment.PrintCount });
         }
-        return File(rendered.bytes, rendered.contentType, $"DUPLICATE-Payment-{id}-Advice-{payment.AdviceNumber}.{rendered.fileExtension}");
+        return File(rendered.bytes, rendered.contentType, $"{(markAsReprint ? "DUPLICATE-" : "ORIGINAL-")}Payment-{id}-Advice-{payment.AdviceNumber}.{rendered.fileExtension}");
     }
 
     private bool CanUseAnyReprint() => _current.HasPermission("Weighment.Print")
@@ -449,9 +450,9 @@ public class PrintController : ControllerBase
             : (null, BadRequest(new { message = "target must be A4 or DotMatrix." }));
     }
 
-    private static void MarkDuplicate(PrintDocument doc)
+    private static void SetCopyMark(PrintDocument doc, bool markAsReprint)
     {
-        doc.IsDuplicate = true;
+        doc.IsDuplicate = markAsReprint;
         doc.PrintDateTime = DateTime.Now;
     }
 

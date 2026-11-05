@@ -14,7 +14,7 @@ public class TokenService : ITokenService
     public TokenService(IConfiguration config) => _config = config;
 
     public (string token, DateTime expiresAt) CreateAccessToken(int userId, string username, int tokenVersion,
-        IEnumerable<string> roles, IEnumerable<string> permissions)
+        IEnumerable<string> roles, IEnumerable<string> permissions, bool mfaVerified = false)
     {
         var secret = _config["Jwt:Secret"]
             ?? throw new InvalidOperationException("Jwt:Secret (env CANE_JWT_SECRET) is not configured.");
@@ -26,6 +26,7 @@ public class TokenService : ITokenService
             new(JwtRegisteredClaimNames.Sub, userId.ToString()),
             new(JwtRegisteredClaimNames.UniqueName, username),
             new("ver", tokenVersion.ToString()),
+            new("mfa", mfaVerified ? "1" : "0"),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));

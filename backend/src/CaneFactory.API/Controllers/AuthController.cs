@@ -8,6 +8,9 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using System.Net;
+using System.Net.Mail;
+using System.Security.Cryptography;
 
 namespace CaneFactory.API.Controllers;
 
@@ -93,6 +96,45 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Invalid username or password." });
         }
 
+        if (_config.GetValue<bool>("Security:StaffMfaEnabled") && RequiresMfa(user))
+        {
+            if (!Request.IsHttps && !IsLoopbackRequest())
+                return StatusCode(426, new { message = "Secure HTTPS is required for staff login." });
+            if (!ValidMailbox(user.Email))
+                return StatusCode(503, new { message = "Your account has no valid email address for login verification. Ask an administrator to update it in Users & Roles." });
+            var company = await _db.CompanyConfigs.AsNoTracking().FirstOrDefaultAsync(x => !x.IsDeleted);
+            if (company == null ||
+                string.IsNullOrWhiteSpace(company.SmtpHost) || string.IsNullOrWhiteSpace(company.SmtpUsername) ||
+                string.IsNullOrWhiteSpace(company.SmtpPasswordEncrypted) || !ValidMailbox(company.SmtpUsername))
+                return StatusCode(503, new { message = "Login verification email service is not configured. Contact the administrator." });
+            var otp = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+            var oldCodes = await _db.UserOtps.Where(x => x.UserId == user.Id && x.Purpose == "LOGIN_MFA" &&
+                x.ConsumedAt == null).ToListAsync();
+            foreach (var old in oldCodes) old.ConsumedAt = DateTime.UtcNow;
+            var code = new UserOtp { UserId = user.Id, Mobile = user.Mobile,
+                OtpHash = _protector.Hash(otp), Purpose = "LOGIN_MFA", ExpiresAt = DateTime.UtcNow.AddMinutes(5) };
+            _db.UserOtps.Add(code);
+            await _db.SaveChangesAsync();
+            try
+            {
+                using var mail = new MailMessage(new MailAddress(company.SmtpUsername!), new MailAddress(user.Email!))
+                { Subject = "Sugarcane Management System login code", Body = $"Your login code is {otp}. It expires in 5 minutes. If you did not request it, ignore this email." };
+                using var smtp = new SmtpClient(company.SmtpHost, company.SmtpPort)
+                { EnableSsl = true, Credentials = new NetworkCredential(company.SmtpUsername,
+                    _protector.Unprotect(company.SmtpPasswordEncrypted)), Timeout = 10000 };
+                await smtp.SendMailAsync(mail);
+            }
+            catch (Exception ex)
+            {
+                code.ConsumedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+                _log.LogWarning(ex, "Staff MFA email delivery failed for user {UserId}", user.Id);
+                return StatusCode(503, new { message = "Verification email could not be sent. Try again later." });
+            }
+            await _audit.LogAsync("LoginMfaCodeSent", "Auth", "User", user.Id.ToString());
+            return Ok(new { mfaRequired = true, message = "Enter the 6-digit code sent to your registered email." });
+        }
+
         user.FailedLoginCount = 0;
         user.LockoutEnd = null;
         user.LastLoginAt = DateTime.UtcNow;
@@ -102,7 +144,70 @@ public class AuthController : ControllerBase
         return Ok(response);
     }
 
-    private async Task<LoginResponse> IssueTokensAsync(User user, string? deviceInfo)
+    [HttpPost("mfa/verify")]
+    [EnableRateLimiting("auth")]
+    public async Task<IActionResult> VerifyMfa(MfaVerifyRequest req)
+    {
+        if (!_config.GetValue<bool>("Security:StaffMfaEnabled") ||
+            (!Request.IsHttps && !IsLoopbackRequest()))
+            return Unauthorized(new { message = "Login verification is unavailable." });
+        if (req.Otp == null || req.Otp.Length != 6 || !req.Otp.All(char.IsAsciiDigit) ||
+            req.Username == null || req.Username.Length > 100 ||
+            req.Password == null || req.Password.Length > 512)
+            return Unauthorized(new { message = "Invalid login verification." });
+        var identifier = (req.Username ?? string.Empty).Trim().ToLowerInvariant();
+        var user = await _db.Users.Include(u => u.UserRoles).ThenInclude(x => x.Role)
+            .FirstOrDefaultAsync(u => !u.IsDeleted && u.Status && u.Username.ToLower() == identifier);
+        if (user == null || !RequiresMfa(user) ||
+            (user.LockoutEnd.HasValue && user.LockoutEnd > DateTime.UtcNow))
+            return Unauthorized(new { message = "Invalid login verification." });
+        if (Hasher.VerifyHashedPassword(user, user.PasswordHash, req.Password ?? "") == PasswordVerificationResult.Failed)
+        {
+            user.FailedLoginCount++;
+            if (user.FailedLoginCount >= await IntSetting("Security.MaxFailedLogins", 5))
+            {
+                user.LockoutEnd = DateTime.UtcNow.AddMinutes(await IntSetting("Security.LockoutMinutes", 15));
+                user.FailedLoginCount = 0;
+            }
+            await _db.SaveChangesAsync();
+            await _audit.LogAsync("LoginMfaFailed", "Auth", "User", user.Id.ToString(), success: false);
+            return Unauthorized(new { message = "Invalid login verification." });
+        }
+        var code = await _db.UserOtps.Where(x => x.UserId == user.Id && x.Purpose == "LOGIN_MFA" &&
+            x.ConsumedAt == null && x.ExpiresAt > DateTime.UtcNow && x.Attempts < 5)
+            .OrderByDescending(x => x.CreatedAt).FirstOrDefaultAsync();
+        var suppliedHash = _protector.Hash(req.Otp ?? "");
+        if (code == null || !CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(code.OtpHash), Convert.FromHexString(suppliedHash)))
+        {
+            if (code != null) { code.Attempts++; await _db.SaveChangesAsync(); }
+            await _audit.LogAsync("LoginMfaFailed", "Auth", "User", user.Id.ToString(), success: false);
+            return Unauthorized(new { message = "Invalid or expired verification code." });
+        }
+        code.ConsumedAt = DateTime.UtcNow;
+        user.FailedLoginCount = 0;
+        user.LockoutEnd = null;
+        user.LastLoginAt = DateTime.UtcNow;
+        var response = await IssueTokensAsync(user, req.DeviceInfo, mfaVerified: true);
+        await _db.SaveChangesAsync();
+        await _audit.LogAsync("LoginMfaSuccess", "Auth", "User", user.Id.ToString());
+        return Ok(response);
+    }
+
+    private static bool RequiresMfa(User user) => user.UserRoles.Any(x =>
+        x.Role.Name is "Developer" or "Administrator" or "Admin" or "Accountant" or "SalePurchase");
+
+    private static bool ValidMailbox(string? value)
+    {
+        var address = value?.Trim();
+        return !string.IsNullOrWhiteSpace(address) && address.Length <= 254 &&
+            address.IndexOfAny(['\r', '\n', ' ']) < 0 &&
+            MailAddress.TryCreate(address, out var parsed) &&
+            string.Equals(parsed.Address, address, StringComparison.OrdinalIgnoreCase) &&
+            parsed.Host.Contains('.');
+    }
+
+    private async Task<LoginResponse> IssueTokensAsync(User user, string? deviceInfo, bool mfaVerified = false)
     {
         var roles = user.UserRoles.Select(ur => ur.Role.Name).ToList();
         var isFarmer = roles.Contains("Farmer", StringComparer.OrdinalIgnoreCase);
@@ -110,13 +215,14 @@ public class AuthController : ControllerBase
             .Where(rp => user.UserRoles.Select(ur => ur.RoleId).Contains(rp.RoleId))
             .Select(rp => rp.Permission.Code).Distinct().ToListAsync();
 
-        var (access, expiresAt) = _tokens.CreateAccessToken(user.Id, user.Username, user.TokenVersion, roles, perms);
+        var (access, expiresAt) = _tokens.CreateAccessToken(user.Id, user.Username, user.TokenVersion, roles, perms, mfaVerified);
         var refreshValue = _tokens.CreateRefreshTokenValue();
         var refreshDays = int.TryParse(_config["Jwt:RefreshTokenDays"], out var d) ? d : 7;
         _db.RefreshTokens.Add(new RefreshToken
         {
             UserId = user.Id,
             TokenHash = _protector.Hash(refreshValue),
+            MfaVerified = mfaVerified,
             ExpiresAt = DateTime.UtcNow.AddDays(refreshDays),
             CreatedByIp = Ip,
             DeviceInfo = deviceInfo
@@ -134,7 +240,8 @@ public class AuthController : ControllerBase
             MustChangePassword = user.MustChangePassword,
             PreferredLanguage = user.PreferredLanguage,
             ThemeMode = user.ThemeMode,
-            ThemeColor = user.ThemeColor
+            ThemeColor = user.ThemeColor,
+            CanAuthorizeWeighmentCorrections = user.CanAuthorizeWeighmentCorrections
         });
     }
 
@@ -160,8 +267,10 @@ public class AuthController : ControllerBase
         }
         if (DateTime.UtcNow >= token.ExpiresAt) return Unauthorized(new { message = "Refresh token expired." });
         if (!token.User.Status || token.User.IsDeleted) return Unauthorized(new { message = "Account is inactive." });
+        if (_config.GetValue<bool>("Security:StaffMfaEnabled") && RequiresMfa(token.User) && !token.MfaVerified)
+            return Unauthorized(new { message = "This session needs login verification. Please login again." });
 
-        var response = await IssueTokensAsync(token.User, token.DeviceInfo);
+        var response = await IssueTokensAsync(token.User, token.DeviceInfo, token.MfaVerified);
         token.RevokedAt = DateTime.UtcNow;
         token.RevokedByIp = Ip;
         token.ReplacedByTokenHash = _protector.Hash(response.RefreshToken);
@@ -234,7 +343,8 @@ public class AuthController : ControllerBase
             Email = isFarmer ? MaskEmail(user.Email) : user.Email,
             Roles = roles,
             Permissions = perms, MustChangePassword = user.MustChangePassword,
-            PreferredLanguage = user.PreferredLanguage, ThemeMode = user.ThemeMode, ThemeColor = user.ThemeColor
+            PreferredLanguage = user.PreferredLanguage, ThemeMode = user.ThemeMode, ThemeColor = user.ThemeColor,
+            CanAuthorizeWeighmentCorrections = user.CanAuthorizeWeighmentCorrections
         });
     }
 
@@ -264,7 +374,8 @@ public class AuthController : ControllerBase
         // rotated session for this device. Old access tokens fail their TokenVersion check.
         var tokens = await _db.RefreshTokens.Where(t => t.UserId == userId && t.RevokedAt == null).ToListAsync();
         foreach (var t in tokens) { t.RevokedAt = DateTime.UtcNow; t.RevokedByIp = Ip; }
-        var response = await IssueTokensAsync(user, Request.Headers.UserAgent.ToString());
+        var response = await IssueTokensAsync(user, Request.Headers.UserAgent.ToString(),
+            User.FindFirst("mfa")?.Value == "1");
         await _db.SaveChangesAsync();
         _userState.Invalidate(userId);
         await _audit.LogAsync("PasswordChange", "Auth", "User", user.Id.ToString());
@@ -291,19 +402,59 @@ public class AuthController : ControllerBase
         // do not reveal whether the mobile exists
         if (user != null)
         {
-            var otp = Random.Shared.Next(100000, 999999).ToString();
+            var otp = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
             _db.UserOtps.Add(new UserOtp
             {
                 UserId = user.Id, Mobile = req.Mobile, OtpHash = _protector.Hash(otp),
                 Purpose = "PASSWORD_RESET", ExpiresAt = DateTime.UtcNow.AddMinutes(5)
             });
             await _db.SaveChangesAsync();
-            // Never place OTP or the full mobile number in production logs. Development logging
-            // remains available for local testing until an SMS provider is configured.
-            if (_environment.IsDevelopment())
-                _log.LogInformation("DEV password-reset OTP for mobile ending {Suffix}: {Otp}",
-                    req.Mobile.Length >= 4 ? req.Mobile[^4..] : "****", otp);
-            await _audit.LogAsync("PasswordResetOtpSent", "Auth", "User", user.Id.ToString());
+            var delivered = false;
+            var smsConfig = await _db.SmsConfigs.AsNoTracking().FirstOrDefaultAsync(x => !x.IsDeleted && x.Enabled);
+            if (smsConfig != null && smsConfig.ProviderType != "ANDROID_SIM")
+            {
+                try
+                {
+                    var provider = HttpContext.RequestServices.GetRequiredService<ISmsProviderClient>();
+                    var apiKey = smsConfig.ApiKeyEncrypted == null ? null : _protector.Unprotect(smsConfig.ApiKeyEncrypted);
+                    var apiSecret = smsConfig.ApiSecretEncrypted == null ? null : _protector.Unprotect(smsConfig.ApiSecretEncrypted);
+                    var (success, _, _) = await provider.SendAsync(smsConfig, apiKey, apiSecret, user.Mobile,
+                        $"Your Sugarcane Management System password reset code is {otp}. It expires in 5 minutes.",
+                        HttpContext.RequestAborted);
+                    delivered = success;
+                }
+                catch (Exception ex) { _log.LogWarning(ex, "Password-reset SMS delivery failed for user {UserId}", user.Id); }
+            }
+            if (!delivered)
+            {
+                var company = await _db.CompanyConfigs.AsNoTracking().FirstOrDefaultAsync(x => !x.IsDeleted);
+                if (company != null && !string.IsNullOrWhiteSpace(user.Email) &&
+                    !string.IsNullOrWhiteSpace(company.SmtpHost) &&
+                    !string.IsNullOrWhiteSpace(company.SmtpUsername) &&
+                    !string.IsNullOrWhiteSpace(company.SmtpPasswordEncrypted))
+                {
+                    try
+                    {
+                        using var mail = new MailMessage(new MailAddress(company.SmtpUsername), new MailAddress(user.Email))
+                        { Subject = "Sugarcane Management System password reset", Body = $"Your password reset code is {otp}. It expires in 5 minutes." };
+                        using var smtp = new SmtpClient(company.SmtpHost, company.SmtpPort)
+                        { EnableSsl = true, Credentials = new NetworkCredential(company.SmtpUsername,
+                            _protector.Unprotect(company.SmtpPasswordEncrypted)), Timeout = 10000 };
+                        await smtp.SendMailAsync(mail);
+                        delivered = true;
+                    }
+                    catch (Exception ex) { _log.LogWarning(ex, "Password-reset email failed for user {UserId}", user.Id); }
+                }
+            }
+            if (!delivered)
+            {
+                var pending = await _db.UserOtps.Where(x => x.UserId == user.Id && x.Purpose == "PASSWORD_RESET" &&
+                    x.ConsumedAt == null).ToListAsync();
+                foreach (var item in pending) item.ConsumedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+                await _audit.LogAsync("PasswordResetDeliveryUnavailable", "Auth", "User", user.Id.ToString(), success: false);
+            }
+            else await _audit.LogAsync("PasswordResetOtpSent", "Auth", "User", user.Id.ToString());
         }
         return Ok(new { message = "If the mobile number is registered, an OTP has been sent." });
     }

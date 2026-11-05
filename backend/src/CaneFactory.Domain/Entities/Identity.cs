@@ -28,6 +28,9 @@ public class User : BaseEntity
     /// override.  A role alone must never make a user an approver.
     /// </summary>
     public bool CanApproveRateOverrides { get; set; }
+    /// <summary>Explicit authority for an Admin to change grower/party/rate and
+    /// vehicle details on an existing unpaid weighment. Developer is always allowed.</summary>
+    public bool CanAuthorizeWeighmentCorrections { get; set; }
     public ICollection<UserRole> UserRoles { get; set; } = new List<UserRole>();
 }
 
@@ -70,6 +73,7 @@ public class RefreshToken
     public int UserId { get; set; }
     public User User { get; set; } = null!;
     public string TokenHash { get; set; } = string.Empty;
+    public bool MfaVerified { get; set; }
     public DateTime ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public string? CreatedByIp { get; set; }

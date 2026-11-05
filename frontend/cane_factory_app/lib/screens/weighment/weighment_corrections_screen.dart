@@ -20,23 +20,27 @@ class _WeighmentCorrectionsScreenState
     extends State<WeighmentCorrectionsScreen> {
   final _id = TextEditingController();
   final _vehicle = TextEditingController();
+  final _rate = TextEditingController();
   String _kind = 'purchase';
   Map<String, dynamic>? _record, _preview;
   List<Map<String, dynamic>> _vehicles = [];
+  List<Map<String, dynamic>> _subjects = [];
   int? _vehicleType;
+  int? _subjectId;
   String? _message, _updater;
   bool _busy = false, _error = false;
   Dio get _api => widget.api ?? ApiClient.instance.dio;
   bool get _cane => _kind == 'purchase';
   bool get _allowed {
     final auth = context.read<AuthProvider>();
-    return auth.hasRole('Admin') || auth.hasRole('Developer');
+    return auth.canAuthorizeWeighmentCorrections;
   }
 
   @override
   void dispose() {
     _id.dispose();
     _vehicle.dispose();
+    _rate.dispose();
     super.dispose();
   }
 
@@ -102,8 +106,15 @@ class _WeighmentCorrectionsScreenState
             (x) => Map<String, dynamic>.from(x),
           ),
         );
+        final subjectRows =
+            (_cane ? data['growers'] : data['parties']) as List? ?? [];
+        _subjects = List<Map<String, dynamic>>.from(
+          subjectRows.map((x) => Map<String, dynamic>.from(x as Map)),
+        );
         _vehicleType = _record!['vehicleTypeId'];
+        _subjectId = _cane ? _record!['growerId'] : _record!['partyId'];
         _vehicle.text = _record!['vehicleNumber'] ?? '';
+        _rate.text = (_record!['rate'] as num?)?.toStringAsFixed(2) ?? '';
         _updater = data['updatedByName'];
       });
     } catch (error) {
@@ -116,13 +127,21 @@ class _WeighmentCorrectionsScreenState
   Map<String, dynamic> _payload() => {
         'vehicleTypeId': _vehicleType,
         'vehicleNumber': _vehicle.text,
+        if (_cane) 'growerId': _subjectId else 'partyId': _subjectId,
+        'rate': double.tryParse(_rate.text.trim()),
         'revision': _record!['revision'],
       };
 
   Future<void> _calculateOrSave(bool save) async {
     if (!_allowed || _busy || _record == null) return;
-    if (_vehicleType == null || _vehicle.text.trim().isEmpty) {
-      _show('Select a vehicle type and enter the vehicle number.');
+    final rate = double.tryParse(_rate.text.trim());
+    if (_subjectId == null ||
+        _vehicleType == null ||
+        _vehicle.text.trim().isEmpty ||
+        rate == null ||
+        rate <= 0) {
+      _show(
+          'Select Grower/Party and Vehicle Type, then enter a valid Vehicle Number and Rate.');
       return;
     }
     if (save && _preview == null) {
@@ -142,7 +161,7 @@ class _WeighmentCorrectionsScreenState
               'Update ${_cane ? 'purchase' : 'sale'} #${_record!['id']}?',
             ),
             content: Text(
-              'Vehicle: ${_preview!['vehicleNumber']}\nRate: ${_money(_preview!['rate'])}\nAmount: ${_money(_preview!['amount'])}\n\nMeasured weights will not change. Your user and update time will be recorded.',
+              '${_cane ? 'Grower' : 'Party'}: ${_preview!['name']}\nVehicle: ${_preview!['vehicleNumber']}\nRate: ${_money(_preview!['rate'])}\nAmount: ${_money(_preview!['amount'])}\n\nMeasured weights will not change. Related amount and GST values will be recalculated. Your user and update time will be recorded.',
             ),
             actions: [
               TextButton(
@@ -175,6 +194,7 @@ class _WeighmentCorrectionsScreenState
             ..._record!,
             ...data,
             'vehicleTypeId': _vehicleType,
+            if (_cane) 'growerId': _subjectId else 'partyId': _subjectId,
           };
           _vehicle.text = data['vehicleNumber'];
           _updater = data['updatedByName'];
@@ -344,9 +364,10 @@ class _WeighmentCorrectionsScreenState
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    if (!auth.hasRole('Admin') && !auth.hasRole('Developer')) {
+    if (!auth.canAuthorizeWeighmentCorrections) {
       return const Center(
-        child: Text('Only Admin and Developer can correct weighments.'),
+        child: Text(
+            'Weighment correction authority is not enabled for this user.'),
       );
     }
     final record = _record;
@@ -361,7 +382,7 @@ class _WeighmentCorrectionsScreenState
           ),
           const SizedBox(height: 8),
           const Text(
-            'Admin / Developer only. Paid cane purchases cannot be edited. Gross, tare and final weights remain unchanged.',
+            'Authorized Admin / Developer only. Paid sugarcane purchases cannot be edited. Measured gross, tare and final weights remain unchanged.',
           ),
           const SizedBox(height: 12),
           RadioGroup<String>(
@@ -389,7 +410,7 @@ class _WeighmentCorrectionsScreenState
                           : const EdgeInsets.symmetric(horizontal: 8),
                       title: Text(
                         kind == 'purchase'
-                            ? 'Cane Purchase'
+                            ? 'Sugarcane Purchase'
                             : 'Sale / Purchase',
                         maxLines: 2,
                       ),
@@ -404,7 +425,7 @@ class _WeighmentCorrectionsScreenState
             const Padding(
               padding: EdgeInsets.only(bottom: 14),
               child: Text(
-                'Sale / Purchase uses Item and Party, not cane varieties. Only vehicle details can be corrected here. This module has no linked payment status; rate and amount remain unchanged.',
+                'Sale Weighment uses Item and Party. Party, vehicle and rate can be corrected; amount and GST values are recalculated automatically.',
               ),
             ),
           LayoutBuilder(builder: (context, rowConstraints) {
@@ -460,24 +481,29 @@ class _WeighmentCorrectionsScreenState
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${_cane ? 'Cane Purchase' : 'Sale / Purchase'} Details',
+                      '${_cane ? 'Sugarcane Purchase' : 'Sale / Purchase'} Details',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 8),
                     _detailsTable(record),
-                    if (_cane)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 10),
-                        child: Text(
-                          'Variety Type, Variety, Rate and Amount are locked. Only Vehicle Type and Vehicle Number can be corrected.',
-                        ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 10),
+                      child: Text(
+                        'Measured weights stay locked. Grower/Party, Rate, Vehicle Type and Vehicle Number can be corrected; related amounts are recalculated.',
                       ),
+                    ),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 18),
             LayoutBuilder(builder: (context, fieldConstraints) {
+              final subject = _dropdown(
+                _cane ? 'Grower' : 'Party',
+                _subjects,
+                _subjectId,
+                (v) => _subjectId = v,
+              );
               final vehicleType = _dropdown(
                 'Vehicle Type',
                 _vehicles,
@@ -495,17 +521,37 @@ class _WeighmentCorrectionsScreenState
                   _message = null;
                 }),
               );
-              if (fieldConstraints.maxWidth < 360) {
+              final rate = TextField(
+                controller: _rate,
+                enabled: !_busy,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                      RegExp(r'^\d{0,8}(\.\d{0,2})?'))
+                ],
+                decoration: const InputDecoration(labelText: 'Rate per Qtl'),
+                onChanged: (_) => setState(() {
+                  _preview = null;
+                  _message = null;
+                }),
+              );
+              if (fieldConstraints.maxWidth < 700) {
                 return Column(children: [
+                  subject,
+                  const SizedBox(height: 12),
                   vehicleType,
                   const SizedBox(height: 12),
                   vehicleNumber,
+                  const SizedBox(height: 12),
+                  rate,
                 ]);
               }
-              return Row(children: [
-                Expanded(child: vehicleType),
-                const SizedBox(width: 12),
-                Expanded(child: vehicleNumber),
+              return Wrap(spacing: 12, runSpacing: 12, children: [
+                SizedBox(width: 260, child: subject),
+                SizedBox(width: 220, child: vehicleType),
+                SizedBox(width: 220, child: vehicleNumber),
+                SizedBox(width: 180, child: rate),
               ]);
             }),
             const SizedBox(height: 20),
@@ -513,7 +559,7 @@ class _WeighmentCorrectionsScreenState
               Padding(
                 padding: const EdgeInsets.only(bottom: 14),
                 child: Text(
-                  'Vehicle preview: ${_preview!['vehicleNumber']}    Rate: ${_money(_preview!['rate'])}    Amount: ${_money(_preview!['amount'])}',
+                  '${_cane ? 'Grower' : 'Party'}: ${_preview!['name']}    Vehicle: ${_preview!['vehicleNumber']}    Rate: ${_money(_preview!['rate'])}    Amount: ${_money(_preview!['amount'])}',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),

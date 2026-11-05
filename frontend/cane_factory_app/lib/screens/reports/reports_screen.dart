@@ -20,7 +20,7 @@ class ReportsScreen extends StatefulWidget {
 
 class _ReportsScreenState extends State<ReportsScreen> {
   static const _reportTypes = {
-    'purchases': 'SugarCane Purchase Report',
+    'purchases': 'Sugarcane Purchase Report',
     'rate-overrides': 'Rate Change Approval Report',
     'payments': 'Payment Report',
     'sale-purchases': 'Sale Product Report',
@@ -72,7 +72,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
         if (id != null) q['transactionId'] = id;
       }
       if (_statusCtrl.text.trim().isNotEmpty) {
-        q['transactionType'] = _statusCtrl.text.trim().toUpperCase();
+        final type = _statusCtrl.text.trim().toUpperCase();
+        q['transactionType'] = type == 'SUGARCANE' ? 'CANE' : type;
       }
     } else if (_reportType == 'sale-purchases') {
       if (_growerId.text.trim().isNotEmpty)
@@ -117,8 +118,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   Future<void> _export(String format) async {
     final ext = format == 'pdf' ? 'pdf' : 'xlsx';
+    final reportName = _reportType == 'purchases'
+        ? 'sugarcane-purchase-report'
+        : '$_reportType-report';
     await downloadAndNotify(
-        context, '/api/reports/$_reportType', '$_reportType-report.$ext',
+        context, '/api/reports/$_reportType', '$reportName.$ext',
         queryParameters: _query(format: format));
   }
 
@@ -237,6 +241,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
           'tareDateTime',
           'grossDateTime',
           'item',
+          'itemQuantity',
           'party',
           'vehicleNumber',
           'driver',
@@ -339,10 +344,13 @@ class _ReportsScreenState extends State<ReportsScreen> {
       'cashReceivedBeforeWithdrawal': 'Received Before Withdrawal (₹)',
       'closingWithdrawal': 'Day Closing Withdrawal (₹)',
       'saleProductAmount': 'Sale Product (₹)',
-      'canePurchaseAmount': 'Cane Purchase (₹)',
+      'canePurchaseAmount': 'Sugarcane Purchase (₹)',
       'profitLoss': 'Profit / Loss (₹)',
       'profitLossStatus': 'Result',
     };
+    if (column == 'itemQuantity') {
+      return 'Item Quantity (Bags / Boxes / Units)';
+    }
     return _reportType == 'daily-cash-profit-loss'
         ? dailyCashLabels[column] ?? column
         : column;
@@ -455,7 +463,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                                         ? 'Transaction Type'
                                         : 'Status',
                                 hintText: _reportType == 'rate-overrides'
-                                    ? 'CANE or SALE'
+                                    ? 'Sugarcane or Sale'
                                     : 'e.g. PENDING'))),
                   FilledButton.icon(
                       onPressed: _search,
@@ -474,7 +482,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               const Padding(
                 padding: EdgeInsets.only(top: 10),
                 child: Text(
-                  'Each selected date covers 00:00:00 to 23:59:59. Cash Received = received cash − Day Closing Withdrawal. Profit/Loss = Sale Product − Cane Purchase − Expense Module.',
+                  'Each selected date covers 00:00:00 to 23:59:59. Cash Received = received cash − Day Closing Withdrawal. Profit/Loss = Sale Product − Sugarcane Purchase − Expense Module.',
                 ),
               ),
             const SizedBox(height: 10),

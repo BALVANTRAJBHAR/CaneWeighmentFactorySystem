@@ -261,8 +261,10 @@ public class AppDbContext : DbContext
             // One sale/purchase tare per normalized vehicle may remain pending gross at a time.
             e.HasIndex(x => x.VehicleNumber).HasDatabaseName("UX_SalePurchases_ActiveVehicle")
                 .IsUnique().HasFilter("[IsDeleted] = 0 AND [WeighmentStatus] = 'TARE_PENDING_GROSS'");
-            foreach (var p in new[] { "ScaleReadingTareKg", "TareWeightQuintal", "ScaleReadingGrossKg", "GrossWeightQuintal", "FinalWeightQuintal", "Rate", "GstPercent", "SalesPercent" })
+            foreach (var p in new[] { "ScaleReadingTareKg", "TareWeightQuintal", "ScaleReadingGrossKg", "GrossWeightQuintal", "FinalWeightQuintal", "Rate", "GstPercent", "SalesPercent", "CuttingPercent", "CuttingWeightQuintal", "KantaChhootKgPerQuintal", "KantaChhootWeightQuintal" })
                 e.Property(p).HasPrecision(12, 2);
+            e.Property(x => x.ItemQuantity).HasPrecision(12, 3);
+            e.Property(x => x.ItemType).HasMaxLength(80);
             e.Property(x => x.Amount).HasPrecision(14, 2);
             e.Property(x => x.GstAmount).HasPrecision(14, 2);
             e.Property(x => x.FinalAmount).HasPrecision(14, 2);

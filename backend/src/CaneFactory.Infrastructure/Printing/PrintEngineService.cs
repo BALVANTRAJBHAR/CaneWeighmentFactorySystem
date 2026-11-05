@@ -27,10 +27,11 @@ public class PrintEngineService : IPrintEngineService
         var p = await LoadPurchaseAsync(purchaseId);
         var doc = await BaseDocAsync(p.Season?.SeasonName, generatedByUserName);
         doc.TitleHindi = "गन्ना क्रय पर्ची - सकल तौल";
-        doc.TitleEnglish = "Cane Purchase Slip - Gross";
+        doc.TitleEnglish = "Sugarcane Purchase Slip - Gross";
         doc.UseHalfPageDotMatrixLayout = true;
         doc.QrValue = p.Id;
-        doc.Rows = GrossRows(p, doc.Language);
+        doc.Rows = GrossRows(p, doc.Language,
+            await OperatorNameAsync(p.GrossByUserName, doc.Language));
         doc.Images = doc.PrintImages && includeImages ? await LoadPurchaseImagesForPrintAsync(p.Id, "GROSS") : new();
         return doc;
     }
@@ -40,10 +41,12 @@ public class PrintEngineService : IPrintEngineService
         var p = await LoadPurchaseAsync(purchaseId);
         var doc = await BaseDocAsync(p.Season?.SeasonName, generatedByUserName);
         doc.TitleHindi = "गन्ना क्रय पर्ची - अंतिम तौल";
-        doc.TitleEnglish = "Cane Purchase Slip - Final";
+        doc.TitleEnglish = "Sugarcane Purchase Slip - Final";
         doc.UseHalfPageDotMatrixLayout = true;
         doc.QrValue = p.Id;
-        doc.Rows = GrossRows(p, doc.Language).Concat(TareRows(p)).ToList();
+        doc.Rows = GrossRows(p, doc.Language,
+                await OperatorNameAsync(p.GrossByUserName, doc.Language))
+            .Concat(TareRows(p, await OperatorNameAsync(p.TareByUserName, doc.Language))).ToList();
         doc.Images = doc.PrintImages && includeImages ? await LoadPurchaseImagesForPrintAsync(p.Id, "GROSS", "TARE") : new();
         return doc;
     }
@@ -157,22 +160,26 @@ public class PrintEngineService : IPrintEngineService
         if (stage == "GROSS" && p.WeighmentStatus != "COMPLETED")
             throw new InvalidOperationException("Gross slip is available only after SalePurchase completion.");
         var doc = await BaseDocAsync(null, generatedByUserName);
-        doc.TitleHindi = stage == "TARE" ? "बिक्री/खरीद तौल पर्ची - टेयर" : "बिक्री/खरीद तौल पर्ची - अंतिम";
-        doc.TitleEnglish = stage == "TARE" ? "Sale/Purchase Weighment Slip - Tare" : "Sale/Purchase Weighment Slip - Final";
+        var printAmountCalculation = await _db.PrintConfigs.AsNoTracking()
+            .Where(x => !x.IsDeleted)
+            .Select(x => (bool?)x.SalePurchaseAmountCalculationPrintEnabled)
+            .FirstOrDefaultAsync() ?? true;
+        doc.TitleHindi = stage == "TARE" ? "बिक्री तौल पर्ची - टेयर" : "बिक्री तौल पर्ची - अंतिम";
+        doc.TitleEnglish = stage == "TARE" ? "Sale Weighment Slip - Tare" : "Sale Weighment Slip - Final";
         doc.UseHalfPageDotMatrixLayout = true;
+        doc.IsSalePurchaseDocument = true;
         doc.QrValue = p.Id;
-        doc.Rows = SalePurchaseRows(p, stage, doc.Language);
+        doc.Rows = SalePurchaseRows(p, stage, doc.Language,
+            await OperatorNameAsync(p.TareByUserName, doc.Language),
+            await OperatorNameAsync(p.GrossByUserName, doc.Language),
+            printAmountCalculation);
         if (stage == "TARE")
         {
-            // A tare slip is printed before the final/gross weight exists.  Show
-            // the effective master rate as provisional, but never invent an
-            // amount that has not yet been calculated from the final weight.
-            var tareDate = p.TareDateTime.Date;
-            var rate = await SaleItemRateLookup.CurrentAsync(_db, p.ItemId, tareDate);
-            doc.Rows.Add(new PrintRow("वर्तमान दर (अनंतिम)", "Current Rate (Provisional)",
-                rate?.ToString("F2") ?? "Sale Rate Master not configured"));
+            // Tare is only the first weight. The rate belongs on the completed
+            // gross slip/invoice, not on the provisional tare slip.
             doc.Rows.Add(new PrintRow("राशि (₹)", "Amount (Rs)", "Calculated after Final Gross"));
         }
+        doc.A4Rows = CompactSalePurchaseA4Rows(doc.Rows, p);
         doc.Images = !doc.PrintImages || !includeImages ? new() : stage == "TARE"
             ? await LoadSalePurchaseImagesForPrintAsync(p.Id, "TARE")
             : await LoadSalePurchaseImagesForPrintAsync(p.Id, "GROSS", "TARE");
@@ -263,7 +270,7 @@ public class PrintEngineService : IPrintEngineService
         return new PrintDocument
         {
             Language = string.Equals(cfg.Language, "hi", StringComparison.OrdinalIgnoreCase) ? "hi" : "en",
-            CompanyName = string.Equals(cfg.Language, "hi", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(company?.CompanyNameHi) ? company.CompanyNameHi : company?.CompanyName ?? "Cane Factory",
+            CompanyName = string.Equals(cfg.Language, "hi", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(company?.CompanyNameHi) ? company.CompanyNameHi : company?.CompanyName ?? "Sugarcane Factory",
             Address = string.Equals(cfg.Language, "hi", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(company?.AddressHi) ? company.AddressHi : company?.Address,
             LogoPath = company?.LogoPath,
             LogoData = company?.LogoData,
@@ -358,11 +365,22 @@ public class PrintEngineService : IPrintEngineService
     private static string Text(string? english, string? hindi, string language) =>
         language == "hi" && !string.IsNullOrWhiteSpace(hindi) ? hindi! : english ?? "-";
 
+    private async Task<string> OperatorNameAsync(string? username, string language)
+    {
+        if (string.IsNullOrWhiteSpace(username)) return "-";
+        var user = await _db.Users.AsNoTracking()
+            .Where(x => x.Username == username)
+            .Select(x => new { x.FullName, x.FullNameHi }).FirstOrDefaultAsync();
+        if (user == null) return username;
+        if (language == "hi" && !string.IsNullOrWhiteSpace(user.FullNameHi)) return user.FullNameHi;
+        return !string.IsNullOrWhiteSpace(user.FullName) ? user.FullName : username;
+    }
+
     /// <summary>
     /// Compact cane-slip rows. Pairing stable reference values on one line leaves enough vertical
     /// room inside the calibrated half-page without shrinking the impact-printer font.
     /// </summary>
-    private static List<PrintRow> GrossRows(Purchase p, string language) => new()
+    private static List<PrintRow> GrossRows(Purchase p, string language, string grossOperator) => new()
     {
         new("क्रय क्रमांक", "Purchase ID", p.Id.ToString()),
         new("किसान", "Grower", $"{Text(p.Grower.GrowerName, p.Grower.GrowerNameHi, language)} / {p.GrowerId}"),
@@ -372,14 +390,14 @@ public class PrintEngineService : IPrintEngineService
         new("प्रजाति प्रकार", "Variety Type", Text(p.VarietyType.VarietyTypeName, p.VarietyType.VarietyTypeNameHi, language)),
         new("प्रजाति", "Variety", $"{Text(p.Crop?.CropName, p.Crop?.CropNameHi, language)} / {p.Variety.VarietyName}"),
         new("सकल वजन (क्विंटल)", "Gross Weight (Qtl)", p.GrossWeightQuintal.ToString("F2")),
-        new("दर (प्रति क्विंटल)", "Rate (per Qtl)", p.Rate.ToString("F2")),
+        new("सकल ऑपरेटर", "Gross Operator", grossOperator),
     };
 
-    private static List<PrintRow> TareRows(Purchase p) => new()
+    private static List<PrintRow> TareRows(Purchase p, string tareOperator) => new()
     {
         new("टेयर वजन (क्विंटल)", "Tare Weight (Qtl)", p.TareWeightQuintal?.ToString("F2") ?? "-"),
         new("टेयर तिथि/समय", "Tare Date/Time", p.TareDateTime?.ToLocalTime().ToString("dd-MM-yyyy HH:mm") ?? "-"),
-        new("टेयर कर्ता", "Tare By", p.TareByUserName ?? "-"),
+        new("टेयर ऑपरेटर", "Tare Operator", tareOperator),
         new("नेट वजन (क्विंटल)", "Net Weight (Qtl)", p.NetWeightQuintal?.ToString("F2") ?? "-"),
         new("कटान", "Cutting",
             $"{p.CuttingPercent:0.##}% / {p.CuttingWeightQuintal?.ToString("0.##") ?? "-"}"),
@@ -556,11 +574,12 @@ public class PrintEngineService : IPrintEngineService
     private static string SnapshotOrCurrent(string? snapshot, string? current) =>
         !string.IsNullOrWhiteSpace(snapshot) ? snapshot : current ?? "-";
 
-    private static List<PrintRow> SalePurchaseRows(SalePurchase p, string stage, string language)
+    private static List<PrintRow> SalePurchaseRows(SalePurchase p, string stage, string language,
+        string tareOperator, string grossOperator, bool printAmountCalculation)
     {
         var rows = new List<PrintRow>
         {
-            new("बिक्री/खरीद क्रमांक", "SalePurchase ID", p.Id.ToString()),
+            new("बिक्री/आरएसटी क्रमांक", "SalePurchase ID", p.Id.ToString()),
             new("वस्तु", "Item", Text(p.Item?.ItemName, p.Item?.ItemNameHi, language)),
             new("पार्टी", "Party", Text(p.Party?.PartyName, p.Party?.PartyNameHi, language)),
             new("मोबाइल नंबर", "Mobile Number", p.Party?.Mobile ?? "-"),
@@ -570,21 +589,64 @@ public class PrintEngineService : IPrintEngineService
             new("टिप्पणी", "Remark", p.Remark ?? "-"),
             new("टेयर वजन (क्विंटल)", "Tare Weight (Qtl)", p.TareWeightQuintal.ToString("F2")),
             new("टेयर तिथि/समय", "Tare Date/Time", p.TareDateTime.ToLocalTime().ToString("dd-MM-yyyy HH:mm")),
-            new("टेयर ऑपरेटर", "Tare Operator", p.TareByUserName),
+            new("टेयर ऑपरेटर", "Tare Operator", tareOperator),
             new("स्थिति", "Status", p.WeighmentStatus)
         };
         if (stage == "GROSS") rows.AddRange(new[]
         {
+            new PrintRow("वस्तु मात्रा (बैग/बॉक्स/इकाई)", "Item Quantity (Bags/Boxes/Units)", p.ItemQuantity?.ToString("0.###") ?? "-"),
+            new PrintRow("वस्तु प्रकार", "Item Type", p.ItemType ?? "-"),
             new PrintRow("सकल वजन (क्विंटल)", "Gross Weight (Qtl)", p.GrossWeightQuintal?.ToString("F2") ?? "-"),
-            new PrintRow("अंतिम वजन (क्विंटल)", "Final Weight (Qtl)", p.FinalWeightQuintal?.ToString("F2") ?? "-"),
-            new PrintRow("दर", "Rate", p.Rate?.ToString("F2") ?? "-"),
-            new PrintRow("मूल राशि (₹)", "Base Amount (Rs)", p.Amount?.ToString("F2") ?? "-"),
-            new PrintRow("जीएसटी (%)", "GST (%)", p.GstPercent.ToString("F2")),
-            new PrintRow("जीएसटी राशि (₹)", "GST Amount (Rs)", p.GstAmount?.ToString("F2") ?? "-"),
-            new PrintRow("अंतिम राशि (₹)", "Final Amount (Rs)", p.FinalAmount?.ToString("F2") ?? "-"),
             new PrintRow("सकल तिथि/समय", "Gross Date/Time", p.GrossDateTime?.ToLocalTime().ToString("dd-MM-yyyy HH:mm") ?? "-"),
-            new PrintRow("सकल ऑपरेटर", "Gross Operator", p.GrossByUserName ?? "-")
+            new PrintRow("सकल ऑपरेटर", "Gross Operator", grossOperator)
         });
+        if (stage == "GROSS" && printAmountCalculation)
+        {
+            var insertAt = Math.Max(0, rows.Count - 2);
+            rows.InsertRange(insertAt, new[]
+            {
+                new PrintRow("कटिंग", "Cutting", $"{p.CuttingPercent:0.##}% / {p.CuttingWeightQuintal?.ToString("0.##") ?? "-"} Qtl"),
+                new PrintRow("कांटा छूट", "Kanta Chhoot", $"{p.KantaChhootKgPerQuintal:0.##} kg/Qtl / {p.KantaChhootWeightQuintal?.ToString("0.##") ?? "-"} Qtl"),
+                new PrintRow("अंतिम वजन (क्विंटल)", "Final Weight (Qtl)", p.FinalWeightQuintal?.ToString("F2") ?? "-"),
+                new PrintRow("दर", "Rate", p.Rate?.ToString("F2") ?? "-"),
+                new PrintRow("जीएसटी रहित राशि (₹)", "Amount Without GST (Rs)", p.Amount?.ToString("F2") ?? "-"),
+                new PrintRow("जीएसटी (%)", "GST Rate (%)", p.GstPercent.ToString("F2")),
+                new PrintRow("जीएसटी राशि (₹)", "GST Amount (Rs)", p.GstAmount?.ToString("F2") ?? "-"),
+                new PrintRow("अंतिम राशि (₹)", "Final Amount (Rs)", p.FinalAmount?.ToString("F2") ?? "-")
+            });
+        }
         return rows;
+    }
+
+    private static List<PrintRow> CompactSalePurchaseA4Rows(
+        IEnumerable<PrintRow> source, SalePurchase sale)
+    {
+        var compact = new List<PrintRow>();
+        foreach (var row in source)
+        {
+            if (row.LabelEnglish is "Vehicle Number" or "Tare Operator" or
+                "Item Type" or "GST Amount (Rs)")
+                continue;
+            if (row.LabelEnglish == "Vehicle Type")
+            {
+                compact.Add(new PrintRow("वाहन", "Vehicle",
+                    $"{row.Value} / {sale.VehicleNumber}"));
+                continue;
+            }
+            if (row.LabelEnglish == "Item Quantity (Bags/Boxes/Units)")
+            {
+                compact.Add(new PrintRow("वस्तु (मात्रा/प्रकार)", "Item (Quantity / Type)",
+                    $"{sale.ItemQuantity?.ToString("0.###") ?? "-"} {sale.ItemType ?? "-"}"));
+                continue;
+            }
+            if (row.LabelEnglish == "GST Rate (%)")
+            {
+                compact.Add(new PrintRow("जीएसटी", "GST",
+                    $"{sale.GstPercent:0.##}% / {sale.GstAmount?.ToString("F2") ?? "-"}"));
+                continue;
+            }
+            compact.Add(row);
+        }
+        return compact;
     }
 }

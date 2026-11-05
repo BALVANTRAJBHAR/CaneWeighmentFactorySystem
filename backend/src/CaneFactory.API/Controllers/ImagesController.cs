@@ -216,7 +216,7 @@ public class ImagesController : ControllerBase
     {
         if (DenyImageView() is { } denied) return denied;
         if (!int.TryParse(term, out var transactionId) || transactionId <= 0)
-            return BadRequest(new { message = "Enter an exact Cane Purchase ID or Sale ID for rate-update images." });
+            return BadRequest(new { message = "Enter an exact Sugarcane Purchase ID or Sale ID for rate-update images." });
 
         var items = await (
             from rateOverride in _db.WeighmentRateOverrides.AsNoTracking()

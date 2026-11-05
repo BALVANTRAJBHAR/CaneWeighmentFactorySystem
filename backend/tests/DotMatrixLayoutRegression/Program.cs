@@ -226,8 +226,8 @@ static PrintDocument Build(string title, int rowCount) => new()
     {
         "Cane Gross" => "गन्ना क्रय पर्ची - सकल तौल",
         "Cane Final" => "गन्ना क्रय पर्ची - अंतिम तौल",
-        "Sale Tare" => "बिक्री/खरीद तौल पर्ची - टेयर",
-        _ => "बिक्री/खरीद तौल पर्ची - अंतिम"
+        "Sale Tare" => "बिक्री तौल पर्ची - टेयर",
+        _ => "बिक्री तौल पर्ची - अंतिम"
     },
     TitleEnglish = title,
     CompanyName = "ऑथेंटिक फूड फार्म एलएलपी — LONG COMPANY NAME TEST",

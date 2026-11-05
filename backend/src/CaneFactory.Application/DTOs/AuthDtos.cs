@@ -1,6 +1,7 @@
 namespace CaneFactory.Application.DTOs;
 
 public record LoginRequest(string Username, string Password, string? DeviceInfo);
+public record MfaVerifyRequest(string Username, string Password, string Otp, string? DeviceInfo);
 public record LoginResponse(string AccessToken, string RefreshToken, DateTime AccessTokenExpiresAt,
     bool MustChangePassword, UserInfo User);
 public record RefreshRequest(string RefreshToken);
@@ -23,6 +24,7 @@ public class UserInfo
     public string? PreferredLanguage { get; set; }
     public string? ThemeMode { get; set; }
     public string? ThemeColor { get; set; }
+    public bool CanAuthorizeWeighmentCorrections { get; set; }
 }
 
 public class CreateUserRequest
@@ -35,6 +37,7 @@ public class CreateUserRequest
     public string TemporaryPassword { get; set; } = string.Empty;
     public List<int> RoleIds { get; set; } = new();
     public bool CanApproveRateOverrides { get; set; }
+    public bool CanAuthorizeWeighmentCorrections { get; set; }
 }
 
 public class UpdateUserRequest
@@ -47,6 +50,7 @@ public class UpdateUserRequest
     public List<int> RoleIds { get; set; } = new();
     /// <summary>Only a Developer may set this explicit rate-approval authority.</summary>
     public bool? CanApproveRateOverrides { get; set; }
+    public bool? CanAuthorizeWeighmentCorrections { get; set; }
 }
 
 public class SessionDto

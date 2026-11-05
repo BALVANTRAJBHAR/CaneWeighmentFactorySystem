@@ -102,6 +102,15 @@ public class SalePurchase : BaseEntity
     public string? GrossByUserName { get; set; }
 
     public decimal? Rate { get; set; }
+    /// <summary>Operator-entered sale item package count (bags, boxes or other units) captured at gross.</summary>
+    public decimal? ItemQuantity { get; set; }
+    /// <summary>Operator-entered package/unit description such as Bag, Box or Drum.</summary>
+    public string? ItemType { get; set; }
+    public decimal CuttingPercent { get; set; }
+    public decimal? CuttingWeightQuintal { get; set; }
+    /// <summary>Kilograms deducted for every quintal of net weight.</summary>
+    public decimal KantaChhootKgPerQuintal { get; set; }
+    public decimal? KantaChhootWeightQuintal { get; set; }
     /// <summary>GST selected when the sale is finally gross-weighed.</summary>
     public decimal GstPercent { get; set; }
     public decimal? Amount { get; set; }

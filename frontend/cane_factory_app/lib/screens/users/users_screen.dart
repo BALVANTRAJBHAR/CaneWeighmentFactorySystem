@@ -217,10 +217,15 @@ class _UsersScreenState extends State<UsersScreen> {
       'password': TextEditingController(),
     };
     var fullNameHiEdited = false;
+    var obscureTemporaryPassword = true;
     final selectedRoles = <int>{...List<int>.from(existing?['roleIds'] ?? [])};
     bool status = existing?['status'] ?? true;
     bool canApproveRateOverrides = existing?['canApproveRateOverrides'] == true;
+    bool canAuthorizeWeighmentCorrections =
+        existing?['canAuthorizeWeighmentCorrections'] == true;
     final isDeveloper = context.read<AuthProvider>().hasRole('Developer');
+    final canGrantCorrectionAuthority =
+        isDeveloper || context.read<AuthProvider>().hasRole('Administrator');
 
     final ok = await showDialog<bool>(
       context: context,
@@ -287,10 +292,21 @@ class _UsersScreenState extends State<UsersScreen> {
                   if (existing == null)
                     TextFormField(
                         controller: c['password'],
-                        obscureText: true,
-                        decoration: const InputDecoration(
+                        obscureText: obscureTemporaryPassword,
+                        decoration: InputDecoration(
                             labelText: 'Temporary Password',
-                            helperText: 'User must change it on first login'),
+                            helperText: 'User must change it on first login',
+                            suffixIcon: IconButton(
+                              tooltip: obscureTemporaryPassword
+                                  ? 'Show password'
+                                  : 'Hide password',
+                              onPressed: () => setD(() =>
+                                  obscureTemporaryPassword =
+                                      !obscureTemporaryPassword),
+                              icon: Icon(obscureTemporaryPassword
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined),
+                            )),
                         validator: (value) => (value ?? '').isEmpty
                             ? 'Temporary password is required'
                             : null),
@@ -308,9 +324,16 @@ class _UsersScreenState extends State<UsersScreen> {
                       FilterChip(
                         label: Text(r['name']),
                         selected: selectedRoles.contains(r['id']),
-                        onSelected: (v) => setD(() => v
-                            ? selectedRoles.add(r['id'])
-                            : selectedRoles.remove(r['id'])),
+                        onSelected: (v) => setD(() {
+                          if (v) {
+                            selectedRoles.add(r['id']);
+                          } else {
+                            selectedRoles.remove(r['id']);
+                            if (r['name']?.toString() == 'Admin') {
+                              canAuthorizeWeighmentCorrections = false;
+                            }
+                          }
+                        }),
                       ),
                   ]),
                   if (existing != null)
@@ -328,6 +351,18 @@ class _UsersScreenState extends State<UsersScreen> {
                         value: canApproveRateOverrides,
                         onChanged: (v) =>
                             setD(() => canApproveRateOverrides = v)),
+                  if (canGrantCorrectionAuthority &&
+                      _roles.any((r) =>
+                          r['name'] == 'Admin' &&
+                          selectedRoles.contains(r['id'])))
+                    SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Weighment correction authority'),
+                        subtitle: const Text(
+                            'Allows this Admin to change Grower/Party, Rate and vehicle details. Measured weights remain locked.'),
+                        value: canAuthorizeWeighmentCorrections,
+                        onChanged: (v) =>
+                            setD(() => canAuthorizeWeighmentCorrections = v)),
                 ]),
               ),
             ),
@@ -358,6 +393,9 @@ class _UsersScreenState extends State<UsersScreen> {
             'temporaryPassword': c['password']!.text,
             'roleIds': selectedRoles.toList(),
             if (isDeveloper) 'canApproveRateOverrides': canApproveRateOverrides,
+            if (canGrantCorrectionAuthority)
+              'canAuthorizeWeighmentCorrections':
+                  canAuthorizeWeighmentCorrections,
           })
         : await ApiClient.instance.dio
             .put('/api/users/${existing['id']}', data: {
@@ -368,6 +406,9 @@ class _UsersScreenState extends State<UsersScreen> {
             'status': status,
             'roleIds': selectedRoles.toList(),
             if (isDeveloper) 'canApproveRateOverrides': canApproveRateOverrides,
+            if (canGrantCorrectionAuthority)
+              'canAuthorizeWeighmentCorrections':
+                  canAuthorizeWeighmentCorrections,
           });
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(

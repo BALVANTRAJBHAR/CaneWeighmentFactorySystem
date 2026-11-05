@@ -280,7 +280,7 @@ class _WeightRulesTabState extends State<_WeightRulesTab> {
       ]),
       for (final e in [
         ('enabled', 'Minimum Weight Rule Enabled'),
-        ('applyToCanePurchase', 'Apply to Cane Purchase'),
+        ('applyToCanePurchase', 'Apply to Sugarcane Purchase'),
         ('applyToSalePurchase', 'Apply to SalePurchase'),
         ('applyToGross', 'Apply to Gross'),
         ('applyToTare', 'Apply to Tare'),
@@ -1490,6 +1490,17 @@ class _PrintTabState extends State<_PrintTab> {
 
   Future<void> _savePrintConfiguration() async {
     if (v == null) return;
+    final activePrinter = v!['printerType'] == 'A4'
+        ? (v!['a4PrinterName']?.toString() ?? '')
+        : (v!['dotMatrixPrinterName']?.toString() ?? '');
+    if (Platform.isWindows && !_printers.contains(activePrinter)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Select an installed printer for the active print type before saving.')));
+      }
+      return;
+    }
     final selectedPrinter = v!['dotMatrixPrinterName']?.toString() ?? '';
     if (Platform.isWindows &&
         selectedPrinter.toLowerCase().contains('epson lx') &&
@@ -1618,6 +1629,7 @@ class _PrintTabState extends State<_PrintTab> {
         config['paymentAutoPrint'] ??= true;
         config['loanAutoPrint'] ??= true;
         config['salePurchaseInvoicePrinterType'] ??= 'A4';
+        config['salePurchaseAmountCalculationPrintEnabled'] ??= true;
         setState(() {
           v = config;
           _printers = PrintService.installedPrinterNames();
@@ -1725,36 +1737,17 @@ class _PrintTabState extends State<_PrintTab> {
       SwitchListTile(
           title: const Text('Sale Weighment Tax Invoice (Excel)'),
           subtitle: const Text(
-              'For completed Sale Weighment Gross only: generates Excel and prints the invoice on the dedicated target selected below.'),
+              'After completed Gross, opens Excel. With Weighment Auto Print on and Gross copies above zero, prints on the selected Dot Matrix or A4 printer above.'),
           value: v!['salePurchaseInvoiceEnabled'] == true,
           onChanged: (x) =>
               setState(() => v!['salePurchaseInvoiceEnabled'] = x)),
-      if (v!['salePurchaseInvoiceEnabled'] == true)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child: SizedBox(
-            width: 360,
-            child: DropdownButtonFormField<String>(
-              value: v!['salePurchaseInvoicePrinterType'] == 'DotMatrix'
-                  ? 'DotMatrix'
-                  : 'A4',
-              decoration: const InputDecoration(
-                labelText: 'Sale Invoice Print Target',
-                helperText:
-                    'Dot Matrix uses fast native ESC/P text. A4 uses the configured laser/inkjet queue and fits one page.',
-              ),
-              items: const [
-                DropdownMenuItem(
-                    value: 'DotMatrix',
-                    child: Text('Dot Matrix — Native Text / Fastest')),
-                DropdownMenuItem(
-                    value: 'A4', child: Text('A4 Laser / Inkjet — One Page')),
-              ],
-              onChanged: (value) => setState(
-                  () => v!['salePurchaseInvoicePrinterType'] = value ?? 'A4'),
-            ),
-          ),
-        ),
+      SwitchListTile(
+          title: const Text('Sale Weighment Amount Calculation on Print'),
+          subtitle: const Text(
+              'ON prints Cutting, Kanta Chhoot, Final Weight, Rate, Amount without GST, GST Rate/Amount and Final Amount. OFF hides these fields from every Sale Weighment slip, PDF, invoice and Excel output.'),
+          value: v!['salePurchaseAmountCalculationPrintEnabled'] != false,
+          onChanged: (x) => setState(
+              () => v!['salePurchaseAmountCalculationPrintEnabled'] = x)),
       if (v!['printerType'] == 'DotMatrix') ...[
         const SizedBox(height: 8),
         Card(
@@ -2177,7 +2170,7 @@ class _PrintTabState extends State<_PrintTab> {
       const Padding(
           padding: EdgeInsets.only(top: 4, bottom: 12),
           child: Text(
-              'These fields are used only by the Sale Weighment Excel tax invoice. The ordinary slip/report address above remains unchanged.',
+              'These fields are used by Sale Weighment invoice Excel, PDF and Dot Matrix prints. The ordinary slip/report address above remains unchanged.',
               style: TextStyle(fontSize: 12, color: Colors.grey))),
       Wrap(spacing: 12, runSpacing: 12, children: [
         _invoiceField('invoiceRoadStreet', 'Road / Street', 'Kodsa'),
@@ -2196,9 +2189,10 @@ class _PrintTabState extends State<_PrintTab> {
           initialValue: v!['invoiceTermsAndConditions']?.toString() ?? '',
           decoration: const InputDecoration(
               labelText: 'Invoice Terms and Conditions',
-              hintText: 'Terms printed at the bottom of every sale invoice'),
-          minLines: 3,
-          maxLines: 5,
+              hintText:
+                  'Account Holder Name: ...\nBank Name: ...\nA/C No.: ...\nIFSC: ...\nBranch: ...'),
+          minLines: 5,
+          maxLines: 8,
           onChanged: (x) => v!['invoiceTermsAndConditions'] = x),
       const SizedBox(height: 12),
       FilledButton(
@@ -2690,7 +2684,7 @@ class _SmsTabState extends State<_SmsTab> {
                       value: active,
                       onChanged: (v) => setD(() => active = v)),
                   SwitchListTile(
-                      title: const Text('Cane Purchase final SMS'),
+                      title: const Text('Sugarcane Purchase final SMS'),
                       value: cane,
                       onChanged: (v) => setD(() => cane = v)),
                   SwitchListTile(
@@ -3055,9 +3049,9 @@ class _SmsTabState extends State<_SmsTab> {
           value: enabled,
           onChanged: (v) => setState(() => enabled = v)),
       SwitchListTile(
-          title: const Text('Cane Purchase final SMS'),
+          title: const Text('Sugarcane Purchase final SMS'),
           subtitle: const Text(
-              'Grower + active owner recipients selected for cane purchase.'),
+              'Grower + active owner recipients selected for sugarcane purchase.'),
           value: canePurchaseSmsEnabled,
           onChanged: enabled
               ? (v) => setState(() => canePurchaseSmsEnabled = v)
@@ -3156,7 +3150,7 @@ class _SmsTabState extends State<_SmsTab> {
           Builder(builder: (_) {
             final recipient = Map<String, dynamic>.from(raw as Map);
             final events = <String>[
-              if (recipient['receiveCanePurchase'] == true) 'Cane',
+              if (recipient['receiveCanePurchase'] == true) 'Sugarcane',
               if (recipient['receivePayment'] == true) 'Payment',
               if (recipient['receiveSalePurchase'] == true) 'SalePurchase',
             ].join(' • ');
@@ -3656,10 +3650,16 @@ class _CompanyTabState extends State<_CompanyTab> {
       const SizedBox(height: 16),
       Text('Public Contact & Social Media',
           style: Theme.of(context).textTheme.titleMedium),
+      const Padding(
+        padding: EdgeInsets.only(top: 6),
+        child: Text(
+            'Factory inquiries go to Contact Email. Developer / Software requests go to Developer Email. SMTP sends both; for Gmail use smtp.gmail.com, port 587, your sender address and a Google App Password.'),
+      ),
       for (final field in const <String, String>{
         'contactMobile1': 'Mobile Number 1',
         'contactMobile2': 'Mobile Number 2',
         'contactEmail': 'Contact Email / Gmail',
+        'developerEmail': 'Developer Email / Gmail (software inquiries)',
         'instagramUrl': 'Instagram URL',
         'facebookUrl': 'Facebook URL',
         'twitterUrl': 'X (Twitter) URL',
@@ -3741,7 +3741,7 @@ class _CompanyTabState extends State<_CompanyTab> {
       const Padding(
           padding: EdgeInsets.only(top: 4),
           child: Text(
-              'Controls the logo size in generated report PDF and Excel files.',
+              'Controls the logo size in generated report PDF and Excel files. Sale Invoice PDF automatically fits a wide letterhead logo to the full printable width.',
               style: TextStyle(fontSize: 12, color: Colors.grey))),
       const SizedBox(height: 8),
       Card(

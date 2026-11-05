@@ -20,6 +20,8 @@ enum _ReprintType {
 }
 
 enum _PaymentLookup { paymentId, adviceNumber }
+enum _CopyMark { original, reprint }
+enum _SaleCopyFormat { standard, invoice }
 
 class ReprintScreen extends StatefulWidget {
   const ReprintScreen({super.key});
@@ -32,6 +34,8 @@ class _ReprintScreenState extends State<ReprintScreen> {
   final _number = TextEditingController();
   _ReprintType _type = _ReprintType.purchase;
   _PaymentLookup _paymentLookup = _PaymentLookup.paymentId;
+  _CopyMark _copyMark = _CopyMark.reprint;
+  _SaleCopyFormat _saleCopyFormat = _SaleCopyFormat.standard;
   String _printerType = 'A4';
   Map<String, dynamic>? _printConfig;
   String? _configError;
@@ -84,6 +88,12 @@ class _ReprintScreenState extends State<ReprintScreen> {
   }
 
   String _endpoint(_ReprintType type, int value, String target) {
+    final markAsReprint = _copyMark == _CopyMark.reprint;
+    if (type == _ReprintType.salePurchase &&
+        _saleCopyFormat == _SaleCopyFormat.invoice) {
+      final format = target == 'DotMatrix' ? 'dotmatrix' : 'final';
+      return '/api/print/sale-purchase/$value/invoice?format=$format&markAsReprint=$markAsReprint';
+    }
     final base = switch (type) {
       _ReprintType.purchase =>
         '/api/print/reprint/purchase/' + value.toString(),
@@ -93,7 +103,7 @@ class _ReprintScreenState extends State<ReprintScreen> {
           ? '/api/print/reprint/payment/' + value.toString()
           : '/api/print/reprint/payment-advice/' + value.toString(),
     };
-    return base + '?target=' + target + '&format=final';
+    return '$base?target=$target&format=final&markAsReprint=$markAsReprint';
   }
 
   String _fileName(_ReprintType type, int value) {
@@ -101,7 +111,12 @@ class _ReprintScreenState extends State<ReprintScreen> {
             _paymentLookup == _PaymentLookup.adviceNumber
         ? 'Advice'
         : type.label.replaceAll(' ', '').replaceAll('/', '');
-    return 'DUPLICATE-' + key + '-' + value.toString() + '.pdf';
+    final prefix = _copyMark == _CopyMark.reprint ? 'DUPLICATE-' : 'ORIGINAL-';
+    final format = type == _ReprintType.salePurchase &&
+            _saleCopyFormat == _SaleCopyFormat.invoice
+        ? 'Invoice-'
+        : '';
+    return '$prefix$format$key-$value.pdf';
   }
 
   Future<void> _openPdf(_ReprintType selected) async {
@@ -113,8 +128,9 @@ class _ReprintScreenState extends State<ReprintScreen> {
         context,
         _endpoint(selected, value, 'A4'),
         _fileName(selected, value),
-        successMessage:
-            'Duplicate / Reprint PDF opened. This action is recorded in the audit log.',
+        successMessage: _copyMark == _CopyMark.reprint
+            ? 'Duplicate / Reprint PDF opened. This action is recorded in the audit log.'
+            : 'Original-format PDF opened without a reprint marking. This action is recorded in the audit log.',
         failurePrefix: 'Reprint PDF could not be opened:',
       );
     } finally {
@@ -227,7 +243,7 @@ class _ReprintScreenState extends State<ReprintScreen> {
                 style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 4),
             const Text(
-                'Generate a clearly marked DUPLICATE / REPRINT copy of an existing transaction.'),
+                'Open or print an existing transaction as an Original-format copy or a clearly marked Reprint copy.'),
             const SizedBox(height: 16),
             Card(
               child: Padding(
@@ -267,6 +283,57 @@ class _ReprintScreenState extends State<ReprintScreen> {
                           ],
                         ]),
                       ),
+                      const Divider(height: 24),
+                      Text('Copy Marking',
+                          style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: 8),
+                      SegmentedButton<_CopyMark>(
+                        segments: const [
+                          ButtonSegment(
+                              value: _CopyMark.original,
+                              icon: Icon(Icons.verified_outlined),
+                              label: Text('Original')),
+                          ButtonSegment(
+                              value: _CopyMark.reprint,
+                              icon: Icon(Icons.copy_outlined),
+                              label: Text('Reprint')),
+                        ],
+                        selected: {_copyMark},
+                        onSelectionChanged: _busy
+                            ? null
+                            : (selection) =>
+                                setState(() => _copyMark = selection.first),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _copyMark == _CopyMark.reprint
+                            ? 'DUPLICATE / REPRINT will be printed on the document.'
+                            : 'No DUPLICATE / REPRINT text will be printed. The copy is still recorded in Audit Log.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      if (selected == _ReprintType.salePurchase) ...[
+                        const Divider(height: 24),
+                        Text('Sale Print Format',
+                            style: Theme.of(context).textTheme.titleSmall),
+                        const SizedBox(height: 8),
+                        SegmentedButton<_SaleCopyFormat>(
+                          segments: const [
+                            ButtonSegment(
+                                value: _SaleCopyFormat.standard,
+                                icon: Icon(Icons.receipt_long_outlined),
+                                label: Text('Standard Format')),
+                            ButtonSegment(
+                                value: _SaleCopyFormat.invoice,
+                                icon: Icon(Icons.request_quote_outlined),
+                                label: Text('Invoice Type')),
+                          ],
+                          selected: {_saleCopyFormat},
+                          onSelectionChanged: _busy
+                              ? null
+                              : (selection) => setState(
+                                  () => _saleCopyFormat = selection.first),
+                        ),
+                      ],
                       const Divider(height: 24),
                       Text('Printer Type',
                           style: Theme.of(context).textTheme.titleSmall),
@@ -342,12 +409,16 @@ class _ReprintScreenState extends State<ReprintScreen> {
                         FilledButton.icon(
                           onPressed: _busy ? null : () => _openPdf(selected),
                           icon: const Icon(Icons.picture_as_pdf_outlined),
-                          label: const Text('Open Duplicate A4 PDF'),
+                          label: Text(_copyMark == _CopyMark.reprint
+                              ? 'Open Reprint A4 PDF'
+                              : 'Open Original A4 PDF'),
                         ),
                         OutlinedButton.icon(
                           onPressed: _busy ? null : () => _print(selected),
                           icon: const Icon(Icons.print_outlined),
-                          label: const Text('Print Duplicate'),
+                          label: Text(_copyMark == _CopyMark.reprint
+                              ? 'Print Reprint'
+                              : 'Print Original'),
                         ),
                         if (_busy)
                           const Padding(
@@ -375,7 +446,8 @@ class _ReprintScreenState extends State<ReprintScreen> {
                         child: Text(
                           'Purchase automatically prints Final/Tare when available, otherwise Gross. '
                           'Completed Sale/Purchase prints Gross/Final, otherwise Tare. '
-                          'Every final copy shows DUPLICATE / REPRINT and is recorded in Audit Log.',
+                          'Choose Original to omit the DUPLICATE / REPRINT marking, or Reprint to show it. '
+                          'Sale supports both Standard and Invoice formats. Every final copy is recorded in Audit Log.',
                         ),
                       ),
                     ]),

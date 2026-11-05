@@ -140,6 +140,7 @@ public class CompanyConfig : BaseEntity
     public string? ContactMobile1 { get; set; }
     public string? ContactMobile2 { get; set; }
     public string? ContactEmail { get; set; }
+    public string? DeveloperEmail { get; set; }
     public string? InstagramUrl { get; set; }
     public string? FacebookUrl { get; set; }
     public string? TwitterUrl { get; set; }

@@ -162,6 +162,10 @@ public class SalePurchaseGrossSaveRequest : IScaleReadingProofRequest
     public string? ScaleReadingNonce { get; set; }
     public string? ScaleReadingSignature { get; set; }
     public decimal? Rate { get; set; }
+    public decimal? ItemQuantity { get; set; }
+    public string ItemType { get; set; } = string.Empty;
+    public decimal CuttingPercent { get; set; }
+    public decimal KantaChhootKgPerQuintal { get; set; }
     public decimal GstPercent { get; set; }
     public decimal SalesPercent { get; set; }
     /// <summary>INTRA_STATE (CGST + SGST) or INTER_STATE (IGST).</summary>

@@ -4,13 +4,21 @@ import '../core/api_client.dart';
 class AuthProvider extends ChangeNotifier {
   Map<String, dynamic>? user;
   bool loading = false;
+  bool mfaRequired = false;
   bool get isLoggedIn => user != null;
   bool get mustChangePassword => user?['mustChangePassword'] == true;
+  bool get canAuthorizeWeighmentCorrections =>
+      hasRole('Developer') || user?['canAuthorizeWeighmentCorrections'] == true;
   List<String> get roles => List<String>.from(user?['roles'] ?? []);
   List<String> get permissions => List<String>.from(user?['permissions'] ?? []);
 
   bool can(String permission) => permissions.contains(permission);
   bool hasRole(String role) => roles.contains(role);
+
+  void cancelMfa() {
+    mfaRequired = false;
+    notifyListeners();
+  }
 
   AuthProvider() {
     ApiClient.instance.onSessionExpired = () {
@@ -38,16 +46,51 @@ class AuthProvider extends ChangeNotifier {
         'deviceInfo': defaultTargetPlatform.name,
       });
       if (res.statusCode == 200) {
+        if (res.data['mfaRequired'] == true) {
+          mfaRequired = true;
+          return null;
+        }
         await ApiClient.instance
             .saveTokens(res.data['accessToken'], res.data['refreshToken']);
         user = Map<String, dynamic>.from(res.data['user']);
         user!['mustChangePassword'] = res.data['mustChangePassword'];
+        mfaRequired = false;
         return null;
       }
       return ApiClient.errorMessage(res, 'Login failed.');
     } catch (e) {
       return ApiClient.exceptionMessage(
           e, 'Cannot reach the server. Check network/API URL.');
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<String?> verifyMfa(
+      String username, String password, String otp) async {
+    loading = true;
+    notifyListeners();
+    try {
+      final res =
+          await ApiClient.instance.dio.post('/api/auth/mfa/verify', data: {
+        'username': username,
+        'password': password,
+        'otp': otp,
+        'deviceInfo': defaultTargetPlatform.name,
+      });
+      if (res.statusCode == 200) {
+        await ApiClient.instance
+            .saveTokens(res.data['accessToken'], res.data['refreshToken']);
+        user = Map<String, dynamic>.from(res.data['user']);
+        user!['mustChangePassword'] = res.data['mustChangePassword'];
+        mfaRequired = false;
+        notifyListeners();
+        return null;
+      }
+      return ApiClient.errorMessage(res, 'Verification failed.');
+    } catch (e) {
+      return ApiClient.exceptionMessage(e, 'Verification failed.');
     } finally {
       loading = false;
       notifyListeners();

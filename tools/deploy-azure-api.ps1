@@ -52,14 +52,26 @@ try {
     # the Authorization header are written to output or disk.
     $profilesJson = & $az webapp deployment list-publishing-profiles `
         -g $ResourceGroup -n $AppName -o json --only-show-errors
-    $profile = $profilesJson | ConvertFrom-Json |
-        Where-Object { $_.publishMethod -eq 'MSDeploy' } |
-        Select-Object -First 1
+    $profiles = $profilesJson | ConvertFrom-Json
+    # PowerShell 7 preserves a top-level JSON array as one pipeline object.
+    # A direct ConvertFrom-Json | Where-Object pipeline can therefore select
+    # the entire array and concatenate MSDeploy/FTP/ZipDeploy properties.
+    $profile = $null
+    foreach ($candidate in $profiles) {
+        if ($candidate.publishMethod -eq 'MSDeploy') {
+            $profile = $candidate
+            break
+        }
+    }
     if (!$profile) { throw 'App Service MSDeploy publishing profile was not found.' }
     $basicToken = [Convert]::ToBase64String(
         [Text.Encoding]::ASCII.GetBytes("$($profile.userName):$($profile.userPWD)"))
     $kuduHeaders = @{ Authorization = "Basic $basicToken" }
-    $publishHost = ([Uri]("https://" + $profile.publishUrl)).Host
+    $publishEndpoint = [string]$profile.publishUrl
+    if ($publishEndpoint -notmatch '^https?://') {
+        $publishEndpoint = "https://$publishEndpoint"
+    }
+    $publishHost = ([Uri]$publishEndpoint).Host
     $kuduBase = "https://$publishHost"
     $previousDeploymentId = $null
     try {
@@ -82,7 +94,7 @@ try {
 
     Write-Host "Deploying $PackagePath to $AppName..."
     & $az webapp deploy -g $ResourceGroup -n $AppName `
-        --src-path $PackagePath --type zip --clean true --restart true --async true `
+        --src-path $PackagePath --type zip --clean false --restart true --async true `
         --timeout ($TimeoutSeconds * 1000) --only-show-errors | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Azure accepted neither the ZIP upload nor the deployment request.' }
 
@@ -121,31 +133,19 @@ try {
         try {
             $response = Invoke-WebRequest -Uri $healthUri -UseBasicParsing -TimeoutSec 45
             if ($response.StatusCode -eq 200) {
+                # Run-from-package cannot start without this pointer. Never prune packages
+                # until Kudu confirms that the mounted package exists.
+                $activePackage = (Invoke-WebRequest `
+                    -Uri "$kuduBase/api/vfs/data/SitePackages/packagename.txt" `
+                    -Headers $kuduHeaders -TimeoutSec 30).Content.Trim()
+                if ([string]::IsNullOrWhiteSpace($activePackage)) {
+                    throw 'Deployment health returned 200, but the active package pointer is missing.'
+                }
                 Write-Host "Deployment verified: $healthUri"
                 Write-Host $response.Content
-                # WEBSITE_RUN_FROM_PACKAGE stores one ZIP per deployment.
-                # Retain the active package plus one rollback package and
-                # remove older ZIPs so repeated F1 deployments cannot slowly
-                # consume the 1-GB App Service file quota.
-                try {
-                    $packages = @(Invoke-RestMethod `
-                        -Uri "$kuduBase/api/vfs/data/SitePackages/" `
-                        -Headers $kuduHeaders -TimeoutSec 30) |
-                        Where-Object { $_.name -like '*.zip' } |
-                        Sort-Object mtime -Descending
-                    foreach ($oldPackage in @($packages | Select-Object -Skip 2)) {
-                        $deleteHeaders = @{
-                            Authorization = $kuduHeaders.Authorization
-                            'If-Match' = '*'
-                        }
-                        Invoke-RestMethod -Uri $oldPackage.href `
-                            -Headers $deleteHeaders -Method Delete -TimeoutSec 30 | Out-Null
-                        Write-Host "Removed old rollback package: $($oldPackage.name)"
-                    }
-                }
-                catch {
-                    Write-Warning "Deployment is healthy, but old package cleanup failed: $($_.Exception.Message)"
-                }
+                # Keep Kudu package cleanup out of deployment. A prior pipeline
+                # accidentally deleted packagename.txt and caused HTTP 503 at
+                # the next restart. Retain rollback packages for manual review.
                 return
             }
             $lastError = "HTTP $($response.StatusCode)"
